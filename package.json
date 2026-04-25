@@ -1,0 +1,21 @@
+{
+  "name": "tasks-manager",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "tasks-manager": "./packages/backend/src/index.ts"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n be,fe -c blue,green \"bun --watch packages/backend/src/index.ts\" \"cd packages/frontend && bun run dev\"",
+    "build": "cd packages/frontend && bun run build",
+    "prepublishOnly": "cd packages/frontend && bun run build"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0",
+    "typescript": "^5.7.0"
+  }
+}

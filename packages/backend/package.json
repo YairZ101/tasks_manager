@@ -1,0 +1,18 @@
+{
+  "name": "@tasks-manager/backend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "bun --watch src/index.ts",
+    "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "hono": "^4.7.0",
+    "shell-quote": "^1.8.2"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "@types/shell-quote": "^1.7.5"
+  }
+}

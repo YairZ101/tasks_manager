@@ -1,0 +1,26 @@
+{
+    "$schema": "https://charm.land/crush.json",
+    "mcp": {},
+    "permissions": {
+        "allowed_tools": [
+            "bash",
+            "view",
+            "ls",
+            "grep",
+            "edit",
+            "multiedit",
+            "write",
+            "git",
+            "fetch",
+            "agentic_fetch",
+            "list_mcp_resources",
+            "download"
+        ]
+    },
+    "options": {
+        "skills_paths": [
+            "~/.config/crush/skills"
+        ],
+        "auto_lsp": true
+    }
+}

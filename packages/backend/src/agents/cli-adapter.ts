@@ -6,7 +6,7 @@ import { getDb } from '../db/database.js';
 const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
 const MAX_LINE_LENGTH = 10240; // 10KB
 
-function sanitizeLine(line: string): string {
+export function sanitizeLine(line: string): string {
   // Strip ANSI escape sequences
   let clean = line.replace(ANSI_REGEX, '');
 

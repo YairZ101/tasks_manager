@@ -14,7 +14,7 @@ interface SSEClient {
 const BUFFER_SIZE = 1000;
 const HEARTBEAT_INTERVAL = 15_000;
 
-class SSEBroadcaster {
+export class SSEBroadcaster {
   private clients = new Set<SSEClient>();
   private buffer: SSEEvent[] = [];
   private nextId = 1;

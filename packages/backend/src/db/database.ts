@@ -28,6 +28,7 @@ export function initDb(repoRoot: string): Database {
 export function closeDb(): void {
   if (db) {
     db.close();
+    db = undefined!;
   }
 }
 

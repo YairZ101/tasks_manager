@@ -13,6 +13,9 @@
     "start": "bun ./packages/backend/src/index.ts",
     "dev": "concurrently -n be,fe -c blue,green \"bun --watch packages/backend/src/index.ts\" \"cd packages/frontend && bun run dev\"",
     "build": "cd packages/frontend && bun run build",
+    "test": "bun run test:be && bun run test:fe",
+    "test:be": "cd packages/backend && bun test",
+    "test:fe": "cd packages/frontend && bun run test",
     "prepublishOnly": "cd packages/frontend && bun run build"
   },
   "devDependencies": {

@@ -33,7 +33,7 @@ function getAdapter(config: AgentConfig): AgentAdapter {
   return new ApiAdapter(config);
 }
 
-function buildPrompt(task: Task, workingDir: string): string {
+export function buildPrompt(task: Task, workingDir: string): string {
   const parts: string[] = [];
   parts.push(`You are working in the repository at: ${workingDir}`);
   parts.push('');

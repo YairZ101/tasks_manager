@@ -24,6 +24,9 @@ export default function InitWizard() {
   const [apiUrl, setApiUrl] = useState('');
   const [apiModel, setApiModel] = useState('');
   const [apiHeaders, setApiHeaders] = useState('');
+  const [apiRequestFormat, setApiRequestFormat] = useState('openai');
+  const [apiStreamFormat, setApiStreamFormat] = useState('sse');
+  const [timeoutMs, setTimeoutMs] = useState(1800000);
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   // Test
@@ -44,12 +47,15 @@ export default function InitWizard() {
       try {
         const data = await api.getAgentConfig();
         if (data.config?.cli_cmd || data.config?.api_url) {
-          setStep('test');
+          // Agent already configured — skip to prefix generation
+          setStep('prefix');
           if (data.config.type) setConfigType(data.config.type);
           if (data.config.cli_cmd) setCliCmd(data.config.cli_cmd);
           if (data.config.cli_prompt_mode) setCliPromptMode(data.config.cli_prompt_mode);
           if (data.config.cli_prompt_flag) setCliPromptFlag(data.config.cli_prompt_flag);
           if (data.config.api_url) setApiUrl(data.config.api_url);
+          // Auto-start prefix generation
+          handleGeneratePrefix();
         }
       } catch {
         // Fresh start
@@ -68,6 +74,9 @@ export default function InitWizard() {
         api_url: apiUrl || null,
         api_headers: apiHeaders || null,
         api_model: apiModel || null,
+        api_request_format: apiRequestFormat,
+        api_stream_format: apiStreamFormat,
+        timeout_ms: timeoutMs,
       });
       return true;
     } catch (err: any) {
@@ -288,6 +297,16 @@ export default function InitWizard() {
                           />
                         </div>
                       )}
+                      <div>
+                        <label className="block text-xs font-semibold text-text-muted mb-1">Timeout (minutes)</label>
+                        <input
+                          type="number"
+                          value={Math.round(timeoutMs / 60000)}
+                          onChange={(e) => setTimeoutMs(Math.max(1, parseInt(e.target.value, 10) || 30) * 60000)}
+                          min={1}
+                          className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus transition-colors"
+                        />
+                      </div>
                     </div>
                   )}
                 </>
@@ -322,6 +341,31 @@ export default function InitWizard() {
                       rows={2}
                       className="w-full px-3 py-2 text-sm font-mono bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim resize-none focus:outline-none focus:border-border-focus transition-colors"
                     />
+                  </div>
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-xs font-semibold text-text-muted mb-1">Request Format</label>
+                      <select
+                        value={apiRequestFormat}
+                        onChange={(e) => setApiRequestFormat(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
+                      >
+                        <option value="openai">OpenAI</option>
+                        <option value="ollama">Ollama</option>
+                      </select>
+                    </div>
+                    <div>
+                      <label className="block text-xs font-semibold text-text-muted mb-1">Stream Format</label>
+                      <select
+                        value={apiStreamFormat}
+                        onChange={(e) => setApiStreamFormat(e.target.value)}
+                        className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
+                      >
+                        <option value="sse">SSE</option>
+                        <option value="ndjson">NDJSON</option>
+                        <option value="none">None</option>
+                      </select>
+                    </div>
                   </div>
                 </>
               )}

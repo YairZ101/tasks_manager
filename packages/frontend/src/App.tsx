@@ -58,20 +58,20 @@ function AppContent() {
     return () => window.removeEventListener('app:toast', handler as EventListener);
   }, []);
 
+  const [multiTabWarning, setMultiTabWarning] = useState(false);
+
   // Multi-tab detection
   useEffect(() => {
     const channel = new BroadcastChannel('tasks-manager');
 
-    // Announce this tab opened
     channel.postMessage('ping');
 
     channel.onmessage = (e) => {
       if (e.data === 'ping') {
-        // Another tab just opened — warn them back
         channel.postMessage('pong');
-        toast.warning('Another tab is already open. Real-time updates may be unreliable.');
+        setMultiTabWarning(true);
       } else if (e.data === 'pong') {
-        toast.warning('Another tab is already open. Real-time updates may be unreliable.');
+        setMultiTabWarning(true);
       }
     };
 
@@ -96,6 +96,21 @@ function AppContent() {
     <div className="flex h-screen bg-bg overflow-hidden">
       <Sidebar />
       <main className="flex-1 flex flex-col overflow-hidden">
+        {multiTabWarning && (
+          <div className="flex items-center justify-between px-4 py-2 bg-warning-dim border-b border-warning/20 flex-shrink-0">
+            <span className="text-xs text-warning font-medium">
+              Another tab is already open. Real-time updates may be unreliable.
+            </span>
+            <button
+              onClick={() => setMultiTabWarning(false)}
+              className="p-0.5 text-warning/60 hover:text-warning transition-colors"
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <path d="M3 3l8 8M11 3l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+              </svg>
+            </button>
+          </div>
+        )}
         {/* Mobile header */}
         <div className="hidden max-lg:flex items-center h-12 px-4 border-b border-border bg-bg-raised flex-shrink-0">
           <button

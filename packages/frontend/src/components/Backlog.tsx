@@ -3,10 +3,12 @@ import { toast } from 'sonner';
 import { useAppStore, type Task } from '../hooks/useTaskStore.js';
 import { api } from '../api/client.js';
 import Tooltip from './Tooltip.js';
+import ConfirmDialog from './ConfirmDialog.js';
 
 export default function Backlog() {
   const { tasks, setShowCreateTask, setSelectedTaskId, updateTaskInStore, removeTaskFromStore } = useAppStore();
   const [search, setSearch] = useState('');
+  const [deleteTarget, setDeleteTarget] = useState<Task | null>(null);
 
   const backlogTasks = useMemo(() => {
     let filtered = tasks.filter((t) => t.status === 'backlog');
@@ -54,6 +56,7 @@ export default function Backlog() {
     try {
       await api.deleteTask(task.id);
       removeTaskFromStore(task.id);
+      setDeleteTarget(null);
       toast.success(`${task.task_key} deleted`);
     } catch (err: any) {
       toast.error(err.message || 'Failed to delete task');
@@ -179,7 +182,7 @@ export default function Backlog() {
                     className="hover:text-danger hover:bg-danger-dim"
                     onClick={(e) => {
                       e.stopPropagation();
-                      handleDelete(task);
+                      setDeleteTarget(task);
                     }}
                   >
                     <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
@@ -192,6 +195,17 @@ export default function Backlog() {
           </div>
         )}
       </div>
+
+      {deleteTarget && (
+        <ConfirmDialog
+          title="Delete task?"
+          message={`This will permanently delete ${deleteTarget.task_key} and all its logs.`}
+          confirmLabel="Delete"
+          destructive
+          onConfirm={() => handleDelete(deleteTarget)}
+          onCancel={() => setDeleteTarget(null)}
+        />
+      )}
     </div>
   );
 }

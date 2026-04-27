@@ -1,4 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import { toast } from 'sonner';
 import { useAppStore, type Task, type TaskLog } from '../hooks/useTaskStore.js';
 import { api } from '../api/client.js';
@@ -9,6 +10,10 @@ interface TaskDetailProps {
   registerLogCallback: (taskId: number, cb: (log: any) => void) => () => void;
 }
 
+type LogRow =
+  | { type: 'separator'; runNumber: number; key: string }
+  | { type: 'log'; log: TaskLog; key: string };
+
 export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailProps) {
   const { tasks, updateTaskInStore, removeTaskFromStore, setSelectedTaskId } = useAppStore();
   const task = tasks.find((t) => t.id === taskId);
@@ -18,6 +23,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [pendingMoveStatus, setPendingMoveStatus] = useState<string | null>(null);
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -47,7 +53,9 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
   const [hasMoreLogs, setHasMoreLogs] = useState(false);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
+  const [isAtBottom, setIsAtBottom] = useState(true);
   const autoScrollRef = useRef(true);
+  const [collapsedRuns, setCollapsedRuns] = useState<Set<number>>(new Set());
 
   // Load task fields into edit state
   useEffect(() => {
@@ -87,24 +95,53 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
     return unsubscribe;
   }, [taskId, registerLogCallback]);
 
-  // Auto-scroll
-  useEffect(() => {
-    if (autoScrollRef.current && logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+  // Build rows with run_number separators
+  const rows: LogRow[] = useMemo(() => {
+    if (logs.length === 0) return [];
+    const result: LogRow[] = [];
+    let currentRun: number | null = null;
+    const maxRun = logs.length > 0 ? Math.max(...logs.map((l) => l.run_number)) : 1;
+
+    for (const log of logs) {
+      if (log.run_number !== currentRun) {
+        currentRun = log.run_number;
+        result.push({ type: 'separator', runNumber: currentRun, key: `sep-${currentRun}` });
+      }
+      if (!collapsedRuns.has(log.run_number)) {
+        result.push({ type: 'log', log, key: `log-${log.id || result.length}` });
+      }
     }
-  }, [logs]);
+    return result;
+  }, [logs, collapsedRuns]);
+
+  // Virtualizer
+  const virtualizer = useVirtualizer({
+    count: rows.length,
+    getScrollElement: () => logContainerRef.current,
+    estimateSize: (index) => (rows[index]?.type === 'separator' ? 28 : 22),
+    overscan: 20,
+  });
+
+  // Auto-scroll when new logs arrive
+  useEffect(() => {
+    if (autoScrollRef.current && rows.length > 0) {
+      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
+    }
+  }, [rows.length]);
 
   const handleScroll = () => {
     const el = logContainerRef.current;
     if (!el) return;
     const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 50;
     autoScrollRef.current = atBottom;
+    setIsAtBottom(atBottom);
   };
 
   const handleJumpToBottom = () => {
-    if (logContainerRef.current) {
-      logContainerRef.current.scrollTop = logContainerRef.current.scrollHeight;
+    if (rows.length > 0) {
+      virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
       autoScrollRef.current = true;
+      setIsAtBottom(true);
     }
   };
 
@@ -120,6 +157,18 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
     } finally {
       setLoadingLogs(false);
     }
+  };
+
+  const toggleRunCollapse = (runNumber: number) => {
+    setCollapsedRuns((prev) => {
+      const next = new Set(prev);
+      if (next.has(runNumber)) {
+        next.delete(runNumber);
+      } else {
+        next.add(runNumber);
+      }
+      return next;
+    });
   };
 
   const handleSave = async () => {
@@ -169,6 +218,10 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
 
   const handleMoveToTodo = async () => {
     if (!task) return;
+    if (isRunning) {
+      setPendingMoveStatus('todo');
+      return;
+    }
     try {
       const data = await api.updateTask(task.id, { status: 'todo' });
       updateTaskInStore(data.task);
@@ -180,12 +233,29 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
 
   const handleMarkDone = async () => {
     if (!task) return;
+    if (isRunning) {
+      setPendingMoveStatus('done');
+      return;
+    }
     try {
       const data = await api.updateTask(task.id, { status: 'done' });
       updateTaskInStore(data.task);
       toast.success(`${task.task_key} marked as done`);
     } catch (err: any) {
       toast.error(err.data?.error || err.message || 'Failed to update task');
+    }
+  };
+
+  const handleConfirmMove = async () => {
+    if (!task || !pendingMoveStatus) return;
+    try {
+      const data = await api.updateTask(task.id, { status: pendingMoveStatus });
+      updateTaskInStore(data.task);
+      toast.success(`${task.task_key} moved to ${pendingMoveStatus}`);
+    } catch (err: any) {
+      toast.error(err.data?.error || err.message || 'Failed to move task');
+    } finally {
+      setPendingMoveStatus(null);
     }
   };
 
@@ -205,6 +275,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
 
   const isRunning = task.agent_status === 'running';
   const isReadOnly = isRunning;
+  const isAnyAgentBusy = tasks.some((t) => t.agent_status === 'running');
 
   return (
     <div ref={panelRef} onAnimationEnd={handleAnimationEnd} className={`absolute top-0 right-0 w-[440px] h-full border-l border-border bg-bg-raised flex flex-col z-30 shadow-2xl shadow-black/30 max-lg:fixed max-lg:inset-0 max-lg:w-full max-lg:z-40 max-lg:border-l-0 max-lg:shadow-none ${closing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}>
@@ -328,7 +399,8 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
             ) : (
               <button
                 onClick={handleRunAgent}
-                className="flex items-center gap-1.5 px-3 py-1.5 bg-success-dim text-success hover:bg-success/20 text-xs font-medium rounded-lg transition-colors"
+                disabled={isAnyAgentBusy}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-success-dim text-success hover:bg-success/20 text-xs font-medium rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path d="M2 1l8 5-8 5V1z" fill="currentColor" />
@@ -336,7 +408,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
                 Run Agent
               </button>
             )}
-            {task.status === 'backlog' && (
+            {(task.status === 'backlog' || task.status === 'done' || task.status === 'in-progress') && (
               <button
                 onClick={handleMoveToTodo}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-text hover:bg-bg-hover text-xs font-medium rounded-lg transition-colors"
@@ -348,7 +420,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
                 Move to Todo
               </button>
             )}
-            {(task.status === 'todo' || task.status === 'done') && (
+            {task.status === 'todo' && (
               <button
                 onClick={handleMoveToBacklog}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-text hover:bg-bg-hover text-xs font-medium rounded-lg transition-colors"
@@ -360,7 +432,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
                 Move to Backlog
               </button>
             )}
-            {(task.status === 'backlog' || task.status === 'todo') && (
+            {(task.status === 'backlog' || task.status === 'todo' || task.status === 'in-progress') && (
               <button
                 onClick={handleMarkDone}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-text hover:bg-bg-hover text-xs font-medium rounded-lg transition-colors"
@@ -398,43 +470,108 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
             )}
           </div>
 
-          <div
-            ref={logContainerRef}
-            onScroll={handleScroll}
-            className="h-64 overflow-y-auto font-mono text-xs bg-bg p-3 relative"
-          >
-            {hasMoreLogs && (
+          <div className="relative">
+            <div
+              ref={logContainerRef}
+              onScroll={handleScroll}
+              className="h-64 overflow-y-auto font-mono text-xs bg-bg p-3"
+            >
+              {hasMoreLogs && (
+                <button
+                  onClick={handleLoadMore}
+                  disabled={loadingLogs}
+                  className="w-full py-1.5 text-center text-[10px] text-accent hover:text-accent-hover transition-colors mb-2"
+                >
+                  {loadingLogs ? 'Loading...' : 'Load earlier logs'}
+                </button>
+              )}
+
+              {logs.length === 0 && !loadingLogs ? (
+                <div className="flex items-center justify-center h-full text-text-dim text-[11px]">
+                  No agent runs yet. Click &apos;Run Agent&apos; to start.
+                </div>
+              ) : (
+                <div
+                  style={{ height: `${virtualizer.getTotalSize()}px`, width: '100%', position: 'relative' }}
+                >
+                  {virtualizer.getVirtualItems().map((virtualRow) => {
+                    const row = rows[virtualRow.index];
+                    if (!row) return null;
+
+                    if (row.type === 'separator') {
+                      const isCollapsed = collapsedRuns.has(row.runNumber);
+                      const maxRun = logs.length > 0 ? Math.max(...logs.map((l) => l.run_number)) : 1;
+                      const isCurrent = row.runNumber === maxRun;
+                      return (
+                        <div
+                          key={row.key}
+                          data-index={virtualRow.index}
+                          ref={virtualizer.measureElement}
+                          style={{
+                            position: 'absolute',
+                            top: 0,
+                            left: 0,
+                            width: '100%',
+                            transform: `translateY(${virtualRow.start}px)`,
+                          }}
+                        >
+                          <button
+                            onClick={() => toggleRunCollapse(row.runNumber)}
+                            className="flex items-center gap-2 w-full py-1 text-[10px] font-semibold text-text-dim hover:text-text-muted transition-colors group"
+                          >
+                            <span className="flex-1 h-px bg-border" />
+                            <span className="flex items-center gap-1 shrink-0">
+                              <svg
+                                width="8"
+                                height="8"
+                                viewBox="0 0 8 8"
+                                fill="none"
+                                className={`transition-transform ${isCollapsed ? '' : 'rotate-90'}`}
+                              >
+                                <path d="M2 1l4 3-4 3V1z" fill="currentColor" />
+                              </svg>
+                              Run #{row.runNumber}
+                              {isCurrent && isRunning && (
+                                <span className="w-1 h-1 rounded-full bg-running animate-pulse-glow" />
+                              )}
+                            </span>
+                            <span className="flex-1 h-px bg-border" />
+                          </button>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div
+                        key={row.key}
+                        data-index={virtualRow.index}
+                        ref={virtualizer.measureElement}
+                        style={{
+                          position: 'absolute',
+                          top: 0,
+                          left: 0,
+                          width: '100%',
+                          transform: `translateY(${virtualRow.start}px)`,
+                        }}
+                        className="py-0.5 leading-relaxed"
+                      >
+                        <span className={getLogColor(row.log.level)}>{row.log.message}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {!isAtBottom && logs.length > 0 && (
               <button
-                onClick={handleLoadMore}
-                disabled={loadingLogs}
-                className="w-full py-1.5 text-center text-[10px] text-accent hover:text-accent-hover transition-colors mb-2"
+                onClick={handleJumpToBottom}
+                className="absolute bottom-2 right-4 px-2 py-1 text-[10px] bg-bg-card border border-border rounded-md text-text-muted hover:text-text transition-colors z-10"
               >
-                {loadingLogs ? 'Loading...' : 'Load earlier logs'}
+                ↓ Jump to bottom
               </button>
             )}
-
-            {logs.length === 0 && !loadingLogs ? (
-              <div className="flex items-center justify-center h-full text-text-dim text-[11px]">
-                No agent runs yet. Click &apos;Run Agent&apos; to start.
-              </div>
-            ) : (
-              logs.map((log, i) => (
-                <div key={log.id || i} className="py-0.5 leading-relaxed">
-                  <span className={`${getLogColor(log.level)}`}>{log.message}</span>
-                </div>
-              ))
-            )}
           </div>
-
-          {/* Jump to bottom */}
-          {!autoScrollRef.current && logs.length > 0 && (
-            <button
-              onClick={handleJumpToBottom}
-              className="absolute bottom-2 right-4 px-2 py-1 text-[10px] bg-bg-card border border-border rounded-md text-text-muted hover:text-text transition-colors"
-            >
-              ↓ Jump to bottom
-            </button>
-          )}
         </div>
       </div>
 
@@ -447,6 +584,18 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
           destructive
           onConfirm={handleDelete}
           onCancel={() => setShowDeleteConfirm(false)}
+        />
+      )}
+
+      {/* Move running task confirmation */}
+      {pendingMoveStatus && (
+        <ConfirmDialog
+          title="Move running task?"
+          message={`The agent is currently running on ${task.task_key}. Moving it will cancel the agent.`}
+          confirmLabel="Cancel agent & move"
+          destructive
+          onConfirm={handleConfirmMove}
+          onCancel={() => setPendingMoveStatus(null)}
         />
       )}
     </div>

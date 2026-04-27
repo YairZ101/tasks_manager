@@ -3,6 +3,7 @@ import { bodyLimit } from 'hono/body-limit';
 
 import fs from 'fs';
 import path from 'path';
+import { initDataDir } from './init-data-dir.js';
 import { initDb, closeDb, getDb } from './db/database.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { runCrashRecovery } from './recovery.js';
@@ -15,7 +16,6 @@ import agentControlRoutes from './routes/agent-control.js';
 import initRoutes from './routes/init.js';
 import type { ProjectConfig } from './types.js';
 
-const DATA_DIR = '.tasks_manager';
 const DEFAULT_PORT = 4200;
 
 // Parse args
@@ -30,35 +30,18 @@ for (let i = 0; i < args.length; i++) {
 const repoRoot = process.cwd();
 
 // Step 1: Create data directory
-fs.mkdirSync(path.join(repoRoot, DATA_DIR), { recursive: true });
+initDataDir(repoRoot);
 
-// Step 2: Auto-append .tasks_manager/ to .gitignore
-const gitignorePath = path.join(repoRoot, '.gitignore');
-try {
-  let content = '';
-  try {
-    content = fs.readFileSync(gitignorePath, 'utf-8');
-  } catch {
-    // No .gitignore yet
-  }
-  if (!content.includes('.tasks_manager')) {
-    const newline = content.length > 0 && !content.endsWith('\n') ? '\n' : '';
-    fs.appendFileSync(gitignorePath, `${newline}.tasks_manager/\n`);
-  }
-} catch {
-  // Non-fatal
-}
-
-// Step 3: Acquire PID lock
+// Step 2: Acquire PID lock
 acquireLock(repoRoot);
 
-// Step 4: Connect to DB
+// Step 3: Connect to DB
 initDb(repoRoot);
 
-// Step 5: Crash recovery
+// Step 4: Crash recovery
 runCrashRecovery();
 
-// Step 6: Create Hono app
+// Step 5: Create Hono app
 const app = new Hono();
 
 // Body size limit
@@ -115,7 +98,7 @@ if (fs.existsSync(frontendDist)) {
   });
 }
 
-// Step 7: Start server
+// Step 6: Start server
 broadcaster.start();
 
 const port = portArg || DEFAULT_PORT;

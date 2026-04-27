@@ -62,4 +62,5 @@ When unstaging all changes (`git reset`) to build commits incrementally, git spl
 - Each commit should be independently meaningful
 - Each PR should be independently reviewable and not break existing functionality
 - Clearly document dependencies between stacked PRs in the PR body
+- **Keep PR descriptions current** — when amending, force-pushing, or otherwise changing a PR after opening it, update the PR title and body to reflect the final state of the changes. Use `gh pr edit <number> --title "..." --body "..."`. The description must always match what the reviewer will see in the diff.
 - **No AI identity in git metadata** — do not mention any AI agent, model, tool, assistant, automation, or vendor in branch names, commit messages, commit trailers, PR titles, or PR bodies. Commits are authored by the user.

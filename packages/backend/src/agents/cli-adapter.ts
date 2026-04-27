@@ -91,27 +91,25 @@ export class CliAdapter implements AgentAdapter {
     }
 
     // Handle abort signal — kill entire process group
+    let killTimer: ReturnType<typeof setTimeout> | null = null;
     const abortHandler = () => {
       try {
         process.kill(-pid, 'SIGTERM');
       } catch {
-        try {
-          proc.kill('SIGTERM');
-        } catch {
-          // Already dead
-        }
+        // Process group kill failed
       }
-      setTimeout(() => {
-        try {
-          process.kill(-pid, 'SIGKILL');
-        } catch {
-          try {
-            proc.kill('SIGKILL');
-          } catch {
-            // Already dead
-          }
-        }
+      try {
+        proc.kill('SIGTERM');
+      } catch {
+        // Already dead
+      }
+      killTimer = setTimeout(() => {
+        try { process.kill(-pid, 'SIGKILL'); } catch {}
+        try { proc.kill('SIGKILL'); } catch {}
       }, 5000);
+      if (killTimer && typeof killTimer === 'object' && 'unref' in killTimer) {
+        killTimer.unref();
+      }
     };
 
     signal.addEventListener('abort', abortHandler, { once: true });
@@ -158,6 +156,7 @@ export class CliAdapter implements AgentAdapter {
       proc.on('exit', (code) => resolve(code));
     });
 
+    if (killTimer) clearTimeout(killTimer);
     signal.removeEventListener('abort', abortHandler);
 
     if (signal.aborted) {

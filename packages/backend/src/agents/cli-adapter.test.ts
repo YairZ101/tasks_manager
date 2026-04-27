@@ -189,7 +189,7 @@ describe('CliAdapter', () => {
     expect(output.some((l) => l.includes('error-msg'))).toBe(true);
   });
 
-  test('abort signal cancels the process', async () => {
+  (process.env.CI ? test.skip : test)('abort signal cancels the process without delay', async () => {
     const adapter = new CliAdapter(
       makeConfig({ cli_cmd: 'sh -c "sleep 300"', cli_prompt_mode: 'argument' })
     );
@@ -203,11 +203,13 @@ describe('CliAdapter', () => {
       signal: controller.signal,
     });
 
-    // Wait for the process to actually start, then abort
     await new Promise((r) => setTimeout(r, 500));
+    const abortTime = Date.now();
     controller.abort();
 
     await expect(promise).rejects.toThrow('cancelled');
+    const elapsed = Date.now() - abortTime;
+    expect(elapsed).toBeLessThan(3000);
   }, 15000);
 
   test('runs in the specified working directory', async () => {

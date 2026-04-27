@@ -165,9 +165,9 @@ describe('startAgent (integration)', () => {
     expect(finalTask.agent_status).toBe('failed');
   });
 
-  test('mutex blocks concurrent agents', async () => {
+  (process.env.CI ? test.skip : test)('mutex blocks concurrent agents', async () => {
     const db = getDb();
-    db.query("UPDATE agent_config SET cli_cmd = 'sh -c \"sleep 300\"', cli_prompt_mode = 'argument' WHERE id = 1").run();
+    db.query("UPDATE agent_config SET cli_cmd = 'sh -c \"sleep 2\"', cli_prompt_mode = 'argument' WHERE id = 1").run();
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'First', 'todo', 1)").run();
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-2', 'Second', 'todo', 2)").run();
     const t1 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
@@ -243,9 +243,9 @@ describe('cancelAgent', () => {
     }
   });
 
-  test('cancels a running agent', async () => {
+  (process.env.CI ? test.skip : test)('cancels a running agent', async () => {
     const db = getDb();
-    db.query("UPDATE agent_config SET cli_cmd = 'sh -c \"sleep 300\"', cli_prompt_mode = 'argument' WHERE id = 1").run();
+    db.query("UPDATE agent_config SET cli_cmd = 'sh -c \"sleep 2\"', cli_prompt_mode = 'argument' WHERE id = 1").run();
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 

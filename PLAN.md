@@ -205,20 +205,19 @@ This ensures post-MVP schema changes (new columns, new tables) are applied witho
 
 The tool requires a one-time init process on first run:
 
-1. **Agent setup** — the UI presents the agent configuration screen. Defaults to CLI mode with a single "Command" input (e.g., pre-filled with `claude`). Advanced options (prompt mode, timeout) are hidden behind an "Advanced" accordion. API mode is a secondary tab. A preset dropdown is available for common tools:
+1. **Agent setup** — the UI presents the agent configuration screen. Defaults to CLI mode with a single "Command" input (e.g., pre-filled with `crush run`). Advanced options (prompt mode, timeout) are hidden behind an "Advanced" accordion. API mode is a secondary tab. Preset buttons are available for common tools:
 
-   | Preset                | `cli_cmd`               | `cli_prompt_mode` | `cli_prompt_flag` |
-   | --------------------- | ----------------------- | ----------------- | ----------------- |
-   | Claude Code           | `claude`                | `flag`            | `--print -p`      |
-   | Aider                 | `aider`                 | `flag`            | `--message`       |
-   | Codex                 | `codex`                 | `argument`        | —                 |
-   | Custom CLI            | (user input)            | (user choice)     | (user input)      |
-   | OpenAI-compatible API | *(switches to API tab)* | —                 | —                 |
+   | Preset      | `cli_cmd`   | `cli_prompt_mode` | `cli_prompt_flag` |
+   | ----------- | ----------- | ----------------- | ----------------- |
+   | Crush       | `crush run` | `argument`        | —                 |
+   | Claude Code | `claude`    | `flag`            | `--print -p`      |
+   | Aider       | `aider`     | `flag`            | `--message`       |
+   | Codex       | `codex`     | `argument`        | —                 |
 2. **Test connection** — the user clicks "Test Connection". The tool sends the prompt `"Respond with exactly: OK"` to the configured agent. Pass criteria: exit code 0 (CLI) or HTTP 2xx (API) within a 30-second timeout (separate from `timeout_ms`). Any response content is considered a pass — output is not shown to the user. The user cannot proceed until the test passes.
 3. **Task prefix generation** — once the agent is configured and tested, the tool sends the following prompt to the agent:
 
    ```
-   Respond with ONLY 1-5 uppercase letters, nothing else. Generate a short memorable abbreviation for a project called '{repoName}'. Output ONLY the letters.
+   Respond with ONLY 2-5 uppercase letters, nothing else. Generate a short memorable abbreviation for a project called '{repoName}'. Output ONLY the letters.
    ```
 
    The agent's response is parsed leniently (extract first alphanumeric token, uppercase it) and validated (1-5 uppercase alphanumeric chars). If invalid, retry up to 3 times with the same prompt. If all retries fail, prompt the user to manually enter a prefix. The validated prefix is stored in `project_config.task_prefix`. If the directory name is empty or unusable (e.g., root `/`, or `.`), the user is prompted to provide a project name first, which is used in place of `{repoName}`.
@@ -228,10 +227,10 @@ The prefix is generated once and persisted — it never changes, even if the age
 
 **Init state detection:**
 
-The frontend checks `GET /status` on mount, which returns `{ initialized: boolean, projectConfig?: ProjectConfig }`. `initialized` is `true` if and only if `project_config` has a row. If `false`, the frontend renders the init wizard as a full-page view (not a modal). If agent config is saved but prefix generation hasn't completed (partial init), the wizard resumes at step 3.
+The frontend checks `GET /status` on mount, which returns `{ initialized: boolean, projectConfig?: ProjectConfig, repoName: string }`. `initialized` is `true` if and only if `project_config` has a row. If `false`, the frontend renders the init wizard as a full-page view (not a modal). If agent config is saved but prefix generation hasn't completed (partial init), the wizard resumes at step 3.
 
 **Error handling during init:**
-- **Agent call fails entirely** (connection refused, CLI not found, timeout, HTTP 500): the init flow does NOT proceed. The error is displayed to the user and they are sent back to step 1 (agent configuration). A working agent is the backbone of the tool — there is no point setting up the board if the agent is unreachable. The user must fix their agent config and re-test until the agent responds successfully.
+- **Agent call fails entirely** (connection refused, CLI not found, timeout, HTTP 500): the init flow does NOT proceed. The error is displayed to the user on the test step, and they can click "Back" to return to agent configuration. A working agent is the backbone of the tool — there is no point setting up the board if the agent is unreachable. The user must fix their agent config and re-test until the agent responds successfully.
 - **Agent responds but with bad output** (too long, non-alphanumeric, prose-wrapped): handled by the lenient parsing and retry logic described in step 3.
 
 **Why AI-generated prefixes:**
@@ -337,7 +336,7 @@ interface AgentResult {
 - `workingDir` — the agent always operates in the repo root. This keeps it repo-agnostic — the adapter doesn't need to know anything about the repo.
 
 **CLI Adapter:**
-- The `cli_cmd` string is **parsed using `shell-quote` into an argv array** (e.g., `"/path/to my/claude" --print` → `["/path/to my/claude", "--print"]`). `Bun.spawn` is always called with an array, never a shell string. The prompt is never interpolated into the command — it goes via stdin, positional arg, or flag value only. This prevents shell injection from prompt content.
+- The `cli_cmd` string is **parsed using `shell-quote` into an argv array** (e.g., `"/path/to my/claude" --print` → `["/path/to my/claude", "--print"]`). Node.js `child_process.spawn` is always called with an array, never a shell string. The process is spawned with `detached: true` to create a new process group. The prompt is never interpolated into the command — it goes via stdin, positional arg, or flag value only. This prevents shell injection from prompt content.
 - **Prompt delivery** is configurable via `cli_prompt_mode`:
   - `stdin` — pipes the prompt to the process's stdin.
   - `argument` — appends the prompt as a final element in the argv array.
@@ -345,7 +344,7 @@ interface AgentResult {
 - Pipes stdout/stderr to `onOutput` line by line.
 - **Output sanitization:** individual lines are truncated at 10KB before storing or streaming. Non-UTF-8 byte sequences are replaced with `[binary data, <size>]`. ANSI escape sequences (colored terminal output) are stripped via regex (`/\x1b\[[0-9;]*m/g`) before storing. This prevents binary output from bloating the DB and ANSI codes from cluttering the log viewer.
 - Resolves the promise when the process exits; `success = exit code 0`.
-- **Process tree kill:** the process is spawned in its own process group. On cancellation, SIGTERM is sent to the entire process group (`-pid`), with a 5-second grace period before SIGKILL. This ensures child processes spawned by the agent (subshells, workers) are also terminated. The lock file FD is not inherited by child processes (closed before spawn) to prevent lock leaks on parent crash.
+- **Process tree kill:** the process is spawned in its own process group via `detached: true`. On cancellation, SIGTERM is sent to the entire process group (`-pid`), with a 5-second grace period before SIGKILL. This ensures child processes spawned by the agent (subshells, workers) are also terminated.
 - **Timeout:** a timer starts when the process spawns. If `timeout_ms` elapses, the abort signal fires and the process tree is killed. A log entry records the timeout.
 - The child PID and current timestamp are stored in `tasks.agent_pid` and `tasks.agent_started_at` for crash recovery.
 
@@ -418,6 +417,8 @@ event: task:updated
 data: { task: Task }
 id: <event_id>
 
+If the task was deleted, the `task` object includes a `_deleted: true` flag. The frontend uses this to remove the task from the store.
+
 event: task:log
 data: { taskId: number, log: { timestamp, level, message, runNumber } }
 id: <event_id>
@@ -444,7 +445,7 @@ The server maintains a **ring buffer of 1000 events**. On reconnect:
 2. If the requested ID is within the buffer, the server replays all events with `id > Last-Event-ID`.
 3. If the requested ID is older than the buffer's oldest event (or the server restarted, resetting IDs), the server emits `event: stale`. The client detects this and triggers a full state rehydration via `GET /tasks`.
 
-A `:heartbeat` comment is sent every 30 seconds to detect dead connections.
+A `:heartbeat` comment is sent every 15 seconds to detect dead connections.
 
 **Frontend SSE handling:**
 
@@ -487,28 +488,28 @@ Status codes:
 
 **Endpoints:**
 
-| Method            | Path                      | Description                | Request Body                                                  | Response                                                                   |
-| ----------------- | ------------------------- | -------------------------- | ------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| `GET`             | `/status`                 | Init state detection       | —                                                             | `{ initialized: boolean, projectConfig?: ProjectConfig }`                  |
-| `GET`             | `/events`                 | SSE event stream           | —                                                             | SSE stream                                                                 |
-| **Tasks**         |                           |                            |                                                               |                                                                            |
-| `GET`             | `/tasks`                  | List all tasks             | Query: `?q=<search>&status=<status>`                          | `{ tasks: Task[] }` (ordered by `sort_order ASC` within each status group) |
-| `POST`            | `/tasks`                  | Create a task              | `{ title, description?, acceptance?, status?, run? }`         | `{ task: Task }`                                                           |
-| `GET`             | `/tasks/:id`              | Get a single task          | —                                                             | `{ task: Task }`                                                           |
-| `PATCH`           | `/tasks/:id`              | Update task fields         | `{ title?, description?, acceptance?, status?, sort_order? }` | `{ task: Task }`                                                           |
-| `DELETE`          | `/tasks/:id`              | Delete a task              | —                                                             | `204 No Content` or `409` if running                                       |
-| **Task Logs**     |                           |                            |                                                               |                                                                            |
-| `GET`             | `/tasks/:id/logs`         | Paginated logs             | Query: `?before_id=N&limit=500&run_number=N`                  | `{ logs: Log[], hasMore: boolean }`                                        |
-| **Agent Control** |                           |                            |                                                               |                                                                            |
-| `POST`            | `/tasks/:id/agent/start`  | Start agent on a task      | —                                                             | `{ task: Task }` or `409`                                                  |
-| `POST`            | `/tasks/:id/agent/cancel` | Cancel a running agent     | —                                                             | `{ task: Task }`                                                           |
-| **Agent Config**  |                           |                            |                                                               |                                                                            |
-| `GET`             | `/agent-config`           | Read agent configuration   | —                                                             | `{ config: AgentConfig }`                                                  |
-| `PUT`             | `/agent-config`           | Update agent configuration | `AgentConfig fields`                                          | `{ config: AgentConfig }`                                                  |
-| `POST`            | `/agent-config/test`      | Test agent connection      | —                                                             | `{ success: boolean, durationMs: number, error?: string }`                 |
-| **Init**          |                           |                            |                                                               |                                                                            |
-| `POST`            | `/init/generate-prefix`   | Trigger prefix generation  | `{ repoName: string }`                                        | `{ prefix: string }` or error                                              |
-| `POST`            | `/init/save-prefix`       | Save the accepted prefix   | `{ prefix: string }`                                          | `{ projectConfig: ProjectConfig }`                                         |
+| Method            | Path                      | Description                | Request Body                                                  | Response                                                                    |
+| ----------------- | ------------------------- | -------------------------- | ------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| `GET`             | `/status`                 | Init state detection       | —                                                             | `{ initialized: boolean, projectConfig?: ProjectConfig, repoName: string }` |
+| `GET`             | `/events`                 | SSE event stream           | —                                                             | SSE stream                                                                  |
+| **Tasks**         |                           |                            |                                                               |                                                                             |
+| `GET`             | `/tasks`                  | List all tasks             | Query: `?q=<search>&status=<status>`                          | `{ tasks: Task[] }` (ordered by `sort_order ASC`)                           |
+| `POST`            | `/tasks`                  | Create a task              | `{ title, description?, acceptance?, status?, run? }`         | `{ task: Task }`                                                            |
+| `GET`             | `/tasks/:id`              | Get a single task          | —                                                             | `{ task: Task }`                                                            |
+| `PATCH`           | `/tasks/:id`              | Update task fields         | `{ title?, description?, acceptance?, status?, sort_order? }` | `{ task: Task }`                                                            |
+| `DELETE`          | `/tasks/:id`              | Delete a task              | —                                                             | `204 No Content` or `409` if running                                        |
+| **Task Logs**     |                           |                            |                                                               |                                                                             |
+| `GET`             | `/tasks/:id/logs`         | Paginated logs             | Query: `?before_id=N&limit=500&run_number=N`                  | `{ logs: Log[], hasMore: boolean }`                                         |
+| **Agent Control** |                           |                            |                                                               |                                                                             |
+| `POST`            | `/tasks/:id/agent/start`  | Start agent on a task      | —                                                             | `{ task: Task }` or `409`                                                   |
+| `POST`            | `/tasks/:id/agent/cancel` | Cancel a running agent     | —                                                             | `{ task: Task }`                                                            |
+| **Agent Config**  |                           |                            |                                                               |                                                                             |
+| `GET`             | `/agent-config`           | Read agent configuration   | —                                                             | `{ config: AgentConfig }`                                                   |
+| `PUT`             | `/agent-config`           | Update agent configuration | `AgentConfig fields`                                          | `{ config: AgentConfig }`                                                   |
+| `POST`            | `/agent-config/test`      | Test agent connection      | —                                                             | `{ success: boolean, durationMs: number, error?: string }`                  |
+| **Init**          |                           |                            |                                                               |                                                                             |
+| `POST`            | `/init/generate-prefix`   | Trigger prefix generation  | `{ repoName: string }`                                        | `{ prefix: string }` or error                                               |
+| `POST`            | `/init/save-prefix`       | Save the accepted prefix   | `{ prefix: string }`                                          | `{ projectConfig: ProjectConfig }`                                          |
 
 **Task creation notes:**
 - `POST /tasks` requires `title` (1-500 chars). `description` (max 50,000 chars) and `acceptance` (max 50,000 chars) are optional (default to `''`).
@@ -559,7 +560,7 @@ Status codes:
 - A separate list view accessible from the side navigation (not a board column). Tasks are created in the backlog by default.
 - The backlog is for longer-term planning — tasks the user hasn't committed to working on yet.
 - No drag-and-drop — the backlog is a plain list, not part of the Kanban board. Tasks are moved to the board via explicit UI actions: "Move to Todo", "Run Now" (moves directly to in-progress and starts the agent), "Mark as Done" (closes without running).
-- The backlog supports search and filtering by title/description to handle large numbers of tasks.
+- The backlog supports client-side search and filtering by title/description.
 
 **Task creation:**
 - A "Create Task" button is available from both the board and the backlog.
@@ -583,7 +584,7 @@ Status codes:
 - Accessible from the sidebar settings icon (not just during init).
 - Shows a warning banner while an agent is running: *"Config changes apply to future runs only."*
 - Defaults to CLI mode with a single "Command" input. Advanced options (prompt mode, flag, timeout) are behind an "Advanced" accordion.
-- Preset dropdown for common tools: "Claude Code", "Aider", "Codex", "Custom CLI", "OpenAI-compatible API".
+- Preset buttons for common tools: "Crush", "Claude Code", "Aider", "Codex", "Custom CLI".
 - API mode tab: URL, headers editor (key-value pairs), model name, request format (OpenAI/Ollama), stream format (SSE/NDJSON/none).
 - "Test Connection" button that sends `"Respond with exactly: OK"` with a 30-second timeout. Pass = exit code 0 (CLI) or HTTP 2xx (API). Any response content is a pass. Shows pass/fail result only.
 
@@ -678,7 +679,7 @@ The server follows a strict startup sequence:
 - The backend serves the pre-built frontend from `packages/frontend/dist/` as static files in production (single process).
 - In development, Vite runs on a separate port with a proxy to the backend.
 - The backend detects `process.cwd()` as the working directory and passes it to agents.
-- **Port selection:** the server defaults to port 4200. If the port is taken, it auto-increments (4201, 4202, ...) until it finds an open port. The user can also specify `--port <number>` to override. The actual port is logged to the console on startup.
+- **Port selection:** the server defaults to port 4200. If the port is taken, the server exits with an error message directing the user to free the port or use `--port <number>` to specify an alternative. The actual port is logged to the console on startup.
 
 **Build & packaging:**
 
@@ -752,7 +753,7 @@ Implementation should follow this phased order:
 - Schema migrations via `PRAGMA user_version`
 - Request body size limit (1MB)
 - Auto-append `.tasks_manager/` to `.gitignore`
-- Port auto-selection with `--port` override
+- Port default (4200) with `--port` override
 
 ## Post-MVP (What's Out)
 

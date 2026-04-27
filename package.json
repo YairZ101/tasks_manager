@@ -10,6 +10,7 @@
     "packages/*"
   ],
   "scripts": {
+    "start": "bun ./packages/backend/src/index.ts",
     "dev": "concurrently -n be,fe -c blue,green \"bun --watch packages/backend/src/index.ts\" \"cd packages/frontend && bun run dev\"",
     "build": "cd packages/frontend && bun run build",
     "prepublishOnly": "cd packages/frontend && bun run build"

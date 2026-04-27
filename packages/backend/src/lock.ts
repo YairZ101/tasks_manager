@@ -44,16 +44,18 @@ export function acquireLock(repoRoot: string): void {
     const lock: LockData = JSON.parse(content);
 
     if (isProcessAlive(lock.pid)) {
-      // Check if it's really the same process (PID reuse detection)
       const actualStartTime = getProcessStartTime(lock.pid);
       if (actualStartTime !== null) {
-        // Process is alive — refuse to start
-        console.error(
-          `Another instance of tasks-manager is already running in this directory (PID: ${lock.pid}).`
-        );
-        process.exit(1);
+        const storedTime = new Date(lock.startedAt).getTime();
+        const actualTime = new Date(actualStartTime).getTime();
+        const driftMs = Math.abs(storedTime - actualTime);
+        if (driftMs < 2000) {
+          console.error(
+            `Another instance of tasks-manager is already running in this directory (PID: ${lock.pid}).`
+          );
+          process.exit(1);
+        }
       }
-      // Can't determine start time — assume PID reused, overwrite
     }
   } catch {
     // No lock file or invalid JSON — proceed

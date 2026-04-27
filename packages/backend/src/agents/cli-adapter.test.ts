@@ -190,9 +190,8 @@ describe('CliAdapter', () => {
   });
 
   test('abort signal cancels the process', async () => {
-    // Use a trap-aware script that exits immediately on SIGTERM
     const adapter = new CliAdapter(
-      makeConfig({ cli_cmd: 'sh -c "trap exit TERM; while true; do sleep 0.1; done"', cli_prompt_mode: 'stdin' })
+      makeConfig({ cli_cmd: 'sh -c "sleep 300"', cli_prompt_mode: 'argument' })
     );
     const controller = new AbortController();
 
@@ -204,10 +203,12 @@ describe('CliAdapter', () => {
       signal: controller.signal,
     });
 
-    setTimeout(() => controller.abort(), 200);
+    // Wait for the process to actually start, then abort
+    await new Promise((r) => setTimeout(r, 500));
+    controller.abort();
 
     await expect(promise).rejects.toThrow('cancelled');
-  }, 10000);
+  }, 15000);
 
   test('runs in the specified working directory', async () => {
     const adapter = new CliAdapter(makeConfig({ cli_cmd: 'pwd', cli_prompt_mode: 'stdin' }));

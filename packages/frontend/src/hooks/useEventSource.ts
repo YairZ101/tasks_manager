@@ -3,6 +3,7 @@ import { useAppStore } from './useTaskStore.js';
 
 export function useEventSource() {
   const updateTaskInStore = useAppStore((s) => s.updateTaskInStore);
+  const removeTaskFromStore = useAppStore((s) => s.removeTaskFromStore);
   const fetchTasks = useAppStore((s) => s.fetchTasks);
   const esRef = useRef<EventSource | null>(null);
   const logBufferRef = useRef<any[]>([]);
@@ -23,17 +24,12 @@ export function useEventSource() {
       try {
         const data = JSON.parse(e.data);
         if (data.task) {
-          updateTaskInStore(data.task);
+          if (data.task._deleted) {
+            removeTaskFromStore(data.task.id);
+          } else {
+            updateTaskInStore(data.task);
+          }
         }
-      } catch {
-        // Invalid event data
-      }
-    });
-
-    es.addEventListener('task:log', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        logBufferRef.current.push(data);
       } catch {
         // Invalid event data
       }
@@ -68,11 +64,16 @@ export function useEventSource() {
       // EventSource auto-reconnects
     };
 
-    // Flush log buffer every 100ms
-    const flushInterval = setInterval(() => {
+    // Flush log buffer via requestAnimationFrame with 100ms throttle
+    let lastFlush = 0;
+    let rafId: number | null = null;
+
+    const flushLogs = () => {
+      rafId = null;
       if (logBufferRef.current.length > 0) {
         const batch = logBufferRef.current;
         logBufferRef.current = [];
+        lastFlush = performance.now();
 
         for (const entry of batch) {
           const cb = logCallbacksRef.current.get(entry.taskId);
@@ -81,13 +82,36 @@ export function useEventSource() {
           }
         }
       }
-    }, 100);
+    };
+
+    const scheduleFlush = () => {
+      if (rafId !== null) return;
+      const elapsed = performance.now() - lastFlush;
+      if (elapsed >= 100) {
+        rafId = requestAnimationFrame(flushLogs);
+      } else {
+        setTimeout(() => {
+          rafId = requestAnimationFrame(flushLogs);
+        }, 100 - elapsed);
+      }
+    };
+
+    // Patch the log listener to schedule flushes
+    es.addEventListener('task:log', (e: any) => {
+      try {
+        const data = JSON.parse(e.data);
+        logBufferRef.current.push(data);
+        scheduleFlush();
+      } catch {
+        // Invalid event data
+      }
+    });
 
     return () => {
       es.close();
-      clearInterval(flushInterval);
+      if (rafId !== null) cancelAnimationFrame(rafId);
     };
-  }, [updateTaskInStore, fetchTasks]);
+  }, [updateTaskInStore, removeTaskFromStore, fetchTasks]);
 
   return { registerLogCallback };
 }

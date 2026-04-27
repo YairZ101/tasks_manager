@@ -62,7 +62,7 @@ export default function TaskCard({ task, isDragging, onClick, showActions }: Tas
       <p className="text-sm font-medium text-text leading-snug line-clamp-2">{task.title}</p>
 
       {/* Quick run button for todo tasks */}
-      {(task.status === 'todo' || showActions) && !task.agent_status && (
+      {(task.status === 'todo' || showActions) && task.agent_status !== 'running' && (
         <Tooltip label="Run Agent" className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100">
           <button
             onClick={handleRunAgent}

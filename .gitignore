@@ -4,6 +4,7 @@ node_modules/
 # Build output
 packages/frontend/dist/
 packages/backend/dist/
+*.tsbuildinfo
 
 # Runtime data
 .tasks_manager/

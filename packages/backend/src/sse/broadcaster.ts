@@ -49,8 +49,8 @@ class SSEBroadcaster {
           const id = parseInt(lastEventId, 10);
           if (!isNaN(id)) {
             const oldest = this.buffer.length > 0 ? this.buffer[0].id : this.nextId;
-            if (id < oldest) {
-              // Buffer doesn't have the event — send stale
+            if (id < oldest || (this.buffer.length === 0 && id >= this.nextId)) {
+              // Buffer doesn't cover the requested ID (too old, or server restarted)
               this.writeToClient(client, { id: this.allocId(), event: 'stale', data: {} });
             } else {
               // Replay events after the last received one

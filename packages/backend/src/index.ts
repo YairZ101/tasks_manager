@@ -140,20 +140,37 @@ console.log(`\n  🚀 Tasks Manager running at http://localhost:${port}\n`);
 const shutdown = () => {
   console.log('\nShutting down...');
 
-  // Kill running agent
-  shutdownAgent();
+  // Step 1: Stop accepting new requests
+  server.stop();
 
-  // Stop SSE
+  // Step 2: Kill running agent and wait for it to die
+  const agentPid = shutdownAgent();
+  if (agentPid) {
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(agentPid, 0);
+        Bun.sleepSync(100);
+      } catch {
+        break;
+      }
+    }
+    // Force kill if still alive
+    try {
+      process.kill(-agentPid, 'SIGKILL');
+    } catch {
+      try { process.kill(agentPid, 'SIGKILL'); } catch { /* dead */ }
+    }
+  }
+
+  // Step 3: Stop SSE
   broadcaster.stop();
 
-  // Close DB
+  // Step 4: Close DB
   closeDb();
 
-  // Release lock
+  // Step 5: Release lock
   releaseLock(repoRoot);
-
-  // Stop server
-  server.stop();
 
   process.exit(0);
 };

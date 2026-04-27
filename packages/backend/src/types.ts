@@ -56,6 +56,7 @@ export interface AgentResult {
 export interface AgentAdapter {
   execute(params: {
     task: Task;
+    prompt: string;
     workingDir: string;
     onOutput: (line: string) => void;
     signal: AbortSignal;

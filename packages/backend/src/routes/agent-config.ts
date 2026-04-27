@@ -169,7 +169,6 @@ agentConfig.post('/test', async (c) => {
       acceptance: '',
       status: 'todo',
       agent_status: null,
-      _prompt: testPrompt,
     };
 
     const adapter =
@@ -177,6 +176,7 @@ agentConfig.post('/test', async (c) => {
 
     await adapter.execute({
       task: dummyTask,
+      prompt: testPrompt,
       workingDir: process.cwd(),
       onOutput: () => {},
       signal: abortController.signal,

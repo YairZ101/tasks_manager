@@ -1,4 +1,5 @@
 import { parse } from 'shell-quote';
+import { spawn as nodeSpawn } from 'child_process';
 import type { AgentAdapter, AgentConfig, AgentResult, Task } from '../types.js';
 import { getDb } from '../db/database.js';
 
@@ -31,13 +32,13 @@ export class CliAdapter implements AgentAdapter {
   }
 
   async execute(params: {
-    task: Task & { _prompt?: string };
+    task: Task;
+    prompt: string;
     workingDir: string;
     onOutput: (line: string) => void;
     signal: AbortSignal;
   }): Promise<AgentResult> {
-    const { task, workingDir, onOutput, signal } = params;
-    const prompt = (task as any)._prompt || task.title;
+    const { task, prompt, workingDir, onOutput, signal } = params;
 
     if (!this.config.cli_cmd) {
       throw new Error('CLI command not configured');
@@ -64,65 +65,69 @@ export class CliAdapter implements AgentAdapter {
 
     const useStdin = this.config.cli_prompt_mode === 'stdin';
 
-    const proc = Bun.spawn(finalArgv, {
+    const proc = nodeSpawn(finalArgv[0], finalArgv.slice(1), {
       cwd: workingDir,
-      stdin: useStdin ? 'pipe' : 'ignore',
-      stdout: 'pipe',
-      stderr: 'pipe',
+      stdio: [useStdin ? 'pipe' : 'ignore', 'pipe', 'pipe'],
       env: { ...process.env },
+      detached: true,
     });
+
+    const pid = proc.pid!;
 
     // Store PID for crash recovery
     try {
       const db = getDb();
       db.query(
         `UPDATE tasks SET agent_pid = ?, agent_started_at = ? WHERE id = ?`
-      ).run(proc.pid, new Date().toISOString(), task.id);
+      ).run(pid, new Date().toISOString(), task.id);
     } catch {
       // Non-fatal
     }
 
     // Write prompt to stdin if needed
     if (useStdin && proc.stdin) {
-      const writer = proc.stdin.getWriter();
-      await writer.write(new TextEncoder().encode(prompt));
-      await writer.close();
+      proc.stdin.write(prompt);
+      proc.stdin.end();
     }
 
-    // Handle abort signal
+    // Handle abort signal — kill entire process group
     const abortHandler = () => {
       try {
-        proc.kill('SIGTERM');
-        setTimeout(() => {
+        process.kill(-pid, 'SIGTERM');
+      } catch {
+        try {
+          proc.kill('SIGTERM');
+        } catch {
+          // Already dead
+        }
+      }
+      setTimeout(() => {
+        try {
+          process.kill(-pid, 'SIGKILL');
+        } catch {
           try {
             proc.kill('SIGKILL');
           } catch {
             // Already dead
           }
-        }, 5000);
-      } catch {
-        // Already dead
-      }
+        }
+      }, 5000);
     };
 
     signal.addEventListener('abort', abortHandler, { once: true });
 
     // Read stdout and stderr
     const readStream = async (
-      stream: ReadableStream<Uint8Array> | null,
+      stream: NodeJS.ReadableStream | null,
       handler: (line: string) => void
     ) => {
       if (!stream) return;
-      const reader = stream.getReader();
-      const decoder = new TextDecoder();
-      let buffer = '';
 
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
+      return new Promise<void>((resolve) => {
+        let buffer = '';
 
-          buffer += decoder.decode(value, { stream: true });
+        stream.on('data', (chunk: Buffer) => {
+          buffer += chunk.toString('utf-8');
           const lines = buffer.split('\n');
           buffer = lines.pop() || '';
 
@@ -130,16 +135,18 @@ export class CliAdapter implements AgentAdapter {
             const sanitized = sanitizeLine(line);
             if (sanitized) handler(sanitized);
           }
-        }
+        });
 
-        // Flush remaining buffer
-        if (buffer) {
-          const sanitized = sanitizeLine(buffer);
-          if (sanitized) handler(sanitized);
-        }
-      } catch {
-        // Stream closed
-      }
+        stream.on('end', () => {
+          if (buffer) {
+            const sanitized = sanitizeLine(buffer);
+            if (sanitized) handler(sanitized);
+          }
+          resolve();
+        });
+
+        stream.on('error', () => resolve());
+      });
     };
 
     await Promise.all([
@@ -147,7 +154,9 @@ export class CliAdapter implements AgentAdapter {
       readStream(proc.stderr, onOutput),
     ]);
 
-    const exitCode = await proc.exited;
+    const exitCode = await new Promise<number | null>((resolve) => {
+      proc.on('exit', (code) => resolve(code));
+    });
 
     signal.removeEventListener('abort', abortHandler);
 

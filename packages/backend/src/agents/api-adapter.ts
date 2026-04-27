@@ -8,13 +8,13 @@ export class ApiAdapter implements AgentAdapter {
   }
 
   async execute(params: {
-    task: Task & { _prompt?: string };
+    task: Task;
+    prompt: string;
     workingDir: string;
     onOutput: (line: string) => void;
     signal: AbortSignal;
   }): Promise<AgentResult> {
-    const { task, onOutput, signal } = params;
-    const prompt = (task as any)._prompt || task.title;
+    const { task, prompt, onOutput, signal } = params;
 
     if (!this.config.api_url) {
       throw new Error('API URL not configured');

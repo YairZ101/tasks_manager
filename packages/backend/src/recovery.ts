@@ -69,13 +69,15 @@ export function runCrashRecovery(): void {
   for (const task of runningTasks) {
     if (task.agent_pid != null) {
       if (isProcessAlive(task.agent_pid)) {
-        // Verify PID hasn't been recycled
         const actualStartTime = getProcessStartTime(task.agent_pid);
-        if (actualStartTime !== null) {
-          // Matches — kill it
-          killProcessTree(task.agent_pid);
+        if (actualStartTime !== null && task.agent_started_at !== null) {
+          const storedTime = new Date(task.agent_started_at).getTime();
+          const actualTime = new Date(actualStartTime).getTime();
+          const driftMs = Math.abs(storedTime - actualTime);
+          if (driftMs < 2000) {
+            killProcessTree(task.agent_pid);
+          }
         }
-        // If we can't determine start time, skip the kill — process is likely recycled
       }
     }
 

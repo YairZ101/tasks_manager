@@ -48,8 +48,8 @@ init.post('/generate-prefix', async (c) => {
           sort_order: 0,
           created_at: '',
           updated_at: '',
-          _prompt: prompt,
-        } as any,
+        },
+        prompt,
         workingDir: process.cwd(),
         onOutput: (line: string) => {
           lastOutput += line + '\n';

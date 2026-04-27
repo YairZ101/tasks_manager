@@ -59,7 +59,8 @@ function runMigrations(db: Database): void {
         task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
         run_number INTEGER NOT NULL DEFAULT 1,
         timestamp  TEXT NOT NULL DEFAULT (datetime('now')),
-        level      TEXT NOT NULL DEFAULT 'info',
+        level      TEXT NOT NULL DEFAULT 'info'
+                   CHECK (level IN ('info', 'warn', 'error', 'agent')),
         message    TEXT NOT NULL
       );
 

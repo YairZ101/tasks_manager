@@ -1,6 +1,7 @@
 import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
 import { startAgent, getMutexState } from '../executor/executor.js';
+import { broadcaster } from '../sse/broadcaster.js';
 import type { Task, ProjectConfig } from '../types.js';
 
 const tasks = new Hono();
@@ -119,7 +120,6 @@ tasks.post('/', async (c) => {
   const task = createTask();
 
   // Broadcast task creation
-  const { broadcaster } = await import('../sse/broadcaster.js');
   broadcaster.broadcast('task:updated', { task });
 
   // If run=true, start the agent
@@ -129,8 +129,14 @@ tasks.post('/', async (c) => {
       const updatedTask = await startAgent(task.id, workingDir);
       return c.json({ task: updatedTask }, 201);
     } catch (err: any) {
-      // Task was created but agent couldn't start — return the task anyway
-      return c.json({ task, agentError: err.message }, 201);
+      // Rollback: delete the task since the atomic create-and-run failed
+      db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
+      broadcaster.broadcast('task:updated', { task: { ...task, _deleted: true } });
+      const statusCode = err.status || 500;
+      return c.json(
+        { error: err.message, busyTaskKey: err.busyTaskKey },
+        statusCode
+      );
     }
   }
 
@@ -246,9 +252,25 @@ tasks.patch('/:id', async (c) => {
     }
     // If moving to done, preserve agent_status
 
-    db.query(
-      `UPDATE tasks SET status = ?, agent_status = ?, sort_order = ?, agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
-    ).run(status, newAgentStatus, newSortOrder, id);
+    // Build update including any field changes alongside the status change
+    const setClauses = ['status = ?', 'agent_status = ?', 'sort_order = ?', 'agent_pid = NULL', 'agent_started_at = NULL'];
+    const setParams: any[] = [status, newAgentStatus, newSortOrder];
+
+    if (title !== undefined) {
+      setClauses.push('title = ?');
+      setParams.push(title);
+    }
+    if (description !== undefined) {
+      setClauses.push('description = ?');
+      setParams.push(description);
+    }
+    if (acceptance !== undefined) {
+      setClauses.push('acceptance = ?');
+      setParams.push(acceptance);
+    }
+
+    setParams.push(id);
+    db.query(`UPDATE tasks SET ${setClauses.join(', ')} WHERE id = ?`).run(...setParams);
   } else {
     // Non-status updates
     const updates: string[] = [];
@@ -280,7 +302,6 @@ tasks.patch('/:id', async (c) => {
   const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id)!;
 
   // Broadcast
-  const { broadcaster } = await import('../sse/broadcaster.js');
   broadcaster.broadcast('task:updated', { task: updatedTask });
 
   return c.json({ task: updatedTask });
@@ -305,6 +326,8 @@ tasks.delete('/:id', (c) => {
   }
 
   db.query('DELETE FROM tasks WHERE id = ?').run(id);
+
+  broadcaster.broadcast('task:updated', { task: { ...task, _deleted: true } });
 
   return c.body(null, 204);
 });

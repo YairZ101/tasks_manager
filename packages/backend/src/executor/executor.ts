@@ -9,6 +9,8 @@ interface MutexState {
   taskKey: string | null;
   taskId: number | null;
   abortController: AbortController | null;
+  completionPromise: Promise<void> | null;
+  resolveCompletion: (() => void) | null;
 }
 
 const mutex: MutexState = {
@@ -16,6 +18,8 @@ const mutex: MutexState = {
   taskKey: null,
   taskId: null,
   abortController: null,
+  completionPromise: null,
+  resolveCompletion: null,
 };
 
 export function getMutexState(): { held: boolean; taskKey: string | null; taskId: number | null } {
@@ -70,6 +74,8 @@ export async function startAgent(
   // Acquire mutex
   mutex.held = true;
 
+  let originalTask: Task | null = null;
+
   try {
     // Get the task
     const task = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId);
@@ -77,31 +83,35 @@ export async function startAgent(
       throw Object.assign(new Error('Task not found'), { status: 404 });
     }
 
+    originalTask = task;
     mutex.taskKey = task.task_key;
     mutex.taskId = task.id;
 
-    // Update task status to in-progress
-    const maxOrder = db
-      .query<{ max_order: number | null }, [string]>(
-        `SELECT MAX(sort_order) as max_order FROM tasks WHERE status = ?`
-      )
-      .get('in-progress');
-    const newOrder = (maxOrder?.max_order ?? 0) + 1.0;
+    // Update task status to in-progress (transactional)
+    const prepareRun = db.transaction(() => {
+      const maxOrder = db
+        .query<{ max_order: number | null }, [string]>(
+          `SELECT MAX(sort_order) as max_order FROM tasks WHERE status = ?`
+        )
+        .get('in-progress');
+      const newOrder = (maxOrder?.max_order ?? 0) + 1.0;
 
-    db.query(
-      `UPDATE tasks SET status = 'in-progress', agent_status = 'running', sort_order = ? WHERE id = ?`
-    ).run(newOrder, taskId);
+      db.query(
+        `UPDATE tasks SET status = 'in-progress', agent_status = 'running', sort_order = ? WHERE id = ?`
+      ).run(newOrder, taskId);
 
-    // Get updated task
-    const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
+      const runRow = db
+        .query<{ max_run: number | null }, [number]>(
+          `SELECT MAX(run_number) as max_run FROM task_logs WHERE task_id = ?`
+        )
+        .get(taskId);
+      const runNumber = ((runRow?.max_run ?? 0) || 0) + 1;
 
-    // Calculate run number
-    const runRow = db
-      .query<{ max_run: number | null }, [number]>(
-        `SELECT MAX(run_number) as max_run FROM task_logs WHERE task_id = ?`
-      )
-      .get(taskId);
-    const runNumber = ((runRow?.max_run ?? 0) || 0) + 1;
+      const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
+      return { updatedTask, runNumber };
+    });
+
+    const { updatedTask, runNumber } = prepareRun();
 
     // Load agent config
     const config = db.query<AgentConfig, []>('SELECT * FROM agent_config WHERE id = 1').get();
@@ -113,9 +123,14 @@ export async function startAgent(
     broadcaster.broadcast('task:updated', { task: updatedTask });
     broadcaster.broadcast('agent:status', { taskId, status: 'running' });
 
-    // Create abort controller
+    // Create abort controller and completion promise
     const abortController = new AbortController();
     mutex.abortController = abortController;
+    let resolveCompletion: () => void;
+    mutex.completionPromise = new Promise<void>((resolve) => {
+      resolveCompletion = resolve;
+    });
+    mutex.resolveCompletion = resolveCompletion!;
 
     // Set up timeout
     const timeoutTimer = setTimeout(() => {
@@ -126,9 +141,6 @@ export async function startAgent(
     const adapter = getAdapter(config);
     const prompt = buildPrompt(updatedTask, workingDir);
 
-    // Provide prompt to adapter by setting it on the task
-    const taskWithPrompt = { ...updatedTask, _prompt: prompt };
-
     // Track log failures
     let logsFailing = false;
     let lostLogCount = 0;
@@ -137,7 +149,8 @@ export async function startAgent(
     const executeAgent = async () => {
       try {
         const result: AgentResult = await adapter.execute({
-          task: taskWithPrompt,
+          task: updatedTask,
+          prompt,
           workingDir,
           onOutput: (line: string) => {
             if (!logsFailing) {
@@ -241,10 +254,14 @@ export async function startAgent(
         });
       } finally {
         // Release mutex
+        const resolve = mutex.resolveCompletion;
         mutex.held = false;
         mutex.taskKey = null;
         mutex.taskId = null;
         mutex.abortController = null;
+        mutex.completionPromise = null;
+        mutex.resolveCompletion = null;
+        resolve?.();
       }
     };
 
@@ -253,12 +270,27 @@ export async function startAgent(
 
     return updatedTask;
   } catch (err: any) {
-    // If we fail before actually starting the agent, release mutex
+    // If we fail before actually starting the agent, release mutex and rollback DB
     if (mutex.taskId === taskId || !mutex.taskId) {
+      if (originalTask) {
+        try {
+          db.query(
+            `UPDATE tasks SET status = ?, agent_status = ?, sort_order = ? WHERE id = ?`
+          ).run(originalTask.status, originalTask.agent_status, originalTask.sort_order, taskId);
+          broadcaster.broadcast('task:updated', { task: originalTask });
+        } catch {
+          // Best effort rollback
+        }
+      }
+
+      const resolve = mutex.resolveCompletion;
       mutex.held = false;
       mutex.taskKey = null;
       mutex.taskId = null;
       mutex.abortController = null;
+      mutex.completionPromise = null;
+      mutex.resolveCompletion = null;
+      resolve?.();
     }
     throw err;
   }
@@ -276,16 +308,17 @@ export async function cancelAgent(taskId: number): Promise<Task> {
     throw Object.assign(new Error('No agent running on this task'), { status: 400 });
   }
 
-  // Abort the agent
+  // Abort the agent and wait for executor to finish
+  const completionPromise = mutex.completionPromise;
   if (mutex.abortController && mutex.taskId === taskId) {
     mutex.abortController.abort();
   }
 
-  // The executor's finally block will release the mutex and update status
-  // But we need to wait a bit for that to happen
-  await new Promise((resolve) => setTimeout(resolve, 100));
+  if (completionPromise) {
+    await completionPromise;
+  }
 
-  // Update status in case the abort didn't trigger the finally block yet
+  // Ensure status is set (executor may have set 'failed' already, this is idempotent)
   db.query(
     `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
   ).run(taskId);
@@ -316,12 +349,18 @@ export async function cancelAgent(taskId: number): Promise<Task> {
   return updatedTask;
 }
 
-export function shutdownAgent(): void {
+export function shutdownAgent(): number | null {
   if (mutex.held && mutex.abortController) {
     mutex.abortController.abort();
 
+    let agentPid: number | null = null;
+
     if (mutex.taskId) {
       const db = getDb();
+
+      const task = db.query<Task, [number]>('SELECT agent_pid FROM tasks WHERE id = ?').get(mutex.taskId);
+      agentPid = task?.agent_pid ?? null;
+
       db.query(
         `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
       ).run(mutex.taskId);
@@ -342,9 +381,16 @@ export function shutdownAgent(): void {
       }
     }
 
+    const resolve = mutex.resolveCompletion;
     mutex.held = false;
     mutex.taskKey = null;
     mutex.taskId = null;
     mutex.abortController = null;
+    mutex.completionPromise = null;
+    mutex.resolveCompletion = null;
+    resolve?.();
+
+    return agentPid;
   }
+  return null;
 }

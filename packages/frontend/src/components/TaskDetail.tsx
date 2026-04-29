@@ -7,12 +7,36 @@ import ConfirmDialog from './ConfirmDialog.js';
 
 interface TaskDetailProps {
   taskId: number;
-  registerLogCallback: (taskId: number, cb: (log: any) => void) => () => void;
+  registerLogCallback: (taskId: number, cb: (logs: any[]) => void) => () => void;
 }
 
-type LogRow =
+export type LogRow =
   | { type: 'separator'; runNumber: number; key: string }
   | { type: 'log'; log: TaskLog; key: string };
+
+export function buildLogRows(logs: TaskLog[], collapsedRuns: Set<number>): LogRow[] {
+  if (logs.length === 0) return [];
+  const result: LogRow[] = [];
+  let currentRun: number | null = null;
+  let pendingSeparator: LogRow | null = null;
+
+  for (let i = 0; i < logs.length; i++) {
+    const log = logs[i];
+    if (log.run_number !== currentRun) {
+      currentRun = log.run_number;
+      pendingSeparator = { type: 'separator', runNumber: currentRun, key: `sep-${currentRun}` };
+    }
+    if ((log as any)._runStarted) continue;
+    if (pendingSeparator) {
+      result.push(pendingSeparator);
+      pendingSeparator = null;
+    }
+    if (!collapsedRuns.has(log.run_number)) {
+      result.push({ type: 'log', log, key: `log-${log.id ?? `idx-${i}`}` });
+    }
+  }
+  return result;
+}
 
 export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailProps) {
   const { tasks, updateTaskInStore, removeTaskFromStore, setSelectedTaskId } = useAppStore();
@@ -48,14 +72,21 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
     return () => document.removeEventListener('mousedown', handler);
   }, [closePanel]);
 
-  // Log viewer state
-  const [logs, setLogs] = useState<TaskLog[]>([]);
+  // Log state is stored as a mutable ref + version counter instead of useState.
+  // This avoids copying the full log array on every SSE event (which would re-allocate
+  // on each of potentially thousands of lines). Any mutation to logsRef.current must
+  // be followed by setLogVersion(v => v + 1) to trigger a re-render.
+  const logsRef = useRef<TaskLog[]>([]);
+  const [logVersion, setLogVersion] = useState(0);
+  const logs = logsRef.current;
   const [hasMoreLogs, setHasMoreLogs] = useState(false);
   const [loadingLogs, setLoadingLogs] = useState(false);
   const logContainerRef = useRef<HTMLDivElement>(null);
   const [isAtBottom, setIsAtBottom] = useState(true);
   const autoScrollRef = useRef(true);
   const [collapsedRuns, setCollapsedRuns] = useState<Set<number>>(new Set());
+  const initialLoadDoneRef = useRef(false);
+  const sseBufferRef = useRef<TaskLog[]>([]);
 
   // Load task fields into edit state
   useEffect(() => {
@@ -69,12 +100,23 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
   // Load initial logs
   useEffect(() => {
     let cancelled = false;
+    initialLoadDoneRef.current = false;
+    sseBufferRef.current = [];
+    logsRef.current = [];
     async function loadLogs() {
       setLoadingLogs(true);
       try {
         const data = await api.getTaskLogs(taskId, { limit: 500 });
         if (!cancelled) {
-          setLogs(data.logs);
+          const dbKey = (l: TaskLog) => `${l.run_number}:${l.message}`;
+          const dbSet = new Set(data.logs.map(dbKey));
+          const pending = sseBufferRef.current.filter(
+            (l) => (l as any)._runStarted || !dbSet.has(dbKey(l))
+          );
+          logsRef.current = [...data.logs, ...pending];
+          initialLoadDoneRef.current = true;
+          sseBufferRef.current = [];
+          setLogVersion((v) => v + 1);
           setHasMoreLogs(data.hasMore);
         }
       } catch {
@@ -89,45 +131,48 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
 
   // Register log callback for live streaming
   useEffect(() => {
-    const unsubscribe = registerLogCallback(taskId, (log: TaskLog) => {
-      setLogs((prev) => [...prev, log]);
+    const unsubscribe = registerLogCallback(taskId, (newLogs: TaskLog[]) => {
+      if (!initialLoadDoneRef.current) {
+        sseBufferRef.current = [...sseBufferRef.current, ...newLogs];
+        return;
+      }
+      logsRef.current = [...logsRef.current, ...newLogs];
+      setLogVersion((v) => v + 1);
     });
     return unsubscribe;
   }, [taskId, registerLogCallback]);
 
   // Build rows with run_number separators
-  const rows: LogRow[] = useMemo(() => {
-    if (logs.length === 0) return [];
-    const result: LogRow[] = [];
-    let currentRun: number | null = null;
-    const maxRun = logs.length > 0 ? Math.max(...logs.map((l) => l.run_number)) : 1;
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- logs is a ref, logVersion is the render trigger
+  const rows: LogRow[] = useMemo(() => buildLogRows(logs, collapsedRuns), [logVersion, collapsedRuns]);
 
-    for (const log of logs) {
-      if (log.run_number !== currentRun) {
-        currentRun = log.run_number;
-        result.push({ type: 'separator', runNumber: currentRun, key: `sep-${currentRun}` });
-      }
-      if (!collapsedRuns.has(log.run_number)) {
-        result.push({ type: 'log', log, key: `log-${log.id || result.length}` });
-      }
-    }
-    return result;
-  }, [logs, collapsedRuns]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- same ref pattern as above
+  const maxRun = useMemo(() => {
+    if (logs.length === 0) return 1;
+    return Math.max(...logs.map((l) => l.run_number));
+  }, [logVersion]);
+
+  // Track log count separately so auto-scroll only fires on new logs, not collapse/expand
+  const logCountRef = useRef(logs.length);
 
   // Virtualizer
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => logContainerRef.current,
     estimateSize: (index) => (rows[index]?.type === 'separator' ? 28 : 22),
+    getItemKey: (index) => rows[index]?.key ?? index,
     overscan: 20,
   });
 
-  // Auto-scroll when new logs arrive
+  // Auto-scroll only when new logs arrive (not on collapse/expand)
   useEffect(() => {
-    if (autoScrollRef.current && rows.length > 0) {
+    const prevCount = logCountRef.current;
+    logCountRef.current = logs.length;
+    if (logs.length > prevCount && autoScrollRef.current && rows.length > 0) {
       virtualizer.scrollToIndex(rows.length - 1, { align: 'end' });
     }
-  }, [rows.length]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- scroll on new logs only, not collapse/expand
+  }, [logVersion, rows.length]);
 
   const handleScroll = () => {
     const el = logContainerRef.current;
@@ -150,7 +195,8 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
     setLoadingLogs(true);
     try {
       const data = await api.getTaskLogs(taskId, { before_id: logs[0].id, limit: 500 });
-      setLogs((prev) => [...data.logs, ...prev]);
+      logsRef.current = [...data.logs, ...logsRef.current];
+      setLogVersion((v) => v + 1);
       setHasMoreLogs(data.hasMore);
     } catch {
       toast.error('Failed to load earlier logs');
@@ -500,7 +546,6 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
 
                     if (row.type === 'separator') {
                       const isCollapsed = collapsedRuns.has(row.runNumber);
-                      const maxRun = logs.length > 0 ? Math.max(...logs.map((l) => l.run_number)) : 1;
                       const isCurrent = row.runNumber === maxRun;
                       return (
                         <div
@@ -555,7 +600,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
                         }}
                         className="py-0.5 leading-relaxed"
                       >
-                        <span className={getLogColor(row.log.level)}>{row.log.message}</span>
+                        <span className={getLogColor(row.log.level)}>{row.log.message || '\u00A0'}</span>
                       </div>
                     );
                   })}

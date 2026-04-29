@@ -8,22 +8,32 @@ interface MutexState {
   held: boolean;
   taskKey: string | null;
   taskId: number | null;
+  runNumber: number | null;
   abortController: AbortController | null;
   completionPromise: Promise<void> | null;
   resolveCompletion: (() => void) | null;
+  cancelling: boolean;
 }
 
 const mutex: MutexState = {
   held: false,
   taskKey: null,
   taskId: null,
+  runNumber: null,
   abortController: null,
   completionPromise: null,
+  cancelling: false,
   resolveCompletion: null,
 };
 
 export function getMutexState(): { held: boolean; taskKey: string | null; taskId: number | null } {
   return { held: mutex.held, taskKey: mutex.taskKey, taskId: mutex.taskId };
+}
+
+export async function awaitCompletion(): Promise<void> {
+  if (mutex.completionPromise) {
+    await mutex.completionPromise;
+  }
 }
 
 function getAdapter(config: AgentConfig): AgentAdapter {
@@ -112,6 +122,7 @@ export async function startAgent(
     });
 
     const { updatedTask, runNumber } = prepareRun();
+    mutex.runNumber = runNumber;
 
     // Load agent config
     const config = db.query<AgentConfig, []>('SELECT * FROM agent_config WHERE id = 1').get();
@@ -121,7 +132,7 @@ export async function startAgent(
 
     // Broadcast task update
     broadcaster.broadcast('task:updated', { task: updatedTask });
-    broadcaster.broadcast('agent:status', { taskId, status: 'running' });
+    broadcaster.broadcast('agent:status', { taskId, status: 'running', runNumber });
 
     // Create abort controller and completion promise
     const abortController = new AbortController();
@@ -134,7 +145,7 @@ export async function startAgent(
 
     // Set up timeout
     const timeoutTimer = setTimeout(() => {
-      abortController.abort();
+      abortController.abort('timeout');
     }, config.timeout_ms);
 
     // Get adapter and build prompt
@@ -145,6 +156,59 @@ export async function startAgent(
     let logsFailing = false;
     let lostLogCount = 0;
 
+    const broadcastLog = (level: string, message: string) => {
+      broadcaster.broadcast('task:log', {
+        taskId,
+        log: {
+          task_id: taskId,
+          run_number: runNumber,
+          timestamp: new Date().toISOString(),
+          level,
+          message,
+        },
+      });
+    };
+
+    // Buffered DB log writer — batches inserts into transactions
+    const logBuffer: { level: string; message: string }[] = [];
+    let flushTimer: ReturnType<typeof setTimeout> | null = null;
+
+    const insertLogStmt = db.query(
+      `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, ?, ?)`
+    );
+
+    const flushLogBuffer = () => {
+      flushTimer = null;
+      if (logBuffer.length === 0 || logsFailing) return;
+
+      const batch = logBuffer.splice(0);
+      try {
+        db.transaction(() => {
+          for (const entry of batch) {
+            insertLogStmt.run(taskId, runNumber, entry.level, entry.message);
+          }
+        })();
+      } catch (err) {
+        console.error('Failed to flush log buffer:', err);
+        logsFailing = true;
+        lostLogCount += batch.length;
+      }
+    };
+
+    const scheduleFlush = () => {
+      if (flushTimer !== null) return;
+      flushTimer = setTimeout(flushLogBuffer, 50);
+    };
+
+    const queueLog = (level: string, message: string) => {
+      if (logsFailing) {
+        lostLogCount++;
+        return;
+      }
+      logBuffer.push({ level, message });
+      scheduleFlush();
+    };
+
     // Execute agent in the background
     const executeAgent = async () => {
       try {
@@ -153,43 +217,27 @@ export async function startAgent(
           prompt,
           workingDir,
           onOutput: (line: string) => {
-            if (!logsFailing) {
-              try {
-                db.query(
-                  `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, 'agent', ?)`
-                ).run(taskId, runNumber, line);
-              } catch {
-                logsFailing = true;
-                lostLogCount++;
-              }
-            } else {
-              lostLogCount++;
-            }
-
-            broadcaster.broadcast('task:log', {
-              taskId,
-              log: {
-                timestamp: new Date().toISOString(),
-                level: 'agent',
-                message: line,
-                runNumber,
-              },
-            });
+            queueLog('agent', line);
+            broadcastLog('agent', line);
           },
           signal: abortController.signal,
         });
 
         clearTimeout(timeoutTimer);
 
+        // Flush remaining buffered logs
+        if (flushTimer) clearTimeout(flushTimer);
+        flushLogBuffer();
+
         // Log lost lines warning
         if (lostLogCount > 0) {
+          const warnMsg = `${lostLogCount} log lines were lost due to storage error.`;
           try {
-            db.query(
-              `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, 'warn', ?)`
-            ).run(taskId, runNumber, `${lostLogCount} log lines were lost due to storage error.`);
-          } catch {
-            // Nothing we can do
+            insertLogStmt.run(taskId, runNumber, 'warn', warnMsg);
+          } catch (err) {
+            console.error('Failed to write lost-log warning:', err);
           }
+          broadcastLog('warn', warnMsg);
         }
 
         if (result.success) {
@@ -227,40 +275,51 @@ export async function startAgent(
         }
       } catch (err: any) {
         clearTimeout(timeoutTimer);
+        if (flushTimer) clearTimeout(flushTimer);
+        flushLogBuffer();
 
-        const isTimeout = abortController.signal.aborted;
-        const message = isTimeout
-          ? `timed out after ${Math.round(config.timeout_ms / 60000)}m`
-          : (err?.message || 'unknown error');
-
-        db.query(
-          `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
-        ).run(taskId);
+        const isTimeout = abortController.signal.reason === 'timeout';
+        const isCancelled = abortController.signal.aborted && !isTimeout;
 
         try {
           db.query(
-            `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, 'error', ?)`
-          ).run(taskId, runNumber, message);
-        } catch {
-          // Storage error
-        }
+            `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
+          ).run(taskId);
 
-        const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
-        broadcaster.broadcast('task:updated', { task: finalTask });
-        broadcaster.broadcast('agent:status', { taskId, status: 'failed' });
-        broadcaster.broadcast('toast', {
-          type: 'error',
-          message: `${task.task_key} failed: ${message}`,
-        });
+          if (!isCancelled) {
+            const message = isTimeout
+              ? `timed out after ${config.timeout_ms >= 60000 ? `${Math.round(config.timeout_ms / 60000)}m` : `${Math.round(config.timeout_ms / 1000)}s`}`
+              : (err?.message || 'unknown error');
+
+            try {
+              insertLogStmt.run(taskId, runNumber, 'error', message);
+            } catch (err) {
+              console.error('Failed to write error log:', err);
+            }
+            broadcastLog('error', message);
+
+            const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
+            broadcaster.broadcast('task:updated', { task: finalTask });
+            broadcaster.broadcast('agent:status', { taskId, status: 'failed' });
+            broadcaster.broadcast('toast', {
+              type: 'error',
+              message: `${task.task_key} failed: ${message}`,
+            });
+          }
+        } catch {
+          // DB may have been closed during shutdown — cleanup was already handled
+        }
       } finally {
         // Release mutex
         const resolve = mutex.resolveCompletion;
         mutex.held = false;
         mutex.taskKey = null;
         mutex.taskId = null;
+        mutex.runNumber = null;
         mutex.abortController = null;
         mutex.completionPromise = null;
         mutex.resolveCompletion = null;
+        mutex.cancelling = false;
         resolve?.();
       }
     };
@@ -287,9 +346,11 @@ export async function startAgent(
       mutex.held = false;
       mutex.taskKey = null;
       mutex.taskId = null;
+      mutex.runNumber = null;
       mutex.abortController = null;
       mutex.completionPromise = null;
       mutex.resolveCompletion = null;
+      mutex.cancelling = false;
       resolve?.();
     }
     throw err;
@@ -308,14 +369,25 @@ export async function cancelAgent(taskId: number): Promise<Task> {
     throw Object.assign(new Error('No agent running on this task'), { status: 400 });
   }
 
-  // Abort the agent and wait for executor to finish
+  // Only the first concurrent cancel actually aborts and logs; subsequent ones just wait
   const completionPromise = mutex.completionPromise;
-  if (mutex.abortController && mutex.taskId === taskId) {
-    mutex.abortController.abort();
+  const currentRunNumber = mutex.runNumber;
+  const isCanceller = !mutex.cancelling && mutex.abortController != null && mutex.taskId === taskId;
+  if (isCanceller) {
+    mutex.cancelling = true;
+    mutex.abortController!.abort();
   }
 
   if (completionPromise) {
     await completionPromise;
+  }
+
+  // Re-read task after the executor has finished — it may have completed or failed on its own
+  // before the abort signal was processed.
+  const postTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
+
+  if (!isCanceller || postTask.agent_status === 'completed') {
+    return postTask;
   }
 
   // Ensure status is set (executor may have set 'failed' already, this is idempotent)
@@ -323,20 +395,31 @@ export async function cancelAgent(taskId: number): Promise<Task> {
     `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
   ).run(taskId);
 
-  const runRow = db
-    .query<{ max_run: number | null }, [number]>(
+  // Use the run number from the mutex (the current run), falling back to MAX from DB
+  const runNumber = currentRunNumber
+    ?? db.query<{ max_run: number | null }, [number]>(
       `SELECT MAX(run_number) as max_run FROM task_logs WHERE task_id = ?`
-    )
-    .get(taskId);
-  const runNumber = runRow?.max_run ?? 1;
+    ).get(taskId)?.max_run
+    ?? 1;
 
   try {
     db.query(
       `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, 'info', 'Agent cancelled by user.')`
     ).run(taskId, runNumber);
-  } catch {
-    // Storage error
+  } catch (err) {
+    console.error('Failed to write cancel log:', err);
   }
+
+  broadcaster.broadcast('task:log', {
+    taskId,
+    log: {
+      task_id: taskId,
+      run_number: runNumber,
+      timestamp: new Date().toISOString(),
+      level: 'info',
+      message: 'Agent cancelled by user.',
+    },
+  });
 
   const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
   broadcaster.broadcast('task:updated', { task: updatedTask });
@@ -376,8 +459,8 @@ export function shutdownAgent(): number | null {
         db.query(
           `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, 'error', 'Server shutting down — agent run aborted.')`
         ).run(mutex.taskId, runNumber);
-      } catch {
-        // Storage error
+      } catch (err) {
+        console.error('Failed to write shutdown log:', err);
       }
     }
 
@@ -385,6 +468,7 @@ export function shutdownAgent(): number | null {
     mutex.held = false;
     mutex.taskKey = null;
     mutex.taskId = null;
+    mutex.runNumber = null;
     mutex.abortController = null;
     mutex.completionPromise = null;
     mutex.resolveCompletion = null;

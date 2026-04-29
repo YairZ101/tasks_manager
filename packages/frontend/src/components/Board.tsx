@@ -2,16 +2,13 @@ import { useState } from 'react';
 import {
   DndContext,
   DragOverlay,
-  closestCorners,
   pointerWithin,
   useSensor,
   useSensors,
   PointerSensor,
   type DragStartEvent,
   type DragEndEvent,
-  type DragOverEvent,
 } from '@dnd-kit/core';
-import { arrayMove } from '@dnd-kit/sortable';
 import { toast } from 'sonner';
 import { useAppStore, type Task } from '../hooks/useTaskStore.js';
 import { api } from '../api/client.js';

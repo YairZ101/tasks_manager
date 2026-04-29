@@ -20,15 +20,9 @@ export default function AgentConfigModal() {
   const [testing, setTesting] = useState(false);
 
   // Config state
-  const [configType, setConfigType] = useState<'cli' | 'api'>('cli');
   const [cliCmd, setCliCmd] = useState('');
   const [cliPromptMode, setCliPromptMode] = useState<string>('stdin');
   const [cliPromptFlag, setCliPromptFlag] = useState('');
-  const [apiUrl, setApiUrl] = useState('');
-  const [apiHeaders, setApiHeaders] = useState('');
-  const [apiModel, setApiModel] = useState('');
-  const [apiRequestFormat, setApiRequestFormat] = useState('openai');
-  const [apiStreamFormat, setApiStreamFormat] = useState('sse');
   const [timeoutMs, setTimeoutMs] = useState(1800000);
   const [showAdvanced, setShowAdvanced] = useState(false);
   const [testResult, setTestResult] = useState<{ success: boolean; error?: string } | null>(null);
@@ -40,15 +34,9 @@ export default function AgentConfigModal() {
         const data = await api.getAgentConfig();
         const c = data.config;
         if (c) {
-          setConfigType(c.type || 'cli');
           setCliCmd(c.cli_cmd || '');
           setCliPromptMode(c.cli_prompt_mode || 'stdin');
           setCliPromptFlag(c.cli_prompt_flag || '');
-          setApiUrl(c.api_url || '');
-          setApiHeaders(c.api_headers || '');
-          setApiModel(c.api_model || '');
-          setApiRequestFormat(c.api_request_format || 'openai');
-          setApiStreamFormat(c.api_stream_format || 'sse');
           setTimeoutMs(c.timeout_ms || 1800000);
         }
       } catch {
@@ -70,15 +58,9 @@ export default function AgentConfigModal() {
     setSaving(true);
     try {
       await api.updateAgentConfig({
-        type: configType,
         cli_cmd: cliCmd || null,
         cli_prompt_mode: cliPromptMode,
         cli_prompt_flag: cliPromptFlag || null,
-        api_url: apiUrl || null,
-        api_headers: apiHeaders || null,
-        api_model: apiModel || null,
-        api_request_format: apiRequestFormat,
-        api_stream_format: apiStreamFormat,
         timeout_ms: timeoutMs,
       });
       toast.success('Agent config saved');
@@ -97,15 +79,9 @@ export default function AgentConfigModal() {
     // Save first
     try {
       await api.updateAgentConfig({
-        type: configType,
         cli_cmd: cliCmd || null,
         cli_prompt_mode: cliPromptMode,
         cli_prompt_flag: cliPromptFlag || null,
-        api_url: apiUrl || null,
-        api_headers: apiHeaders || null,
-        api_model: apiModel || null,
-        api_request_format: apiRequestFormat,
-        api_stream_format: apiStreamFormat,
         timeout_ms: timeoutMs,
       });
     } catch (err: any) {
@@ -161,202 +137,89 @@ export default function AgentConfigModal() {
             </div>
           ) : (
             <>
-              {/* Type tabs */}
-              <div className="flex border border-border rounded-lg overflow-hidden">
-                <button
-                  onClick={() => setConfigType('cli')}
-                  className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                    configType === 'cli'
-                      ? 'bg-accent text-white'
-                      : 'bg-bg text-text-muted hover:text-text'
-                  }`}
-                >
-                  CLI
-                </button>
-                <button
-                  onClick={() => setConfigType('api')}
-                  className={`flex-1 py-2 text-xs font-medium transition-colors ${
-                    configType === 'api'
-                      ? 'bg-accent text-white'
-                      : 'bg-bg text-text-muted hover:text-text'
-                  }`}
-                >
-                  API
-                </button>
+              {/* Presets */}
+              <div>
+                <label className="block text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
+                  Preset
+                </label>
+                <div className="flex flex-wrap gap-1.5">
+                  {PRESETS.map((preset) => (
+                    <button
+                      key={preset.label}
+                      onClick={() => applyPreset(preset)}
+                      className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${
+                        cliCmd === preset.cli_cmd && cliPromptMode === preset.cli_prompt_mode
+                          ? 'border-accent text-accent bg-accent-dim'
+                          : 'border-border text-text-muted hover:text-text hover:bg-bg-hover'
+                      }`}
+                    >
+                      {preset.label}
+                    </button>
+                  ))}
+                </div>
               </div>
 
-              {configType === 'cli' ? (
-                <>
-                  {/* Presets */}
-                  <div>
-                    <label className="block text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
-                      Preset
-                    </label>
-                    <div className="flex flex-wrap gap-1.5">
-                      {PRESETS.map((preset) => (
-                        <button
-                          key={preset.label}
-                          onClick={() => applyPreset(preset)}
-                          className={`px-2.5 py-1 text-xs font-medium rounded-md border transition-colors ${
-                            cliCmd === preset.cli_cmd && cliPromptMode === preset.cli_prompt_mode
-                              ? 'border-accent text-accent bg-accent-dim'
-                              : 'border-border text-text-muted hover:text-text hover:bg-bg-hover'
-                          }`}
-                        >
-                          {preset.label}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
+              {/* Command */}
+              <div>
+                <label className="block text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
+                  Command
+                </label>
+                <input
+                  type="text"
+                  value={cliCmd}
+                  onChange={(e) => setCliCmd(e.target.value)}
+                  placeholder="e.g. claude"
+                  className="w-full px-3 py-2 text-sm font-mono bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:border-border-focus transition-colors"
+                />
+              </div>
 
-                  {/* Command */}
-                  <div>
-                    <label className="block text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
-                      Command
-                    </label>
-                    <input
-                      type="text"
-                      value={cliCmd}
-                      onChange={(e) => setCliCmd(e.target.value)}
-                      placeholder="e.g. claude"
-                      className="w-full px-3 py-2 text-sm font-mono bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:border-border-focus transition-colors"
-                    />
-                  </div>
+              {/* Advanced */}
+              <button
+                onClick={() => setShowAdvanced(!showAdvanced)}
+                className="flex items-center gap-1 text-xs text-text-muted hover:text-text transition-colors"
+              >
+                <svg
+                  width="12"
+                  height="12"
+                  viewBox="0 0 12 12"
+                  className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+                >
+                  <path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Advanced
+              </button>
 
-                  {/* Advanced */}
-                  <button
-                    onClick={() => setShowAdvanced(!showAdvanced)}
-                    className="flex items-center gap-1 text-xs text-text-muted hover:text-text transition-colors"
-                  >
-                    <svg
-                      width="12"
-                      height="12"
-                      viewBox="0 0 12 12"
-                      className={`transition-transform ${showAdvanced ? 'rotate-90' : ''}`}
+              {showAdvanced && (
+                <div className="space-y-3 pl-4 border-l-2 border-border">
+                  <div>
+                    <label className="block text-xs font-semibold text-text-muted mb-1">
+                      Prompt Mode
+                    </label>
+                    <select
+                      value={cliPromptMode}
+                      onChange={(e) => setCliPromptMode(e.target.value)}
+                      className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
                     >
-                      <path d="M4 2l4 4-4 4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    Advanced
-                  </button>
+                      <option value="stdin">stdin (pipe)</option>
+                      <option value="argument">Positional argument</option>
+                      <option value="flag">Flag</option>
+                    </select>
+                  </div>
 
-                  {showAdvanced && (
-                    <div className="space-y-3 pl-4 border-l-2 border-border">
-                      <div>
-                        <label className="block text-xs font-semibold text-text-muted mb-1">
-                          Prompt Mode
-                        </label>
-                        <select
-                          value={cliPromptMode}
-                          onChange={(e) => setCliPromptMode(e.target.value)}
-                          className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
-                        >
-                          <option value="stdin">stdin (pipe)</option>
-                          <option value="argument">Positional argument</option>
-                          <option value="flag">Flag</option>
-                        </select>
-                      </div>
-
-                      {cliPromptMode === 'flag' && (
-                        <div>
-                          <label className="block text-xs font-semibold text-text-muted mb-1">
-                            Prompt Flag
-                          </label>
-                          <input
-                            type="text"
-                            value={cliPromptFlag}
-                            onChange={(e) => setCliPromptFlag(e.target.value)}
-                            placeholder="e.g. --message"
-                            className="w-full px-3 py-2 text-sm font-mono bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:border-border-focus transition-colors"
-                          />
-                        </div>
-                      )}
-
-                      <div>
-                        <label className="block text-xs font-semibold text-text-muted mb-1">
-                          Timeout (minutes)
-                        </label>
-                        <input
-                          type="number"
-                          value={Math.round(timeoutMs / 60000)}
-                          onChange={(e) => setTimeoutMs(parseInt(e.target.value) * 60000)}
-                          min={1}
-                          className="w-24 px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
-                        />
-                      </div>
+                  {cliPromptMode === 'flag' && (
+                    <div>
+                      <label className="block text-xs font-semibold text-text-muted mb-1">
+                        Prompt Flag
+                      </label>
+                      <input
+                        type="text"
+                        value={cliPromptFlag}
+                        onChange={(e) => setCliPromptFlag(e.target.value)}
+                        placeholder="e.g. --message"
+                        className="w-full px-3 py-2 text-sm font-mono bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:border-border-focus transition-colors"
+                      />
                     </div>
                   )}
-                </>
-              ) : (
-                <>
-                  {/* API config */}
-                  <div>
-                    <label className="block text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
-                      API URL
-                    </label>
-                    <input
-                      type="text"
-                      value={apiUrl}
-                      onChange={(e) => setApiUrl(e.target.value)}
-                      placeholder="http://localhost:11434/v1/chat/completions"
-                      className="w-full px-3 py-2 text-sm font-mono bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:border-border-focus transition-colors"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
-                      Model
-                    </label>
-                    <input
-                      type="text"
-                      value={apiModel}
-                      onChange={(e) => setApiModel(e.target.value)}
-                      placeholder="e.g. gpt-4, llama3"
-                      className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim focus:outline-none focus:border-border-focus transition-colors"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-xs font-semibold text-text-muted uppercase tracking-wide mb-1">
-                      Headers (JSON)
-                    </label>
-                    <textarea
-                      value={apiHeaders}
-                      onChange={(e) => setApiHeaders(e.target.value)}
-                      placeholder='{"Authorization": "Bearer sk-..."}'
-                      rows={3}
-                      className="w-full px-3 py-2 text-sm font-mono bg-bg-input border border-border rounded-lg text-text placeholder:text-text-dim resize-none focus:outline-none focus:border-border-focus transition-colors"
-                    />
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3">
-                    <div>
-                      <label className="block text-xs font-semibold text-text-muted mb-1">
-                        Request Format
-                      </label>
-                      <select
-                        value={apiRequestFormat}
-                        onChange={(e) => setApiRequestFormat(e.target.value)}
-                        className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
-                      >
-                        <option value="openai">OpenAI-compatible</option>
-                        <option value="ollama">Ollama native</option>
-                      </select>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-semibold text-text-muted mb-1">
-                        Stream Format
-                      </label>
-                      <select
-                        value={apiStreamFormat}
-                        onChange={(e) => setApiStreamFormat(e.target.value)}
-                        className="w-full px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
-                      >
-                        <option value="sse">SSE (data:)</option>
-                        <option value="ndjson">NDJSON</option>
-                        <option value="none">No streaming</option>
-                      </select>
-                    </div>
-                  </div>
 
                   <div>
                     <label className="block text-xs font-semibold text-text-muted mb-1">
@@ -365,12 +228,12 @@ export default function AgentConfigModal() {
                     <input
                       type="number"
                       value={Math.round(timeoutMs / 60000)}
-                      onChange={(e) => setTimeoutMs(parseInt(e.target.value) * 60000)}
+                      onChange={(e) => setTimeoutMs((parseInt(e.target.value, 10) || 1) * 60000)}
                       min={1}
                       className="w-24 px-3 py-2 text-sm bg-bg-input border border-border rounded-lg text-text focus:outline-none focus:border-border-focus"
                     />
                   </div>
-                </>
+                </div>
               )}
 
               {/* Test result */}

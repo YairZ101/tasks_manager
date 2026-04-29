@@ -22,15 +22,9 @@ describe('AgentConfigModal', () => {
     });
     (api.getAgentConfig as any).mockResolvedValue({
       config: {
-        type: 'cli',
         cli_cmd: 'echo test',
         cli_prompt_mode: 'stdin',
         cli_prompt_flag: null,
-        api_url: null,
-        api_headers: null,
-        api_model: null,
-        api_request_format: 'openai',
-        api_stream_format: 'sse',
         timeout_ms: 1800000,
       },
     });
@@ -45,14 +39,6 @@ describe('AgentConfigModal', () => {
     render(<AgentConfigModal />);
     await waitFor(() => {
       expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
-    });
-  });
-
-  test('has CLI and API tabs', async () => {
-    render(<AgentConfigModal />);
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'CLI' })).toBeInTheDocument();
-      expect(screen.getByRole('button', { name: 'API' })).toBeInTheDocument();
     });
   });
 
@@ -78,7 +64,7 @@ describe('AgentConfigModal', () => {
     (api.updateAgentConfig as any).mockResolvedValue({ config: {} });
     render(<AgentConfigModal />);
     await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+      expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
     });
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => {
@@ -86,7 +72,7 @@ describe('AgentConfigModal', () => {
     });
   });
 
-  test('shows preset buttons for CLI mode', async () => {
+  test('shows preset buttons', async () => {
     render(<AgentConfigModal />);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Crush' })).toBeInTheDocument();

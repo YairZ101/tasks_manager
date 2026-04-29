@@ -24,15 +24,9 @@ export interface TaskLog {
 
 export interface AgentConfig {
   id: number;
-  type: 'cli' | 'api';
   cli_cmd: string | null;
   cli_prompt_mode: 'stdin' | 'argument' | 'flag';
   cli_prompt_flag: string | null;
-  api_url: string | null;
-  api_headers: string | null;
-  api_model: string | null;
-  api_request_format: 'openai' | 'ollama';
-  api_stream_format: 'sse' | 'ndjson' | 'none';
   timeout_ms: number;
   updated_at: string;
 }
@@ -47,18 +41,3 @@ export interface ProjectConfig {
 
 export type TaskStatus = Task['status'];
 export type AgentStatus = NonNullable<Task['agent_status']>;
-
-export interface AgentResult {
-  success: boolean;
-  summary: string;
-}
-
-export interface AgentAdapter {
-  execute(params: {
-    task: Task;
-    prompt: string;
-    workingDir: string;
-    onOutput: (line: string) => void;
-    signal: AbortSignal;
-  }): Promise<AgentResult>;
-}

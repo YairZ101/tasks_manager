@@ -3,7 +3,6 @@ import path from 'path';
 import { getDb } from '../db/database.js';
 import type { AgentConfig, ProjectConfig } from '../types.js';
 import { CliAdapter } from '../agents/cli-adapter.js';
-import { ApiAdapter } from '../agents/api-adapter.js';
 
 const init = new Hono();
 
@@ -23,7 +22,7 @@ init.post('/generate-prefix', async (c) => {
 
   const prompt = `Generate a JIRA-style project key for '${body.repoName}'. 2-5 uppercase letters, memorable, related to the name. Examples: 'photo-editor' → SNAP, 'chat-service' → CHAT, 'data-pipeline' → PIPE. Reply with ONLY the key.`;
 
-  const adapter = config.type === 'cli' ? new CliAdapter(config) : new ApiAdapter(config);
+  const adapter = new CliAdapter(config);
 
   let lastOutput = '';
 

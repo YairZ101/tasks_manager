@@ -2,7 +2,6 @@ import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
 import type { AgentConfig } from '../types.js';
 import { CliAdapter } from '../agents/cli-adapter.js';
-import { ApiAdapter } from '../agents/api-adapter.js';
 
 const agentConfig = new Hono();
 
@@ -23,64 +22,25 @@ agentConfig.put('/', async (c) => {
   }
 
   const {
-    type,
     cli_cmd,
     cli_prompt_mode,
     cli_prompt_flag,
-    api_url,
-    api_headers,
-    api_model,
-    api_request_format,
-    api_stream_format,
     timeout_ms,
   } = body;
 
-  // Validate type
-  if (type && !['cli', 'api'].includes(type)) {
-    return c.json({ error: 'Type must be "cli" or "api"' }, 400);
+  // Validate cli_cmd
+  if (cli_cmd !== undefined && cli_cmd !== null && typeof cli_cmd !== 'string') {
+    return c.json({ error: 'cli_cmd must be a string' }, 400);
   }
 
   // Validate cli_prompt_mode
-  if (cli_prompt_mode && !['stdin', 'argument', 'flag'].includes(cli_prompt_mode)) {
+  if (cli_prompt_mode !== undefined && !['stdin', 'argument', 'flag'].includes(cli_prompt_mode)) {
     return c.json({ error: 'Invalid cli_prompt_mode' }, 400);
   }
 
-  // Validate api_request_format
-  if (api_request_format && !['openai', 'ollama'].includes(api_request_format)) {
-    return c.json({ error: 'Invalid api_request_format' }, 400);
-  }
-
-  // Validate api_stream_format
-  if (api_stream_format && !['sse', 'ndjson', 'none'].includes(api_stream_format)) {
-    return c.json({ error: 'Invalid api_stream_format' }, 400);
-  }
-
-  // Validate api_headers
-  if (api_headers !== undefined && api_headers !== null) {
-    if (typeof api_headers === 'string') {
-      if (api_headers.length > 10240) {
-        return c.json({ error: 'API headers must be at most 10KB' }, 400);
-      }
-      try {
-        const parsed = JSON.parse(api_headers);
-        if (typeof parsed !== 'object' || Array.isArray(parsed)) {
-          return c.json({ error: 'API headers must be a JSON object' }, 400);
-        }
-        for (const [, v] of Object.entries(parsed)) {
-          if (typeof v !== 'string') {
-            return c.json({ error: 'API header values must be strings' }, 400);
-          }
-        }
-      } catch {
-        return c.json({ error: 'API headers must be valid JSON' }, 400);
-      }
-    } else if (typeof api_headers === 'object') {
-      // Accept object directly, serialize to JSON
-      const serialized = JSON.stringify(api_headers);
-      if (serialized.length > 10240) {
-        return c.json({ error: 'API headers must be at most 10KB' }, 400);
-      }
-    }
+  // Validate cli_prompt_flag
+  if (cli_prompt_flag !== undefined && cli_prompt_flag !== null && typeof cli_prompt_flag !== 'string') {
+    return c.json({ error: 'cli_prompt_flag must be a string' }, 400);
   }
 
   // Validate timeout_ms
@@ -91,10 +51,6 @@ agentConfig.put('/', async (c) => {
   const updates: string[] = [];
   const params: any[] = [];
 
-  if (type !== undefined) {
-    updates.push('type = ?');
-    params.push(type);
-  }
   if (cli_cmd !== undefined) {
     updates.push('cli_cmd = ?');
     params.push(cli_cmd);
@@ -106,30 +62,6 @@ agentConfig.put('/', async (c) => {
   if (cli_prompt_flag !== undefined) {
     updates.push('cli_prompt_flag = ?');
     params.push(cli_prompt_flag);
-  }
-  if (api_url !== undefined) {
-    updates.push('api_url = ?');
-    params.push(api_url);
-  }
-  if (api_headers !== undefined) {
-    updates.push('api_headers = ?');
-    const value =
-      typeof api_headers === 'object' && api_headers !== null
-        ? JSON.stringify(api_headers)
-        : api_headers;
-    params.push(value);
-  }
-  if (api_model !== undefined) {
-    updates.push('api_model = ?');
-    params.push(api_model);
-  }
-  if (api_request_format !== undefined) {
-    updates.push('api_request_format = ?');
-    params.push(api_request_format);
-  }
-  if (api_stream_format !== undefined) {
-    updates.push('api_stream_format = ?');
-    params.push(api_stream_format);
   }
   if (timeout_ms !== undefined) {
     updates.push('timeout_ms = ?');
@@ -171,8 +103,7 @@ agentConfig.post('/test', async (c) => {
       agent_status: null,
     };
 
-    const adapter =
-      config.type === 'cli' ? new CliAdapter(config) : new ApiAdapter(config);
+    const adapter = new CliAdapter(config);
 
     await adapter.execute({
       task: dummyTask,

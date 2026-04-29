@@ -1,5 +1,7 @@
 import type { Context } from 'hono';
 
+const encoder = new TextEncoder();
+
 export interface SSEEvent {
   id: number;
   event: string;
@@ -115,7 +117,7 @@ export class SSEBroadcaster {
     if (client.closed) return;
     try {
       const msg = `id: ${event.id}\nevent: ${event.event}\ndata: ${JSON.stringify(event.data)}\n\n`;
-      client.controller.enqueue(new TextEncoder().encode(msg));
+      client.controller.enqueue(encoder.encode(msg));
     } catch {
       this.removeClient(client);
     }
@@ -126,7 +128,7 @@ export class SSEBroadcaster {
     for (const client of snapshot) {
       if (client.closed) continue;
       try {
-        client.controller.enqueue(new TextEncoder().encode(': heartbeat\n\n'));
+        client.controller.enqueue(encoder.encode(': heartbeat\n\n'));
       } catch {
         this.removeClient(client);
       }

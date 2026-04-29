@@ -1,33 +1,10 @@
 import { getDb } from './db/database.js';
-import { execSync } from 'child_process';
-import fs from 'fs';
+import { getProcessStartTime, isProcessAlive } from './process-utils.js';
 import type { Task } from './types.js';
 
-function getProcessStartTime(pid: number): string | null {
-  try {
-    if (process.platform === 'darwin') {
-      const output = execSync(`ps -o lstart= -p ${pid}`, { encoding: 'utf-8' }).trim();
-      return output || null;
-    } else {
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8');
-      const fields = stat.split(' ');
-      return fields[21] || null;
-    }
-  } catch {
-    return null;
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 function killProcessTree(pid: number): void {
+  if (!Number.isInteger(pid) || pid <= 1) return;
+
   try {
     // Kill entire process group
     process.kill(-pid, 'SIGTERM');
@@ -82,9 +59,9 @@ export function runCrashRecovery(): void {
     }
 
     // Mark as failed
-    db.exec(
-      `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ${task.id}`
-    );
+    db.query(
+      `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
+    ).run(task.id);
 
     // Compute run_number for this recovery log
     const runRow = db

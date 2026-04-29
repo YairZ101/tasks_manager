@@ -1,4 +1,4 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Toaster, toast } from 'sonner';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
@@ -9,6 +9,79 @@ import TaskDetail from './components/TaskDetail.js';
 import CreateTaskModal from './components/CreateTaskModal.js';
 import AgentConfigModal from './components/AgentConfigModal.js';
 import InitWizard from './components/InitWizard.js';
+
+// Acquire the lock once at module load — outside React lifecycle so
+// StrictMode double-mount cannot interfere.
+let lockHeld = false;
+if (typeof navigator !== 'undefined' && navigator.locks) {
+  navigator.locks.request('tasks-manager-ui', { ifAvailable: true }, (lock) => {
+    if (lock) {
+      lockHeld = true;
+      return new Promise<void>(() => {});
+    }
+    return Promise.resolve();
+  });
+}
+
+function useMultiTabWarning(): [boolean, () => void] {
+  const [show, setShow] = useState(false);
+  const [dismissed, setDismissed] = useState(false);
+
+  useEffect(() => {
+    if (!navigator.locks) return;
+
+    const channel = new BroadcastChannel('tasks-manager-tabs');
+    let abortController: AbortController | null = null;
+
+    const timer = setTimeout(() => {
+      if (!lockHeld) {
+        setShow(true);
+        channel.postMessage('new-tab');
+
+        // Queue on the lock so the holder can see us in `pending`.
+        // AbortController lets us cancel the request on cleanup.
+        abortController = new AbortController();
+        navigator.locks.request(
+          'tasks-manager-ui',
+          { signal: abortController.signal },
+          () => new Promise<void>(() => {})
+        ).catch(() => {});
+      }
+    }, 100);
+
+    channel.onmessage = (e) => {
+      if (e.data === 'new-tab' && lockHeld && !dismissed) {
+        setShow(true);
+      }
+    };
+
+    // Poll to detect when all other tabs have closed.
+    const pollTimer = setInterval(() => {
+      if (!lockHeld) return;
+      navigator.locks.query().then((state) => {
+        const pending = state.pending?.filter((l) => l.name === 'tasks-manager-ui') ?? [];
+        if (pending.length === 0) {
+          setShow(false);
+          setDismissed(false);
+        }
+      });
+    }, 1000);
+
+    return () => {
+      clearTimeout(timer);
+      clearInterval(pollTimer);
+      abortController?.abort();
+      channel.close();
+    };
+  }, [dismissed]);
+
+  const dismiss = () => {
+    setDismissed(true);
+    setShow(false);
+  };
+
+  return [show && !dismissed, dismiss];
+}
 
 function AppContent() {
   const {
@@ -58,27 +131,7 @@ function AppContent() {
     return () => window.removeEventListener('app:toast', handler as EventListener);
   }, []);
 
-  const [multiTabWarning, setMultiTabWarning] = useState(false);
-
-  // Multi-tab detection
-  useEffect(() => {
-    const channel = new BroadcastChannel('tasks-manager');
-
-    channel.postMessage('ping');
-
-    channel.onmessage = (e) => {
-      if (e.data === 'ping') {
-        channel.postMessage('pong');
-        setMultiTabWarning(true);
-      } else if (e.data === 'pong') {
-        setMultiTabWarning(true);
-      }
-    };
-
-    return () => {
-      channel.close();
-    };
-  }, []);
+  const [multiTabWarning, dismissMultiTab] = useMultiTabWarning();
 
   if (loading) {
     return (
@@ -99,10 +152,10 @@ function AppContent() {
         {multiTabWarning && (
           <div className="flex items-center justify-between px-4 py-2 bg-warning-dim border-b border-warning/20 flex-shrink-0">
             <span className="text-xs text-warning font-medium">
-              Another tab is already open. Real-time updates may be unreliable.
+              Another tab is open. Edits made here may conflict with the other tab.
             </span>
             <button
-              onClick={() => setMultiTabWarning(false)}
+              onClick={dismissMultiTab}
               className="p-0.5 text-warning/60 hover:text-warning transition-colors"
             >
               <svg width="14" height="14" viewBox="0 0 14 14" fill="none">

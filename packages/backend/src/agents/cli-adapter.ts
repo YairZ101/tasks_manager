@@ -1,6 +1,6 @@
 import { parse } from 'shell-quote';
 import { spawn as nodeSpawn } from 'child_process';
-import type { AgentAdapter, AgentConfig, AgentResult, Task } from '../types.js';
+import type { AgentConfig, Task } from '../types.js';
 import { getDb } from '../db/database.js';
 
 const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
@@ -24,7 +24,12 @@ export function sanitizeLine(line: string): string {
   return clean;
 }
 
-export class CliAdapter implements AgentAdapter {
+export interface AgentResult {
+  success: boolean;
+  summary: string;
+}
+
+export class CliAdapter {
   private config: AgentConfig;
 
   constructor(config: AgentConfig) {

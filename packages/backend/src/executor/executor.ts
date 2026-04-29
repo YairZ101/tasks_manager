@@ -1,8 +1,7 @@
 import { getDb } from '../db/database.js';
 import { broadcaster } from '../sse/broadcaster.js';
-import type { Task, AgentConfig, AgentAdapter, AgentResult } from '../types.js';
+import type { Task, AgentConfig } from '../types.js';
 import { CliAdapter } from '../agents/cli-adapter.js';
-import { ApiAdapter } from '../agents/api-adapter.js';
 
 interface MutexState {
   held: boolean;
@@ -34,13 +33,6 @@ export async function awaitCompletion(): Promise<void> {
   if (mutex.completionPromise) {
     await mutex.completionPromise;
   }
-}
-
-function getAdapter(config: AgentConfig): AgentAdapter {
-  if (config.type === 'cli') {
-    return new CliAdapter(config);
-  }
-  return new ApiAdapter(config);
 }
 
 export function buildPrompt(task: Task, workingDir: string): string {
@@ -115,7 +107,7 @@ export async function startAgent(
           `SELECT MAX(run_number) as max_run FROM task_logs WHERE task_id = ?`
         )
         .get(taskId);
-      const runNumber = ((runRow?.max_run ?? 0) || 0) + 1;
+      const runNumber = (runRow?.max_run ?? 0) + 1;
 
       const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
       return { updatedTask, runNumber };
@@ -148,8 +140,8 @@ export async function startAgent(
       abortController.abort('timeout');
     }, config.timeout_ms);
 
-    // Get adapter and build prompt
-    const adapter = getAdapter(config);
+    // Build prompt and create adapter
+    const adapter = new CliAdapter(config);
     const prompt = buildPrompt(updatedTask, workingDir);
 
     // Track log failures
@@ -212,7 +204,7 @@ export async function startAgent(
     // Execute agent in the background
     const executeAgent = async () => {
       try {
-        const result: AgentResult = await adapter.execute({
+        const result = await adapter.execute({
           task: updatedTask,
           prompt,
           workingDir,
@@ -472,6 +464,7 @@ export function shutdownAgent(): number | null {
     mutex.abortController = null;
     mutex.completionPromise = null;
     mutex.resolveCompletion = null;
+    mutex.cancelling = false;
     resolve?.();
 
     return agentPid;

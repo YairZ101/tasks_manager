@@ -426,22 +426,12 @@ describe('Agent config routes (real)', () => {
     const res = await app.request('/agent-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'api', cli_cmd: 'test-cmd', timeout_ms: 60000 }),
+      body: JSON.stringify({ cli_cmd: 'test-cmd', timeout_ms: 60000 }),
     });
     expect(res.status).toBe(200);
     const data = await res.json();
-    expect(data.config.type).toBe('api');
     expect(data.config.cli_cmd).toBe('test-cmd');
     expect(data.config.timeout_ms).toBe(60000);
-  });
-
-  test('PUT /agent-config rejects invalid type', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ type: 'invalid' }),
-    });
-    expect(res.status).toBe(400);
   });
 
   test('PUT /agent-config rejects low timeout', async () => {
@@ -453,47 +443,11 @@ describe('Agent config routes (real)', () => {
     expect(res.status).toBe(400);
   });
 
-  test('PUT /agent-config validates api_headers JSON', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_headers: 'not-json' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PUT /agent-config accepts api_headers as object', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_headers: { Authorization: 'Bearer xyz' } }),
-    });
-    expect(res.status).toBe(200);
-  });
-
   test('PUT /agent-config rejects invalid cli_prompt_mode', async () => {
     const res = await app.request('/agent-config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ cli_prompt_mode: 'invalid' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PUT /agent-config rejects invalid api_request_format', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_request_format: 'invalid' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PUT /agent-config rejects invalid api_stream_format', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_stream_format: 'invalid' }),
     });
     expect(res.status).toBe(400);
   });

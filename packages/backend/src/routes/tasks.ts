@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
-import { startAgent, getMutexState } from '../executor/executor.js';
+import { startAgent, cancelAgent, getMutexState } from '../executor/executor.js';
 import { broadcaster } from '../sse/broadcaster.js';
 import type { Task, ProjectConfig } from '../types.js';
 
@@ -230,7 +230,6 @@ tasks.patch('/:id', async (c) => {
 
     // If moving away from in-progress while running, cancel agent
     if (task.status === 'in-progress' && task.agent_status === 'running') {
-      const { cancelAgent } = await import('../executor/executor.js');
       await cancelAgent(id);
     }
 
@@ -288,7 +287,7 @@ tasks.patch('/:id', async (c) => {
       updates.push('acceptance = ?');
       params.push(acceptance);
     }
-    if (sort_order !== undefined && !status) {
+    if (sort_order !== undefined) {
       updates.push('sort_order = ?');
       params.push(sort_order);
     }

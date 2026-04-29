@@ -11,7 +11,18 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
   if (res.status === 204) return undefined as T;
 
-  const data = await res.json();
+  let data: any;
+  try {
+    data = await res.json();
+  } catch {
+    if (!res.ok) {
+      const error: any = new Error(`Request failed with status ${res.status}`);
+      error.status = res.status;
+      error.data = {};
+      throw error;
+    }
+    throw new Error('Invalid JSON response');
+  }
 
   if (!res.ok) {
     const error: any = new Error(data.error || 'Request failed');

@@ -20,10 +20,18 @@ logs.get('/', (c) => {
   }
 
   const beforeId = c.req.query('before_id') ? parseInt(c.req.query('before_id')!, 10) : undefined;
-  const limit = Math.min(parseInt(c.req.query('limit') || '500', 10), 1000);
+  const limitParam = parseInt(c.req.query('limit') || '500', 10);
+  const limit = Math.min(Number.isNaN(limitParam) ? 500 : limitParam, 1000);
   const runNumber = c.req.query('run_number')
     ? parseInt(c.req.query('run_number')!, 10)
     : undefined;
+
+  if (beforeId !== undefined && isNaN(beforeId)) {
+    return c.json({ error: 'Invalid before_id' }, 400);
+  }
+  if (runNumber !== undefined && isNaN(runNumber)) {
+    return c.json({ error: 'Invalid run_number' }, 400);
+  }
 
   let sql = 'SELECT * FROM task_logs WHERE task_id = ?';
   const params: any[] = [taskId];

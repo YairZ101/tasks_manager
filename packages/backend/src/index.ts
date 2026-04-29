@@ -81,7 +81,10 @@ if (fs.existsSync(frontendDist)) {
   app.get('/*', async (c) => {
     const reqPath = c.req.path;
     // Try to serve the exact file
-    let filePath = path.join(frontendDist, reqPath);
+    let filePath = path.resolve(frontendDist, reqPath.replace(/^\/+/, ''));
+    if (!filePath.startsWith(frontendDist)) {
+      return c.notFound();
+    }
     let file = Bun.file(filePath);
     if (await file.exists()) {
       return new Response(file);
@@ -120,7 +123,10 @@ try {
 console.log(`\n  🚀 Tasks Manager running at http://localhost:${port}\n`);
 
 // Graceful shutdown
+let shuttingDown = false;
 const shutdown = () => {
+  if (shuttingDown) return;
+  shuttingDown = true;
   console.log('\nShutting down...');
 
   // Step 1: Stop accepting new requests

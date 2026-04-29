@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { execSync } from 'child_process';
+import { getProcessStartTime, isProcessAlive } from './process-utils.js';
 
 const DATA_DIR = '.tasks_manager';
 const LOCK_FILE = '.lock';
@@ -8,31 +8,6 @@ const LOCK_FILE = '.lock';
 interface LockData {
   pid: number;
   startedAt: string;
-}
-
-function getProcessStartTime(pid: number): string | null {
-  try {
-    if (process.platform === 'darwin') {
-      const output = execSync(`ps -o lstart= -p ${pid}`, { encoding: 'utf-8' }).trim();
-      return output || null;
-    } else {
-      // Linux: read /proc/<pid>/stat field 22
-      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf-8');
-      const fields = stat.split(' ');
-      return fields[21] || null;
-    }
-  } catch {
-    return null;
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export function acquireLock(repoRoot: string): void {

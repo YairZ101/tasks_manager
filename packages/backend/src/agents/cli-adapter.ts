@@ -40,6 +40,10 @@ export class CliAdapter implements AgentAdapter {
   }): Promise<AgentResult> {
     const { task, prompt, workingDir, onOutput, signal } = params;
 
+    if (signal.aborted) {
+      throw new Error('Agent was cancelled');
+    }
+
     if (!this.config.cli_cmd) {
       throw new Error('CLI command not configured');
     }
@@ -72,16 +76,22 @@ export class CliAdapter implements AgentAdapter {
       detached: true,
     });
 
-    const pid = proc.pid!;
+    // Capture spawn errors (e.g. ENOENT) — emitted asynchronously
+    let spawnError: Error | null = null;
+    proc.on('error', (err) => { spawnError = err; });
+
+    const pid = proc.pid;
 
     // Store PID for crash recovery
-    try {
-      const db = getDb();
-      db.query(
-        `UPDATE tasks SET agent_pid = ?, agent_started_at = ? WHERE id = ?`
-      ).run(pid, new Date().toISOString(), task.id);
-    } catch {
-      // Non-fatal
+    if (pid) {
+      try {
+        const db = getDb();
+        db.query(
+          `UPDATE tasks SET agent_pid = ?, agent_started_at = ? WHERE id = ?`
+        ).run(pid, new Date().toISOString(), task.id);
+      } catch {
+        // Non-fatal
+      }
     }
 
     // Write prompt to stdin if needed
@@ -93,18 +103,14 @@ export class CliAdapter implements AgentAdapter {
     // Handle abort signal — kill entire process group
     let killTimer: ReturnType<typeof setTimeout> | null = null;
     const abortHandler = () => {
-      try {
-        process.kill(-pid, 'SIGTERM');
-      } catch {
-        // Process group kill failed
+      if (pid) {
+        try { process.kill(-pid, 'SIGTERM'); } catch {}
       }
-      try {
-        proc.kill('SIGTERM');
-      } catch {
-        // Already dead
-      }
+      try { proc.kill('SIGTERM'); } catch {}
       killTimer = setTimeout(() => {
-        try { process.kill(-pid, 'SIGKILL'); } catch {}
+        if (pid) {
+          try { process.kill(-pid, 'SIGKILL'); } catch {}
+        }
         try { proc.kill('SIGKILL'); } catch {}
       }, 5000);
       if (killTimer && typeof killTimer === 'object' && 'unref' in killTimer) {
@@ -123,6 +129,19 @@ export class CliAdapter implements AgentAdapter {
 
       return new Promise<void>((resolve) => {
         let buffer = '';
+        let seenContent = false;
+        let resolved = false;
+        const done = () => {
+          if (resolved) return;
+          resolved = true;
+          if (buffer.length > 0) {
+            const sanitized = sanitizeLine(buffer);
+            if (seenContent || sanitized !== '') {
+              handler(sanitized);
+            }
+          }
+          resolve();
+        };
 
         stream.on('data', (chunk: Buffer) => {
           buffer += chunk.toString('utf-8');
@@ -131,33 +150,39 @@ export class CliAdapter implements AgentAdapter {
 
           for (const line of lines) {
             const sanitized = sanitizeLine(line);
-            if (sanitized) handler(sanitized);
+            if (!seenContent && sanitized === '') continue;
+            seenContent = true;
+            handler(sanitized);
           }
         });
 
-        stream.on('end', () => {
-          if (buffer) {
-            const sanitized = sanitizeLine(buffer);
-            if (sanitized) handler(sanitized);
-          }
-          resolve();
-        });
-
-        stream.on('error', () => resolve());
+        stream.on('end', done);
+        stream.on('close', done);
+        stream.on('error', done);
       });
     };
+
+    // Set up exit promise BEFORE reading streams — the error event fires
+    // once and must be captured before streams are consumed.
+    const exitPromise = new Promise<number | null>((resolve) => {
+      proc.on('exit', (code) => resolve(code));
+      proc.on('close', (code: number | null) => resolve(code));
+      proc.on('error', () => resolve(null));
+    });
 
     await Promise.all([
       readStream(proc.stdout, onOutput),
       readStream(proc.stderr, onOutput),
     ]);
 
-    const exitCode = await new Promise<number | null>((resolve) => {
-      proc.on('exit', (code) => resolve(code));
-    });
+    const exitCode = await exitPromise;
 
     if (killTimer) clearTimeout(killTimer);
     signal.removeEventListener('abort', abortHandler);
+
+    if (spawnError) {
+      throw new Error(`Failed to start process "${finalArgv[0]}": ${spawnError.message}`);
+    }
 
     if (signal.aborted) {
       throw new Error('Agent was cancelled');

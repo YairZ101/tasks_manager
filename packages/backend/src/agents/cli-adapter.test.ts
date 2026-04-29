@@ -189,6 +189,24 @@ describe('CliAdapter', () => {
     expect(output.some((l) => l.includes('error-msg'))).toBe(true);
   });
 
+  test('throws immediately when signal is already aborted before execute', async () => {
+    const adapter = new CliAdapter(
+      makeConfig({ cli_cmd: 'sh -c "sleep 300"', cli_prompt_mode: 'argument' })
+    );
+    const controller = new AbortController();
+    controller.abort();
+
+    await expect(
+      adapter.execute({
+        task: makeTask(),
+        prompt: '',
+        workingDir: tmpDir,
+        onOutput: () => {},
+        signal: controller.signal,
+      })
+    ).rejects.toThrow('cancelled');
+  });
+
   (process.env.CI ? test.skip : test)('abort signal cancels the process without delay', async () => {
     const adapter = new CliAdapter(
       makeConfig({ cli_cmd: 'sh -c "sleep 300"', cli_prompt_mode: 'argument' })
@@ -211,6 +229,42 @@ describe('CliAdapter', () => {
     const elapsed = Date.now() - abortTime;
     expect(elapsed).toBeLessThan(3000);
   }, 15000);
+
+  test('preserves empty lines in output', async () => {
+    const adapter = new CliAdapter(
+      makeConfig({ cli_cmd: 'sh -c "printf \'line1\\n\\n\\nline2\\n\'"', cli_prompt_mode: 'stdin' })
+    );
+    const controller = new AbortController();
+    const output: string[] = [];
+
+    await adapter.execute({
+      task: makeTask(),
+      prompt: '',
+      workingDir: tmpDir,
+      onOutput: (line) => output.push(line),
+      signal: controller.signal,
+    });
+
+    expect(output).toEqual(['line1', '', '', 'line2']);
+  });
+
+  test('skips leading empty lines', async () => {
+    const adapter = new CliAdapter(
+      makeConfig({ cli_cmd: `sh -c "printf '\\n\\nfirst\\nsecond\\n'"`, cli_prompt_mode: 'argument' })
+    );
+    const controller = new AbortController();
+    const output: string[] = [];
+
+    await adapter.execute({
+      task: makeTask(),
+      prompt: '',
+      workingDir: tmpDir,
+      onOutput: (line) => output.push(line),
+      signal: controller.signal,
+    });
+
+    expect(output).toEqual(['first', 'second']);
+  });
 
   test('runs in the specified working directory', async () => {
     const adapter = new CliAdapter(makeConfig({ cli_cmd: 'pwd', cli_prompt_mode: 'stdin' }));

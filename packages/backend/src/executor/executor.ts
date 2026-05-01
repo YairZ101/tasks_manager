@@ -1,43 +1,87 @@
 import { getDb } from '../db/database.js';
 import { broadcaster } from '../sse/broadcaster.js';
-import type { Task, AgentConfig } from '../types.js';
+import type { Task, AgentConfig, RunnerState } from '../types.js';
 import { CliAdapter } from '../agents/cli-adapter.js';
+import {
+  isGitRepo,
+  createWorktree,
+  removeWorktree,
+  checkUncommittedChanges,
+  detectMainBranch,
+  getRecentCommits,
+} from '../worktree/worktree.js';
 
-interface MutexState {
-  held: boolean;
-  taskKey: string | null;
-  taskId: number | null;
-  runNumber: number | null;
-  abortController: AbortController | null;
-  completionPromise: Promise<void> | null;
-  resolveCompletion: (() => void) | null;
+interface RunState {
+  taskId: number;
+  taskKey: string;
+  runNumber: number;
+  pid: number | null;
+  abortController: AbortController;
+  completionPromise: Promise<void>;
+  resolveCompletion: () => void;
   cancelling: boolean;
+  worktreePath: string;
 }
 
-const mutex: MutexState = {
-  held: false,
-  taskKey: null,
-  taskId: null,
-  runNumber: null,
-  abortController: null,
-  completionPromise: null,
-  cancelling: false,
-  resolveCompletion: null,
-};
+const activeRuns = new Map<number, RunState>();
 
-export function getMutexState(): { held: boolean; taskKey: string | null; taskId: number | null } {
-  return { held: mutex.held, taskKey: mutex.taskKey, taskId: mutex.taskId };
-}
+let gitRepoDetected: boolean | null = null;
 
-export async function awaitCompletion(): Promise<void> {
-  if (mutex.completionPromise) {
-    await mutex.completionPromise;
+export function initGitDetection(repoRoot: string): void {
+  gitRepoDetected = isGitRepo(repoRoot);
+  if (!gitRepoDetected) {
+    console.log('Parallel agents require a git repository. Running in single-agent mode.');
   }
 }
 
-export function buildPrompt(task: Task, workingDir: string): string {
+export function isGitRepoDetected(): boolean {
+  return gitRepoDetected === true;
+}
+
+function getMaxConcurrent(): number {
+  if (!gitRepoDetected) return 1;
+  try {
+    const config = getDb().query<{ max_concurrent_agents: number }, []>(
+      'SELECT max_concurrent_agents FROM agent_config WHERE id = 1'
+    ).get();
+    return config?.max_concurrent_agents ?? 3;
+  } catch {
+    return 3;
+  }
+}
+
+export function getRunnerState(): RunnerState {
+  return {
+    activeCount: activeRuns.size,
+    maxConcurrent: getMaxConcurrent(),
+    runs: [...activeRuns.values()].map(r => ({ taskId: r.taskId, taskKey: r.taskKey })),
+  };
+}
+
+export async function awaitAllCompletions(): Promise<void> {
+  await Promise.allSettled(
+    [...activeRuns.values()].map(r => r.completionPromise)
+  );
+}
+
+export interface BuildPromptOpts {
+  workingDir: string;
+  branchName?: string;
+  mainBranch?: string;
+  recentCommits?: string;
+}
+
+export function buildPrompt(task: Task, opts: BuildPromptOpts): string {
   const parts: string[] = [];
-  parts.push(`You are working in the repository at: ${workingDir}`);
+
+  if (opts.branchName) {
+    parts.push(`You are working in a git worktree at: ${opts.workingDir}`);
+    parts.push(`You are on branch: ${opts.branchName}`);
+    parts.push(`The main branch is: ${opts.mainBranch}`);
+  } else {
+    parts.push(`You are working in the repository at: ${opts.workingDir}`);
+  }
+
   parts.push('');
   parts.push(`## Task: ${task.task_key} — ${task.title}`);
 
@@ -56,6 +100,20 @@ export function buildPrompt(task: Task, workingDir: string): string {
   parts.push('');
   parts.push('Please implement the changes needed to complete this task.');
 
+  parts.push('');
+  parts.push('## Git Guidelines');
+  parts.push('');
+  parts.push('- When you are done, commit your changes on this branch. Do not leave uncommitted files.');
+  parts.push('- If the task involves multiple distinct logical changes, use separate commits for each. Otherwise, a single commit is fine.');
+  parts.push('- Write clear commit messages: a short summary line (imperative mood), optionally followed by a blank line and a longer explanation of why the change was made.');
+
+  if (opts.recentCommits) {
+    parts.push('- Match the commit message style used in this repo. Recent commits for reference:');
+    parts.push('```');
+    parts.push(opts.recentCommits);
+    parts.push('```');
+  }
+
   return parts.join('\n');
 }
 
@@ -65,16 +123,45 @@ export async function startAgent(
 ): Promise<Task> {
   const db = getDb();
 
-  // Check mutex BEFORE modifying DB
-  if (mutex.held) {
-    const error: any = new Error(`Agent is busy with ${mutex.taskKey}`);
+  // Check if this task is already running
+  if (activeRuns.has(taskId)) {
+    const run = activeRuns.get(taskId)!;
+    const error: any = new Error(`${run.taskKey} is already running`);
     error.status = 409;
-    error.busyTaskKey = mutex.taskKey;
+    error.reason = 'task_already_running';
+    error.taskKey = run.taskKey;
     throw error;
   }
 
-  // Acquire mutex
-  mutex.held = true;
+  // Check concurrency limit
+  const maxConcurrent = getMaxConcurrent();
+  if (activeRuns.size >= maxConcurrent) {
+    const error: any = new Error(`Concurrency limit reached (${activeRuns.size}/${maxConcurrent} running)`);
+    error.status = 409;
+    error.reason = 'concurrency_limit';
+    error.activeRuns = getRunnerState().runs;
+    throw error;
+  }
+
+  // Reserve the slot immediately to prevent races
+  let resolveCompletion!: () => void;
+  const completionPromise = new Promise<void>((resolve) => {
+    resolveCompletion = resolve;
+  });
+  const abortController = new AbortController();
+
+  const runState: RunState = {
+    taskId,
+    taskKey: '', // will be set after task lookup
+    runNumber: 0,
+    pid: null,
+    abortController,
+    completionPromise,
+    resolveCompletion,
+    cancelling: false,
+    worktreePath: '',
+  };
+  activeRuns.set(taskId, runState);
 
   let originalTask: Task | null = null;
 
@@ -86,8 +173,7 @@ export async function startAgent(
     }
 
     originalTask = task;
-    mutex.taskKey = task.task_key;
-    mutex.taskId = task.id;
+    runState.taskKey = task.task_key;
 
     // Update task status to in-progress (transactional)
     const prepareRun = db.transaction(() => {
@@ -114,7 +200,7 @@ export async function startAgent(
     });
 
     const { updatedTask, runNumber } = prepareRun();
-    mutex.runNumber = runNumber;
+    runState.runNumber = runNumber;
 
     // Load agent config
     const config = db.query<AgentConfig, []>('SELECT * FROM agent_config WHERE id = 1').get();
@@ -124,25 +210,17 @@ export async function startAgent(
 
     // Broadcast task update
     broadcaster.broadcast('task:updated', { task: updatedTask });
-    broadcaster.broadcast('agent:status', { taskId, status: 'running', runNumber });
-
-    // Create abort controller and completion promise
-    const abortController = new AbortController();
-    mutex.abortController = abortController;
-    let resolveCompletion: () => void;
-    mutex.completionPromise = new Promise<void>((resolve) => {
-      resolveCompletion = resolve;
+    broadcaster.broadcast('agent:status', {
+      taskId,
+      taskKey: updatedTask.task_key,
+      status: 'running',
+      runNumber,
     });
-    mutex.resolveCompletion = resolveCompletion!;
 
     // Set up timeout
     const timeoutTimer = setTimeout(() => {
       abortController.abort('timeout');
     }, config.timeout_ms);
-
-    // Build prompt and create adapter
-    const adapter = new CliAdapter(config);
-    const prompt = buildPrompt(updatedTask, workingDir);
 
     // Track log failures
     let logsFailing = false;
@@ -161,7 +239,7 @@ export async function startAgent(
       });
     };
 
-    // Buffered DB log writer — batches inserts into transactions
+    // Buffered DB log writer
     const logBuffer: { level: string; message: string }[] = [];
     let flushTimer: ReturnType<typeof setTimeout> | null = null;
 
@@ -203,68 +281,58 @@ export async function startAgent(
 
     // Execute agent in the background
     const executeAgent = async () => {
+      let effectiveDir = workingDir;
+      const useWorktree = gitRepoDetected === true;
+      let branchName: string | undefined;
+      let mainBranch: string | undefined;
+
       try {
+        // Create worktree if in git mode
+        if (useWorktree) {
+          mainBranch = await detectMainBranch(workingDir);
+          effectiveDir = await createWorktree(updatedTask.task_key, workingDir, mainBranch);
+          runState.worktreePath = effectiveDir;
+          branchName = `agent/${updatedTask.task_key}`;
+
+          // Store worktree info in DB for crash recovery
+          db.query(
+            `UPDATE tasks SET agent_worktree = ?, agent_branch = ? WHERE id = ?`
+          ).run(effectiveDir, branchName, taskId);
+        }
+
+        const recentCommits = await getRecentCommits(workingDir);
+        const prompt = buildPrompt(updatedTask, {
+          workingDir: effectiveDir,
+          branchName,
+          mainBranch,
+          recentCommits,
+        });
+
+        const adapter = new CliAdapter(config);
         const result = await adapter.execute({
           task: updatedTask,
           prompt,
-          workingDir,
+          workingDir: effectiveDir,
           onOutput: (line: string) => {
             queueLog('agent', line);
             broadcastLog('agent', line);
           },
           signal: abortController.signal,
+          onPid: (pid: number) => { runState.pid = pid; },
         });
 
         clearTimeout(timeoutTimer);
 
-        // Flush remaining buffered logs
         if (flushTimer) clearTimeout(flushTimer);
         flushLogBuffer();
 
-        // Log lost lines warning
         if (lostLogCount > 0) {
           const warnMsg = `${lostLogCount} log lines were lost due to storage error.`;
-          try {
-            insertLogStmt.run(taskId, runNumber, 'warn', warnMsg);
-          } catch (err) {
-            console.error('Failed to write lost-log warning:', err);
-          }
+          try { insertLogStmt.run(taskId, runNumber, 'warn', warnMsg); } catch {}
           broadcastLog('warn', warnMsg);
         }
 
-        if (result.success) {
-          // Move to done
-          const maxDoneOrder = db
-            .query<{ max_order: number | null }, [string]>(
-              `SELECT MAX(sort_order) as max_order FROM tasks WHERE status = ?`
-            )
-            .get('done');
-          const doneOrder = (maxDoneOrder?.max_order ?? 0) + 1.0;
-
-          db.query(
-            `UPDATE tasks SET status = 'done', agent_status = 'completed', agent_pid = NULL, agent_started_at = NULL, sort_order = ? WHERE id = ?`
-          ).run(doneOrder, taskId);
-
-          const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
-          broadcaster.broadcast('task:updated', { task: finalTask });
-          broadcaster.broadcast('agent:status', { taskId, status: 'completed' });
-          broadcaster.broadcast('toast', {
-            type: 'success',
-            message: `${task.task_key} completed successfully.`,
-          });
-        } else {
-          db.query(
-            `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
-          ).run(taskId);
-
-          const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
-          broadcaster.broadcast('task:updated', { task: finalTask });
-          broadcaster.broadcast('agent:status', { taskId, status: 'failed' });
-          broadcaster.broadcast('toast', {
-            type: 'error',
-            message: `${task.task_key} failed: ${result.summary}`,
-          });
-        }
+        handleAgentResult(result, task, updatedTask, taskId, db, insertLogStmt, runNumber, broadcastLog);
       } catch (err: any) {
         clearTimeout(timeoutTimer);
         if (flushTimer) clearTimeout(flushTimer);
@@ -292,41 +360,53 @@ export async function startAgent(
 
             const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
             broadcaster.broadcast('task:updated', { task: finalTask });
-            broadcaster.broadcast('agent:status', { taskId, status: 'failed' });
+            broadcaster.broadcast('agent:status', { taskId, taskKey: task.task_key, status: 'failed' });
             broadcaster.broadcast('toast', {
               type: 'error',
               message: `${task.task_key} failed: ${message}`,
             });
           }
         } catch {
-          // DB may have been closed during shutdown — cleanup was already handled
+          // DB may have been closed during shutdown
         }
       } finally {
-        // Release mutex
-        const resolve = mutex.resolveCompletion;
-        mutex.held = false;
-        mutex.taskKey = null;
-        mutex.taskId = null;
-        mutex.runNumber = null;
-        mutex.abortController = null;
-        mutex.completionPromise = null;
-        mutex.resolveCompletion = null;
-        mutex.cancelling = false;
-        resolve?.();
+        // Check for uncommitted changes before cleanup
+        if (useWorktree && runState.worktreePath) {
+          try {
+            const warning = await checkUncommittedChanges(updatedTask.task_key, workingDir);
+            if (warning) {
+              try { insertLogStmt.run(taskId, runNumber, 'warn', warning); } catch {}
+              broadcastLog('warn', warning);
+            }
+          } catch {}
+
+          try {
+            await removeWorktree(updatedTask.task_key, workingDir);
+          } catch {}
+
+          try {
+            db.query(
+              `UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?`
+            ).run(taskId);
+          } catch {}
+        }
+
+        activeRuns.delete(taskId);
+        runState.resolveCompletion();
       }
     };
 
-    // Fire and forget — the agent runs in the background
+    // Fire and forget
     executeAgent();
 
     return updatedTask;
   } catch (err: any) {
-    // If we fail before actually starting the agent, release mutex and rollback DB
-    if (mutex.taskId === taskId || !mutex.taskId) {
+    // If we fail before executeAgent fires, clean up
+    if (activeRuns.get(taskId) === runState) {
       if (originalTask) {
         try {
           db.query(
-            `UPDATE tasks SET status = ?, agent_status = ?, sort_order = ? WHERE id = ?`
+            `UPDATE tasks SET status = ?, agent_status = ?, sort_order = ?, agent_worktree = NULL, agent_branch = NULL WHERE id = ?`
           ).run(originalTask.status, originalTask.agent_status, originalTask.sort_order, taskId);
           broadcaster.broadcast('task:updated', { task: originalTask });
         } catch {
@@ -334,18 +414,54 @@ export async function startAgent(
         }
       }
 
-      const resolve = mutex.resolveCompletion;
-      mutex.held = false;
-      mutex.taskKey = null;
-      mutex.taskId = null;
-      mutex.runNumber = null;
-      mutex.abortController = null;
-      mutex.completionPromise = null;
-      mutex.resolveCompletion = null;
-      mutex.cancelling = false;
-      resolve?.();
+      activeRuns.delete(taskId);
+      runState.resolveCompletion();
     }
     throw err;
+  }
+}
+
+function handleAgentResult(
+  result: { success: boolean; summary: string },
+  originalTask: Task,
+  updatedTask: Task,
+  taskId: number,
+  db: ReturnType<typeof getDb>,
+  insertLogStmt: any,
+  runNumber: number,
+  broadcastLog: (level: string, message: string) => void,
+): void {
+  if (result.success) {
+    const maxDoneOrder = db
+      .query<{ max_order: number | null }, [string]>(
+        `SELECT MAX(sort_order) as max_order FROM tasks WHERE status = ?`
+      )
+      .get('done');
+    const doneOrder = (maxDoneOrder?.max_order ?? 0) + 1.0;
+
+    db.query(
+      `UPDATE tasks SET status = 'done', agent_status = 'completed', agent_pid = NULL, agent_started_at = NULL, sort_order = ? WHERE id = ?`
+    ).run(doneOrder, taskId);
+
+    const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
+    broadcaster.broadcast('task:updated', { task: finalTask });
+    broadcaster.broadcast('agent:status', { taskId, taskKey: originalTask.task_key, status: 'completed' });
+    broadcaster.broadcast('toast', {
+      type: 'success',
+      message: `${originalTask.task_key} completed successfully.`,
+    });
+  } else {
+    db.query(
+      `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
+    ).run(taskId);
+
+    const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
+    broadcaster.broadcast('task:updated', { task: finalTask });
+    broadcaster.broadcast('agent:status', { taskId, taskKey: originalTask.task_key, status: 'failed' });
+    broadcaster.broadcast('toast', {
+      type: 'error',
+      message: `${originalTask.task_key} failed: ${result.summary}`,
+    });
   }
 }
 
@@ -361,38 +477,36 @@ export async function cancelAgent(taskId: number): Promise<Task> {
     throw Object.assign(new Error('No agent running on this task'), { status: 400 });
   }
 
-  // Only the first concurrent cancel actually aborts and logs; subsequent ones just wait
-  const completionPromise = mutex.completionPromise;
-  const currentRunNumber = mutex.runNumber;
-  const isCanceller = !mutex.cancelling && mutex.abortController != null && mutex.taskId === taskId;
+  const runState = activeRuns.get(taskId);
+  if (!runState) {
+    throw Object.assign(new Error('No agent running on this task'), { status: 400 });
+  }
+
+  const isCanceller = !runState.cancelling;
   if (isCanceller) {
-    mutex.cancelling = true;
-    mutex.abortController!.abort();
+    runState.cancelling = true;
+    runState.abortController.abort();
   }
 
-  if (completionPromise) {
-    await completionPromise;
-  }
+  await runState.completionPromise;
 
-  // Re-read task after the executor has finished — it may have completed or failed on its own
-  // before the abort signal was processed.
+  // Re-read task after the executor has finished
   const postTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
 
   if (!isCanceller || postTask.agent_status === 'completed') {
     return postTask;
   }
 
-  // Ensure status is set (executor may have set 'failed' already, this is idempotent)
+  // Ensure status is set
   db.query(
     `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
   ).run(taskId);
 
-  // Use the run number from the mutex (the current run), falling back to MAX from DB
-  const runNumber = currentRunNumber
-    ?? db.query<{ max_run: number | null }, [number]>(
+  const runNumber = runState.runNumber
+    || db.query<{ max_run: number | null }, [number]>(
       `SELECT MAX(run_number) as max_run FROM task_logs WHERE task_id = ?`
     ).get(taskId)?.max_run
-    ?? 1;
+    || 1;
 
   try {
     db.query(
@@ -415,7 +529,7 @@ export async function cancelAgent(taskId: number): Promise<Task> {
 
   const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
   broadcaster.broadcast('task:updated', { task: updatedTask });
-  broadcaster.broadcast('agent:status', { taskId, status: 'failed' });
+  broadcaster.broadcast('agent:status', { taskId, taskKey: task.task_key, status: 'failed' });
   broadcaster.broadcast('toast', {
     type: 'info',
     message: `${task.task_key} cancelled.`,
@@ -424,50 +538,35 @@ export async function cancelAgent(taskId: number): Promise<Task> {
   return updatedTask;
 }
 
-export function shutdownAgent(): number | null {
-  if (mutex.held && mutex.abortController) {
-    mutex.abortController.abort();
+export async function shutdownAllAgents(): Promise<void> {
+  const db = getDb();
+  const runs = [...activeRuns.values()];
 
-    let agentPid: number | null = null;
+  for (const run of runs) {
+    try {
+      // Only update tasks that haven't already completed
+      const result = db.query(
+        `UPDATE tasks SET agent_status = 'failed' WHERE id = ? AND agent_status != 'completed'`
+      ).run(run.taskId);
 
-    if (mutex.taskId) {
-      const db = getDb();
-
-      const task = db.query<Task, [number]>('SELECT agent_pid FROM tasks WHERE id = ?').get(mutex.taskId);
-      agentPid = task?.agent_pid ?? null;
-
-      db.query(
-        `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
-      ).run(mutex.taskId);
-
-      const runRow = db
-        .query<{ max_run: number | null }, [number]>(
+      // Only write shutdown log if we actually changed the status
+      if (result.changes > 0) {
+        // Use the actual run number from DB if the executor hasn't set it yet
+        const runNumber = run.runNumber || db.query<{ max_run: number | null }, [number]>(
           `SELECT MAX(run_number) as max_run FROM task_logs WHERE task_id = ?`
-        )
-        .get(mutex.taskId);
-      const runNumber = runRow?.max_run ?? 1;
+        ).get(run.taskId)?.max_run || 1;
 
-      try {
-        db.query(
-          `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, 'error', 'Server shutting down — agent run aborted.')`
-        ).run(mutex.taskId, runNumber);
-      } catch (err) {
-        console.error('Failed to write shutdown log:', err);
+        try {
+          db.query(
+            `INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, ?, 'error', 'Server shutting down — agent run aborted.')`
+          ).run(run.taskId, runNumber);
+        } catch {}
       }
-    }
+    } catch {}
 
-    const resolve = mutex.resolveCompletion;
-    mutex.held = false;
-    mutex.taskKey = null;
-    mutex.taskId = null;
-    mutex.runNumber = null;
-    mutex.abortController = null;
-    mutex.completionPromise = null;
-    mutex.resolveCompletion = null;
-    mutex.cancelling = false;
-    resolve?.();
-
-    return agentPid;
+    run.abortController.abort();
   }
-  return null;
+
+  // Wait for all completion promises
+  await Promise.allSettled(runs.map(r => r.completionPromise));
 }

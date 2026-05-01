@@ -39,7 +39,7 @@ export function buildLogRows(logs: TaskLog[], collapsedRuns: Set<number>): LogRo
 }
 
 export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailProps) {
-  const { tasks, updateTaskInStore, removeTaskFromStore, setSelectedTaskId } = useAppStore();
+  const { tasks, updateTaskInStore, removeTaskFromStore, setSelectedTaskId, activeRuns, maxConcurrentAgents, addActiveRun } = useAppStore();
   const task = tasks.find((t) => t.id === taskId);
 
   const [editing, setEditing] = useState(false);
@@ -246,6 +246,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
     try {
       const data = await api.startAgent(task.id);
       updateTaskInStore(data.task);
+      addActiveRun({ taskId: task.id, taskKey: task.task_key });
     } catch (err: any) {
       toast.error(err.data?.error || err.message || 'Failed to start agent');
     }
@@ -321,7 +322,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
 
   const isRunning = task.agent_status === 'running';
   const isReadOnly = isRunning;
-  const isAnyAgentBusy = tasks.some((t) => t.agent_status === 'running');
+  const canStartAgent = activeRuns.length < maxConcurrentAgents && !isRunning;
 
   return (
     <div ref={panelRef} onAnimationEnd={handleAnimationEnd} className={`absolute top-0 right-0 w-[440px] h-full border-l border-border bg-bg-raised flex flex-col z-30 shadow-2xl shadow-black/30 max-lg:fixed max-lg:inset-0 max-lg:w-full max-lg:z-40 max-lg:border-l-0 max-lg:shadow-none ${closing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}>
@@ -445,7 +446,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
             ) : (
               <button
                 onClick={handleRunAgent}
-                disabled={isAnyAgentBusy}
+                disabled={!canStartAgent}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-success-dim text-success hover:bg-success/20 text-xs font-medium rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
               >
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">

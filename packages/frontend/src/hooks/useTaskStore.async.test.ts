@@ -20,6 +20,8 @@ const makeTask = (overrides: any = {}) => ({
   agent_status: null,
   agent_pid: null,
   agent_started_at: null,
+  agent_worktree: null,
+  agent_branch: null,
   sort_order: 1,
   created_at: '2024-01-01',
   updated_at: '2024-01-01',

@@ -6,10 +6,21 @@ const mockStore = {
   updateTaskInStore: vi.fn(),
   removeTaskFromStore: vi.fn(),
   fetchTasks: vi.fn(),
+  addActiveRun: vi.fn(),
+  removeActiveRun: vi.fn(),
 };
 
 vi.mock('./useTaskStore', () => ({
-  useAppStore: (selector: any) => selector(mockStore),
+  useAppStore: Object.assign(
+    (selector: any) => selector(mockStore),
+    { setState: vi.fn() }
+  ),
+}));
+
+vi.mock('../api/client', () => ({
+  api: {
+    getStatus: vi.fn().mockResolvedValue({ activeRuns: [], maxConcurrentAgents: 3 }),
+  },
 }));
 
 type Listener = (e: any) => void;
@@ -43,6 +54,7 @@ class MockEventSource {
 beforeEach(() => {
   MockEventSource.instances = [];
   (globalThis as any).EventSource = MockEventSource;
+  vi.clearAllMocks();
 });
 
 afterEach(() => {
@@ -137,7 +149,7 @@ describe('useEventSource', () => {
       result.current.registerLogCallback(7, cb);
 
       act(() => {
-        getES().emit('agent:status', { taskId: 7, status: 'running', runNumber: 3 });
+        getES().emit('agent:status', { taskId: 7, taskKey: 'TST-7', status: 'running', runNumber: 3 });
       });
 
       expect(cb).toHaveBeenCalledOnce();
@@ -162,7 +174,7 @@ describe('useEventSource', () => {
       result.current.registerLogCallback(7, cb);
 
       act(() => {
-        getES().emit('agent:status', { taskId: 7, status: 'running' });
+        getES().emit('agent:status', { taskId: 7, taskKey: 'TST-7', status: 'running' });
       });
 
       expect(cb).not.toHaveBeenCalled();
@@ -174,7 +186,7 @@ describe('useEventSource', () => {
       result.current.registerLogCallback(7, cb);
 
       act(() => {
-        getES().emit('agent:status', { taskId: 7, status: 'running', runNumber: 0 });
+        getES().emit('agent:status', { taskId: 7, taskKey: 'TST-7', status: 'running', runNumber: 0 });
       });
 
       expect(cb).toHaveBeenCalledOnce();
@@ -187,7 +199,7 @@ describe('useEventSource', () => {
       result.current.registerLogCallback(1, cb);
 
       act(() => {
-        getES().emit('agent:status', { taskId: 99, status: 'running', runNumber: 1 });
+        getES().emit('agent:status', { taskId: 99, taskKey: 'TST-99', status: 'running', runNumber: 1 });
       });
 
       expect(cb).not.toHaveBeenCalled();
@@ -197,6 +209,36 @@ describe('useEventSource', () => {
       renderHook(() => useEventSource());
       const listeners = getES().listeners.get('agent:status') ?? [];
       expect(() => listeners.forEach((cb) => cb({ data: '{bad' }))).not.toThrow();
+    });
+
+    test('calls addActiveRun on running status', () => {
+      renderHook(() => useEventSource());
+
+      act(() => {
+        getES().emit('agent:status', { taskId: 5, taskKey: 'TST-5', status: 'running', runNumber: 1 });
+      });
+
+      expect(mockStore.addActiveRun).toHaveBeenCalledWith({ taskId: 5, taskKey: 'TST-5' });
+    });
+
+    test('calls removeActiveRun on completed status', () => {
+      renderHook(() => useEventSource());
+
+      act(() => {
+        getES().emit('agent:status', { taskId: 5, status: 'completed' });
+      });
+
+      expect(mockStore.removeActiveRun).toHaveBeenCalledWith(5);
+    });
+
+    test('calls removeActiveRun on failed status', () => {
+      renderHook(() => useEventSource());
+
+      act(() => {
+        getES().emit('agent:status', { taskId: 5, status: 'failed' });
+      });
+
+      expect(mockStore.removeActiveRun).toHaveBeenCalledWith(5);
     });
   });
 
@@ -225,11 +267,47 @@ describe('useEventSource', () => {
   });
 
   describe('task:updated event', () => {
+    test('calls updateTaskInStore for a normal task update', () => {
+      renderHook(() => useEventSource());
+      const task = { id: 1, task_key: 'TST-1', title: 'Test' };
+
+      act(() => {
+        getES().emit('task:updated', { task });
+      });
+
+      expect(mockStore.updateTaskInStore).toHaveBeenCalledWith(task);
+    });
+
+    test('calls removeTaskFromStore for a deleted task', () => {
+      renderHook(() => useEventSource());
+      const task = { id: 1, task_key: 'TST-1', _deleted: true };
+
+      act(() => {
+        getES().emit('task:updated', { task });
+      });
+
+      expect(mockStore.removeTaskFromStore).toHaveBeenCalledWith(1);
+      expect(mockStore.updateTaskInStore).not.toHaveBeenCalled();
+    });
+
     test('closes EventSource on unmount', () => {
       const { unmount } = renderHook(() => useEventSource());
       const es = getES();
       unmount();
       expect(es.closed).toBe(true);
+    });
+  });
+
+  describe('stale event', () => {
+    test('calls fetchTasks on stale event', () => {
+      renderHook(() => useEventSource());
+
+      act(() => {
+        const listeners = getES().listeners.get('stale') ?? [];
+        listeners.forEach((cb) => cb({}));
+      });
+
+      expect(mockStore.fetchTasks).toHaveBeenCalledOnce();
     });
   });
 });

@@ -26,27 +26,42 @@ describe('AgentConfigModal', () => {
         cli_prompt_mode: 'stdin',
         cli_prompt_flag: null,
         timeout_ms: 1800000,
+        max_concurrent_agents: 3,
       },
     });
   });
 
   test('renders title', async () => {
     render(<AgentConfigModal />);
-    expect(screen.getByText('Agent Configuration')).toBeInTheDocument();
+    expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
-  test('loads and displays config', async () => {
+  test('renders sidebar navigation with Agent and Concurrency', async () => {
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Agent/ })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /Concurrency/ })).toBeInTheDocument();
+    });
+  });
+
+  test('loads and displays config on Agent page', async () => {
     render(<AgentConfigModal />);
     await waitFor(() => {
       expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
     });
   });
 
-  test('has Save, Cancel, and Test buttons', async () => {
+  test('has Save and Cancel buttons', async () => {
     render(<AgentConfigModal />);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
+    });
+  });
+
+  test('has Test Connection button on Agent page', async () => {
+    render(<AgentConfigModal />);
+    await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Test Connection' })).toBeInTheDocument();
     });
   });
@@ -72,7 +87,7 @@ describe('AgentConfigModal', () => {
     });
   });
 
-  test('shows preset buttons', async () => {
+  test('shows preset buttons on Agent page', async () => {
     render(<AgentConfigModal />);
     await waitFor(() => {
       expect(screen.getByRole('button', { name: 'Crush' })).toBeInTheDocument();
@@ -87,6 +102,7 @@ describe('AgentConfigModal', () => {
       tasks: [{
         id: 1, task_key: 'T-1', title: 'a', status: 'in-progress' as const,
         agent_status: 'running' as const, agent_pid: 123, agent_started_at: null,
+        agent_worktree: null, agent_branch: null,
         sort_order: 1, description: '', acceptance: '', created_at: '', updated_at: '',
       }],
     });
@@ -94,5 +110,24 @@ describe('AgentConfigModal', () => {
     await waitFor(() => {
       expect(screen.getByText(/Config changes apply to future runs/)).toBeInTheDocument();
     });
+  });
+
+  test('switches to Concurrency page', async () => {
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Concurrency/ }));
+    expect(screen.getByText('Max Concurrent Agents')).toBeInTheDocument();
+    expect(screen.getByDisplayValue('3')).toBeInTheDocument();
+  });
+
+  test('Concurrency page shows explanation text', async () => {
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Concurrency/ }));
+    expect(screen.getByText(/git worktree/)).toBeInTheDocument();
   });
 });

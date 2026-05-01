@@ -58,11 +58,11 @@ describe('Database initialization', () => {
     expect(config.timeout_ms).toBe(1800000);
   });
 
-  test('user_version is set to 1', () => {
+  test('user_version is set to latest', () => {
     initDb(tmpDir);
     const db = getDb();
     const row = db.query<{ user_version: number }, []>('PRAGMA user_version').get();
-    expect(row?.user_version).toBe(1);
+    expect(row?.user_version).toBe(2);
   });
 
   test('idempotent — calling initDb twice does not error', () => {

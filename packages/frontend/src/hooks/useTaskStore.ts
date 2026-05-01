@@ -11,6 +11,8 @@ export interface Task {
   agent_status: 'running' | 'completed' | 'failed' | null;
   agent_pid: number | null;
   agent_started_at: string | null;
+  agent_worktree: string | null;
+  agent_branch: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -25,6 +27,11 @@ export interface TaskLog {
   message: string;
 }
 
+interface ActiveRun {
+  taskId: number;
+  taskKey: string;
+}
+
 interface AppState {
   // Init state
   initialized: boolean;
@@ -34,6 +41,10 @@ interface AppState {
 
   // Tasks
   tasks: Task[];
+
+  // Concurrency
+  activeRuns: ActiveRun[];
+  maxConcurrentAgents: number;
 
   // Selected task
   selectedTaskId: number | null;
@@ -62,6 +73,8 @@ interface AppState {
   setSidebarCollapsed: (collapsed: boolean) => void;
   setShowAgentConfig: (show: boolean) => void;
   setShowCreateTask: (show: boolean, defaultStatus?: 'backlog' | 'todo') => void;
+  addActiveRun: (run: ActiveRun) => void;
+  removeActiveRun: (taskId: number) => void;
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -70,6 +83,8 @@ export const useAppStore = create<AppState>((set) => ({
   repoName: '',
   loading: true,
   tasks: [],
+  activeRuns: [],
+  maxConcurrentAgents: 3,
   selectedTaskId: null,
   currentView: 'board',
   sidebarCollapsed: typeof window !== 'undefined' && window.innerWidth < 1024,
@@ -84,6 +99,8 @@ export const useAppStore = create<AppState>((set) => ({
         initialized: data.initialized,
         projectConfig: data.projectConfig,
         repoName: data.repoName || '',
+        activeRuns: data.activeRuns || [],
+        maxConcurrentAgents: data.maxConcurrentAgents ?? 3,
         loading: false,
       });
     } catch {
@@ -113,6 +130,7 @@ export const useAppStore = create<AppState>((set) => ({
   removeTaskFromStore: (id: number) => {
     set((state) => ({
       tasks: state.tasks.filter((t) => t.id !== id),
+      activeRuns: state.activeRuns.filter((r) => r.taskId !== id),
       selectedTaskId: state.selectedTaskId === id ? null : state.selectedTaskId,
     }));
   },
@@ -127,4 +145,17 @@ export const useAppStore = create<AppState>((set) => ({
       showCreateTask: show,
       createTaskDefaultStatus: defaultStatus || 'backlog',
     }),
+
+  addActiveRun: (run: ActiveRun) => {
+    set((state) => {
+      if (state.activeRuns.some(r => r.taskId === run.taskId)) return state;
+      return { activeRuns: [...state.activeRuns, run] };
+    });
+  },
+
+  removeActiveRun: (taskId: number) => {
+    set((state) => ({
+      activeRuns: state.activeRuns.filter(r => r.taskId !== taskId),
+    }));
+  },
 }));

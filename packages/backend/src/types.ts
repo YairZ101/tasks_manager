@@ -8,6 +8,8 @@ export interface Task {
   agent_status: 'running' | 'completed' | 'failed' | null;
   agent_pid: number | null;
   agent_started_at: string | null;
+  agent_worktree: string | null;
+  agent_branch: string | null;
   sort_order: number;
   created_at: string;
   updated_at: string;
@@ -28,6 +30,7 @@ export interface AgentConfig {
   cli_prompt_mode: 'stdin' | 'argument' | 'flag';
   cli_prompt_flag: string | null;
   timeout_ms: number;
+  max_concurrent_agents: number;
   updated_at: string;
 }
 
@@ -41,3 +44,9 @@ export interface ProjectConfig {
 
 export type TaskStatus = Task['status'];
 export type AgentStatus = NonNullable<Task['agent_status']>;
+
+export interface RunnerState {
+  activeCount: number;
+  maxConcurrent: number;
+  runs: Array<{ taskId: number; taskKey: string }>;
+}

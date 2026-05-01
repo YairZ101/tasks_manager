@@ -8,7 +8,7 @@ import { initDb, closeDb, getDb } from './db/database.js';
 import { acquireLock, releaseLock } from './lock.js';
 import { runCrashRecovery } from './recovery.js';
 import { broadcaster } from './sse/broadcaster.js';
-import { shutdownAgent } from './executor/executor.js';
+import { shutdownAllAgents, getRunnerState, initGitDetection, isGitRepoDetected } from './executor/executor.js';
 import tasksRoutes from './routes/tasks.js';
 import logsRoutes from './routes/logs.js';
 import agentConfigRoutes from './routes/agent-config.js';
@@ -41,7 +41,10 @@ initDb(repoRoot);
 // Step 4: Crash recovery
 runCrashRecovery();
 
-// Step 5: Create Hono app
+// Step 5: Detect git repo for parallel agent support
+initGitDetection(repoRoot);
+
+// Step 6: Create Hono app
 const app = new Hono();
 
 // Body size limit
@@ -57,10 +60,14 @@ app.onError((err, c) => {
 app.get('/status', (c) => {
   const db = getDb();
   const projectConfig = db.query<ProjectConfig, []>('SELECT * FROM project_config WHERE id = 1').get();
+  const runnerState = getRunnerState();
   return c.json({
     initialized: !!projectConfig,
     projectConfig: projectConfig || undefined,
     repoName: path.basename(repoRoot),
+    activeRuns: runnerState.runs,
+    maxConcurrentAgents: runnerState.maxConcurrent,
+    isGitRepo: isGitRepoDetected(),
   });
 });
 
@@ -101,7 +108,7 @@ if (fs.existsSync(frontendDist)) {
   });
 }
 
-// Step 6: Start server
+// Step 7: Start server
 broadcaster.start();
 
 const port = portArg || DEFAULT_PORT;
@@ -124,7 +131,7 @@ console.log(`\n  🚀 Tasks Manager running at http://localhost:${port}\n`);
 
 // Graceful shutdown
 let shuttingDown = false;
-const shutdown = () => {
+const shutdown = async () => {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log('\nShutting down...');
@@ -132,25 +139,8 @@ const shutdown = () => {
   // Step 1: Stop accepting new requests
   server.stop();
 
-  // Step 2: Kill running agent and wait for it to die
-  const agentPid = shutdownAgent();
-  if (agentPid) {
-    const deadline = Date.now() + 6000;
-    while (Date.now() < deadline) {
-      try {
-        process.kill(agentPid, 0);
-        Bun.sleepSync(100);
-      } catch {
-        break;
-      }
-    }
-    // Force kill if still alive
-    try {
-      process.kill(-agentPid, 'SIGKILL');
-    } catch {
-      try { process.kill(agentPid, 'SIGKILL'); } catch { /* dead */ }
-    }
-  }
+  // Step 2: Shut down all running agents and wait for cleanup
+  await shutdownAllAgents();
 
   // Step 3: Stop SSE
   broadcaster.stop();
@@ -164,5 +154,5 @@ const shutdown = () => {
   process.exit(0);
 };
 
-process.on('SIGTERM', shutdown);
-process.on('SIGINT', shutdown);
+process.on('SIGTERM', () => { shutdown(); });
+process.on('SIGINT', () => { shutdown(); });

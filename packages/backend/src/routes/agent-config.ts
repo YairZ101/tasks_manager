@@ -26,6 +26,7 @@ agentConfig.put('/', async (c) => {
     cli_prompt_mode,
     cli_prompt_flag,
     timeout_ms,
+    max_concurrent_agents,
   } = body;
 
   // Validate cli_cmd
@@ -48,6 +49,16 @@ agentConfig.put('/', async (c) => {
     return c.json({ error: 'Timeout must be at least 1000ms' }, 400);
   }
 
+  // Validate max_concurrent_agents
+  if (max_concurrent_agents !== undefined && (
+    typeof max_concurrent_agents !== 'number' ||
+    !Number.isInteger(max_concurrent_agents) ||
+    max_concurrent_agents < 1 ||
+    max_concurrent_agents > 10
+  )) {
+    return c.json({ error: 'max_concurrent_agents must be an integer between 1 and 10' }, 400);
+  }
+
   const updates: string[] = [];
   const params: any[] = [];
 
@@ -66,6 +77,10 @@ agentConfig.put('/', async (c) => {
   if (timeout_ms !== undefined) {
     updates.push('timeout_ms = ?');
     params.push(timeout_ms);
+  }
+  if (max_concurrent_agents !== undefined) {
+    updates.push('max_concurrent_agents = ?');
+    params.push(max_concurrent_agents);
   }
 
   if (updates.length > 0) {

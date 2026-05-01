@@ -19,6 +19,8 @@ const makeTask = (overrides: Partial<Task> = {}): Task => ({
   agent_status: null,
   agent_pid: null,
   agent_started_at: null,
+  agent_worktree: null,
+  agent_branch: null,
   sort_order: 1,
   created_at: '',
   updated_at: '',

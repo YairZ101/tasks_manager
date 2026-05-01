@@ -26,6 +26,8 @@ const makeTask = (overrides: Partial<Task> = {}): Task => ({
   agent_status: null,
   agent_pid: null,
   agent_started_at: null,
+  agent_worktree: null,
+  agent_branch: null,
   sort_order: 1,
   created_at: '',
   updated_at: '',
@@ -66,6 +68,46 @@ describe('TaskDetail', () => {
     useAppStore.setState({ tasks: [], selectedTaskId: null });
     const { container } = render(<TaskDetail taskId={999} registerLogCallback={noop} />);
     expect(container.innerHTML).toBe('');
+  });
+
+  test('Run Agent button is enabled when under concurrency limit', () => {
+    useAppStore.setState({
+      tasks: [makeTask({ status: 'todo' })],
+      selectedTaskId: 1,
+      activeRuns: [],
+      maxConcurrentAgents: 3,
+    });
+    render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+    const btn = screen.getByText('Run Agent').closest('button');
+    expect(btn).not.toBeDisabled();
+  });
+
+  test('Run Agent button is disabled when concurrency limit reached', () => {
+    useAppStore.setState({
+      tasks: [makeTask({ status: 'todo' })],
+      selectedTaskId: 1,
+      activeRuns: [
+        { taskId: 10, taskKey: 'TST-10' },
+        { taskId: 11, taskKey: 'TST-11' },
+        { taskId: 12, taskKey: 'TST-12' },
+      ],
+      maxConcurrentAgents: 3,
+    });
+    render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+    const btn = screen.getByText('Run Agent').closest('button');
+    expect(btn).toBeDisabled();
+  });
+
+  test('Run Agent button is disabled when this task is already running', () => {
+    useAppStore.setState({
+      tasks: [makeTask({ status: 'in-progress', agent_status: 'running' })],
+      selectedTaskId: 1,
+      activeRuns: [{ taskId: 1, taskKey: 'TST-1' }],
+      maxConcurrentAgents: 3,
+    });
+    render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+    // When running, Cancel Agent button is shown instead
+    expect(screen.getByText('Cancel Agent')).toBeInTheDocument();
   });
 
   test('SSE logs received before loadLogs resolves are not lost', async () => {

@@ -36,7 +36,14 @@ async function request<T>(path: string, options?: RequestInit): Promise<T> {
 
 export const api = {
   // Status
-  getStatus: () => request<{ initialized: boolean; projectConfig?: any; repoName?: string }>('/status'),
+  getStatus: () => request<{
+    initialized: boolean;
+    projectConfig?: any;
+    repoName?: string;
+    activeRuns?: Array<{ taskId: number; taskKey: string }>;
+    maxConcurrentAgents?: number;
+    isGitRepo?: boolean;
+  }>('/status'),
 
   // Tasks
   getTasks: (params?: { q?: string; status?: string }) => {

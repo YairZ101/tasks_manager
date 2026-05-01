@@ -1,3 +1,4 @@
+import fs from 'fs';
 import { getDb } from './db/database.js';
 import { getProcessStartTime, isProcessAlive } from './process-utils.js';
 import type { Task } from './types.js';
@@ -38,6 +39,14 @@ function killProcessTree(pid: number): void {
 
 export function runCrashRecovery(): void {
   const db = getDb();
+  const repoRoot = process.cwd();
+
+  // Prune stale worktrees unconditionally
+  try {
+    Bun.spawnSync({ cmd: ['git', 'worktree', 'prune'], cwd: repoRoot });
+  } catch {
+    // Not a git repo or git not available — fine
+  }
 
   const runningTasks = db
     .query<Task, []>(`SELECT * FROM tasks WHERE agent_status = 'running'`)
@@ -58,9 +67,21 @@ export function runCrashRecovery(): void {
       }
     }
 
-    // Mark as failed
+    // Clean up worktree if one exists
+    if (task.agent_worktree) {
+      try {
+        if (fs.existsSync(task.agent_worktree)) {
+          Bun.spawnSync({ cmd: ['git', 'worktree', 'remove', task.agent_worktree, '--force'], cwd: repoRoot });
+        }
+      } catch {
+        // Worktree cleanup failed — not fatal
+      }
+    }
+
+    // Mark as failed and clear worktree/branch columns
     db.query(
-      `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
+      `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL,
+        agent_worktree = NULL, agent_branch = NULL WHERE id = ?`
     ).run(task.id);
 
     // Compute run_number for this recovery log

@@ -104,4 +104,11 @@ function runMigrations(db: Database): void {
       PRAGMA user_version = 1;
     `);
   }
+
+  if (version < 2) {
+    db.exec(`ALTER TABLE agent_config ADD COLUMN max_concurrent_agents INTEGER NOT NULL DEFAULT 3`);
+    db.exec(`ALTER TABLE tasks ADD COLUMN agent_worktree TEXT DEFAULT NULL`);
+    db.exec(`ALTER TABLE tasks ADD COLUMN agent_branch TEXT DEFAULT NULL`);
+    db.exec(`PRAGMA user_version = 2`);
+  }
 }

@@ -12,6 +12,8 @@ const makeTask = (overrides: Partial<Task> = {}): Task => ({
   agent_status: null,
   agent_pid: null,
   agent_started_at: null,
+  agent_worktree: null,
+  agent_branch: null,
   sort_order: 1,
   created_at: '2024-01-01',
   updated_at: '2024-01-01',
@@ -26,6 +28,8 @@ describe('useAppStore', () => {
       repoName: '',
       loading: true,
       tasks: [],
+      activeRuns: [],
+      maxConcurrentAgents: 3,
       selectedTaskId: null,
       currentView: 'board',
       sidebarCollapsed: false,
@@ -149,6 +153,54 @@ describe('useAppStore', () => {
       useAppStore.getState().setShowCreateTask(false);
       expect(useAppStore.getState().showCreateTask).toBe(false);
       expect(useAppStore.getState().createTaskDefaultStatus).toBe('backlog');
+    });
+  });
+
+  describe('activeRuns', () => {
+    test('addActiveRun adds an entry', () => {
+      useAppStore.getState().addActiveRun({ taskId: 1, taskKey: 'TST-1' });
+      expect(useAppStore.getState().activeRuns).toHaveLength(1);
+      expect(useAppStore.getState().activeRuns[0]).toEqual({ taskId: 1, taskKey: 'TST-1' });
+    });
+
+    test('addActiveRun deduplicates by taskId', () => {
+      useAppStore.getState().addActiveRun({ taskId: 1, taskKey: 'TST-1' });
+      useAppStore.getState().addActiveRun({ taskId: 1, taskKey: 'TST-1' });
+      expect(useAppStore.getState().activeRuns).toHaveLength(1);
+    });
+
+    test('addActiveRun allows multiple different tasks', () => {
+      useAppStore.getState().addActiveRun({ taskId: 1, taskKey: 'TST-1' });
+      useAppStore.getState().addActiveRun({ taskId: 2, taskKey: 'TST-2' });
+      expect(useAppStore.getState().activeRuns).toHaveLength(2);
+    });
+
+    test('removeActiveRun removes by taskId', () => {
+      useAppStore.getState().addActiveRun({ taskId: 1, taskKey: 'TST-1' });
+      useAppStore.getState().addActiveRun({ taskId: 2, taskKey: 'TST-2' });
+
+      useAppStore.getState().removeActiveRun(1);
+      expect(useAppStore.getState().activeRuns).toHaveLength(1);
+      expect(useAppStore.getState().activeRuns[0].taskId).toBe(2);
+    });
+
+    test('removeActiveRun is a no-op for non-existent taskId', () => {
+      useAppStore.getState().addActiveRun({ taskId: 1, taskKey: 'TST-1' });
+      useAppStore.getState().removeActiveRun(99);
+      expect(useAppStore.getState().activeRuns).toHaveLength(1);
+    });
+
+    test('removeTaskFromStore also removes from activeRuns', () => {
+      useAppStore.getState().updateTaskInStore(makeTask({ id: 1 }));
+      useAppStore.getState().addActiveRun({ taskId: 1, taskKey: 'TST-1' });
+
+      useAppStore.getState().removeTaskFromStore(1);
+      expect(useAppStore.getState().activeRuns).toHaveLength(0);
+      expect(useAppStore.getState().tasks).toHaveLength(0);
+    });
+
+    test('maxConcurrentAgents defaults to 3', () => {
+      expect(useAppStore.getState().maxConcurrentAgents).toBe(3);
     });
   });
 });

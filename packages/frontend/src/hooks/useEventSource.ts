@@ -1,10 +1,13 @@
 import { useEffect, useRef, useCallback } from 'react';
 import { useAppStore } from './useTaskStore.js';
+import { api } from '../api/client.js';
 
 export function useEventSource() {
   const updateTaskInStore = useAppStore((s) => s.updateTaskInStore);
   const removeTaskFromStore = useAppStore((s) => s.removeTaskFromStore);
   const fetchTasks = useAppStore((s) => s.fetchTasks);
+  const addActiveRun = useAppStore((s) => s.addActiveRun);
+  const removeActiveRun = useAppStore((s) => s.removeActiveRun);
   const esRef = useRef<EventSource | null>(null);
   const logCallbacksRef = useRef<Map<number, (logs: any[]) => void>>(new Map());
 
@@ -37,10 +40,20 @@ export function useEventSource() {
     es.addEventListener('agent:status', (e) => {
       try {
         const data = JSON.parse(e.data);
-        if (data.taskId && data.status === 'running' && data.runNumber != null) {
-          const cb = logCallbacksRef.current.get(data.taskId);
-          if (cb) {
-            cb([{ _runStarted: true, run_number: data.runNumber }]);
+        if (data.taskId) {
+          // Update activeRuns based on status
+          if (data.status === 'running' && data.taskKey) {
+            addActiveRun({ taskId: data.taskId, taskKey: data.taskKey });
+          } else if (data.status === 'completed' || data.status === 'failed') {
+            removeActiveRun(data.taskId);
+          }
+
+          // Trigger log run separator
+          if (data.status === 'running' && data.runNumber != null) {
+            const cb = logCallbacksRef.current.get(data.taskId);
+            if (cb) {
+              cb([{ _runStarted: true, run_number: data.runNumber }]);
+            }
           }
         }
       } catch {
@@ -59,6 +72,13 @@ export function useEventSource() {
 
     es.addEventListener('stale', () => {
       fetchTasks();
+      // Re-fetch runner state on stale reconnect
+      api.getStatus().then((data) => {
+        useAppStore.setState({
+          activeRuns: data.activeRuns || [],
+          maxConcurrentAgents: data.maxConcurrentAgents ?? 3,
+        });
+      }).catch(() => {});
     });
 
     es.onerror = () => {
@@ -78,7 +98,7 @@ export function useEventSource() {
     return () => {
       es.close();
     };
-  }, [updateTaskInStore, removeTaskFromStore, fetchTasks]);
+  }, [updateTaskInStore, removeTaskFromStore, fetchTasks, addActiveRun, removeActiveRun]);
 
   return { registerLogCallback };
 }

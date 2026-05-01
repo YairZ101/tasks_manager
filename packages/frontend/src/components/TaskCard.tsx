@@ -13,7 +13,7 @@ interface TaskCardProps {
 }
 
 export default function TaskCard({ task, isDragging, onClick, showActions }: TaskCardProps) {
-  const { updateTaskInStore } = useAppStore();
+  const { updateTaskInStore, addActiveRun, activeRuns, maxConcurrentAgents } = useAppStore();
   const {
     attributes,
     listeners,
@@ -34,10 +34,13 @@ export default function TaskCard({ task, isDragging, onClick, showActions }: Tas
     try {
       const data = await api.startAgent(task.id);
       updateTaskInStore(data.task);
+      addActiveRun({ taskId: task.id, taskKey: task.task_key });
     } catch (err: any) {
       toast.error(err.data?.error || err.message || 'Failed to start agent');
     }
   };
+
+  const canStartAgent = activeRuns.length < maxConcurrentAgents && task.agent_status !== 'running';
 
   return (
     <div
@@ -62,7 +65,7 @@ export default function TaskCard({ task, isDragging, onClick, showActions }: Tas
       <p className="text-sm font-medium text-text leading-snug line-clamp-2">{task.title}</p>
 
       {/* Quick run button for todo tasks */}
-      {(task.status === 'todo' || showActions) && task.agent_status !== 'running' && (
+      {(task.status === 'todo' || showActions) && canStartAgent && (
         <Tooltip label="Run Agent" className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100">
           <button
             onClick={handleRunAgent}

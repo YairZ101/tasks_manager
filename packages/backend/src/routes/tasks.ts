@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
-import { startAgent, cancelAgent, getMutexState } from '../executor/executor.js';
+import { startAgent, cancelAgent, getRunnerState } from '../executor/executor.js';
 import { broadcaster } from '../sse/broadcaster.js';
 import type { Task, ProjectConfig } from '../types.js';
 
@@ -68,12 +68,16 @@ tasks.post('/', async (c) => {
     return c.json({ error: 'Status must be "backlog" or "todo"' }, 400);
   }
 
-  // If run=true, check mutex first
+  // If run=true, check concurrency first
   if (run) {
-    const mutexState = getMutexState();
-    if (mutexState.held) {
+    const runnerState = getRunnerState();
+    if (runnerState.activeCount >= runnerState.maxConcurrent) {
       return c.json(
-        { error: `Agent is busy with ${mutexState.taskKey}`, busyTaskKey: mutexState.taskKey },
+        {
+          error: `Concurrency limit reached (${runnerState.activeCount}/${runnerState.maxConcurrent} running)`,
+          reason: 'concurrency_limit',
+          activeRuns: runnerState.runs,
+        },
         409
       );
     }
@@ -133,10 +137,11 @@ tasks.post('/', async (c) => {
       db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
       broadcaster.broadcast('task:updated', { task: { ...task, _deleted: true } });
       const statusCode = err.status || 500;
-      return c.json(
-        { error: err.message, busyTaskKey: err.busyTaskKey },
-        statusCode
-      );
+      const body: any = { error: err.message };
+      if (err.reason) body.reason = err.reason;
+      if (err.taskKey) body.taskKey = err.taskKey;
+      if (err.activeRuns) body.activeRuns = err.activeRuns;
+      return c.json(body, statusCode);
     }
   }
 
@@ -221,10 +226,11 @@ tasks.patch('/:id', async (c) => {
         return c.json({ task: updatedTask });
       } catch (err: any) {
         const statusCode = err.status || 500;
-        return c.json(
-          { error: err.message, busyTaskKey: err.busyTaskKey },
-          statusCode
-        );
+        const body: any = { error: err.message };
+        if (err.reason) body.reason = err.reason;
+        if (err.taskKey) body.taskKey = err.taskKey;
+        if (err.activeRuns) body.activeRuns = err.activeRuns;
+        return c.json(body, statusCode);
       }
     }
 

@@ -42,8 +42,9 @@ export class CliAdapter {
     workingDir: string;
     onOutput: (line: string) => void;
     signal: AbortSignal;
+    onPid?: (pid: number) => void;
   }): Promise<AgentResult> {
-    const { task, prompt, workingDir, onOutput, signal } = params;
+    const { task, prompt, workingDir, onOutput, signal, onPid } = params;
 
     if (signal.aborted) {
       throw new Error('Agent was cancelled');
@@ -86,6 +87,11 @@ export class CliAdapter {
     proc.on('error', (err) => { spawnError = err; });
 
     const pid = proc.pid;
+
+    // Notify caller of PID
+    if (pid && onPid) {
+      onPid(pid);
+    }
 
     // Store PID for crash recovery
     if (pid) {

@@ -18,10 +18,11 @@ agentControl.post('/start', async (c) => {
     return c.json({ task });
   } catch (err: any) {
     const statusCode = err.status || 500;
-    return c.json(
-      { error: err.message, busyTaskKey: err.busyTaskKey },
-      statusCode
-    );
+    const body: any = { error: err.message };
+    if (err.reason) body.reason = err.reason;
+    if (err.taskKey) body.taskKey = err.taskKey;
+    if (err.activeRuns) body.activeRuns = err.activeRuns;
+    return c.json(body, statusCode);
   }
 });
 

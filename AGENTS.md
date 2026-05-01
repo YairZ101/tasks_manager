@@ -49,7 +49,8 @@ packages/
 │   └── src/
 │       ├── index.ts           Entry point — init sequence, route mounting, graceful shutdown
 │       ├── db/database.ts     SQLite via bun:sqlite, migrations via PRAGMA user_version
-│       ├── executor/executor.ts   Agent execution with global mutex, buffered log writes
+│       ├── executor/executor.ts   Agent execution with concurrency via Map<taskId, RunState>, worktree support
+│       ├── worktree/worktree.ts   Git worktree create/remove/prune for parallel agent isolation
 │       ├── agents/            CLI adapter (spawns external agent tools)
 │       ├── sse/broadcaster.ts SSE with ring buffer (1000 events), Last-Event-ID replay
 │       ├── routes/            Hono route modules (tasks, logs, agent-config, agent-control, init)
@@ -76,7 +77,8 @@ packages/
 ### Key Constraints
 
 - **CLI-only agent execution**: The system only supports CLI-based agents (tools like Crush, Claude Code, Aider, Codex). There is no API/LLM adapter — the configured CLI tool is expected to be a full autonomous agent that can read/write files and run commands.
-- **Single agent mutex**: Only one agent runs at a time across the entire server. The mutex is an in-memory object in `executor.ts`, not DB-based. Concurrent start requests get HTTP 409.
+- **Concurrent agent execution via worktrees**: Multiple agents can run simultaneously (up to `max_concurrent_agents` from `agent_config`, default 3) when in a git repository. Each agent gets its own git worktree at `.tasks_manager/worktrees/<task-key>` on branch `agent/<task-key>`. In non-git repos, falls back to single-agent mode.
+- **Concurrency tracking**: The executor uses a `Map<number, RunState>` keyed by task ID instead of a global mutex. `getRunnerState()` returns the active count, max concurrent limit, and list of active runs.
 - **Detached process groups**: CLI adapter spawns with `detached: true` and kills via process group (`-pid`) for clean tree termination.
 - **Buffered log writes**: Agent output is batched in a buffer and flushed every 50ms to avoid per-line SQLite transactions. The buffer is force-flushed when the agent completes or fails.
 - **SSE ring buffer**: The broadcaster keeps the last 1000 events. Clients that reconnect with `Last-Event-ID` get replay; if their ID is too old, they receive a `stale` event triggering a full task refetch.
@@ -141,6 +143,10 @@ All routes return JSON. Status 204 for DELETE. Errors return `{ error: string }`
 | POST   | `/agent-config/test`      | Test agent config (30s timeout)                           |
 | POST   | `/init/generate-prefix`   | Ask agent to generate a JIRA-style prefix                 |
 | POST   | `/init/save-prefix`       | Save project prefix (one-time init)                       |
+
+## Dev Server Lifecycle
+
+When starting `bun run dev` for Playwright or manual testing, always use `run_in_background=true` and save the shell ID. When testing is done, call `job_kill` on that shell ID **before** doing anything else. Then verify with `ps aux | grep` that no `bun`, `vite`, or `concurrently` processes survived, and remove `.tasks_manager/.lock` if it's stale.
 
 ## CI
 

@@ -6,7 +6,7 @@ import {
   isGitRepo,
   createWorktree,
   removeWorktree,
-  checkUncommittedChanges,
+  removeBranch,
   detectMainBranch,
 } from '../worktree/worktree.js';
 import { getStepInfo, getNextStepSlug, isWorkflowStep, cleanupReviewFiles } from '../workflow/workflow-utils.js';
@@ -352,6 +352,28 @@ export async function startAgent(
         if (action.nextAction === 'chain' && action.nextSlug) {
           chainResult = { nextSlug: action.nextSlug };
         }
+
+        // Clean up worktree when task reaches done (all steps complete)
+        if (useWorktree && action.cleanupWorktree) {
+          try {
+            await removeWorktree(updatedTask.task_key, workingDir);
+          } catch {}
+
+          const projectConfig = db.query<{ delete_branch_on_done: number }, []>(
+            'SELECT delete_branch_on_done FROM project_config WHERE id = 1'
+          ).get();
+          if (projectConfig?.delete_branch_on_done) {
+            try {
+              await removeBranch(updatedTask.task_key, workingDir);
+            } catch {}
+          }
+
+          try {
+            db.query(
+              `UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?`
+            ).run(taskId);
+          } catch {}
+        }
       } catch (err: any) {
         clearTimeout(timeoutTimer);
         if (flushTimer) clearTimeout(flushTimer);
@@ -389,27 +411,6 @@ export async function startAgent(
           // DB may have been closed during shutdown
         }
       } finally {
-        // Check for uncommitted changes before cleanup
-        if (useWorktree && runState.worktreePath) {
-          try {
-            const warning = await checkUncommittedChanges(updatedTask.task_key, workingDir);
-            if (warning) {
-              try { insertLogStmt.run(taskId, runNumber, 'warn', warning); } catch {}
-              broadcastLog('warn', warning);
-            }
-          } catch {}
-
-          try {
-            await removeWorktree(updatedTask.task_key, workingDir);
-          } catch {}
-
-          try {
-            db.query(
-              `UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?`
-            ).run(taskId);
-          } catch {}
-        }
-
         activeRuns.delete(taskId);
         runState.resolveCompletion();
       }
@@ -456,6 +457,7 @@ export async function startAgent(
 interface AgentResultAction {
   nextAction: 'chain' | 'done' | 'wait-for-review';
   nextSlug?: string;
+  cleanupWorktree?: boolean;
 }
 
 function handleAgentResult(
@@ -513,7 +515,7 @@ function handleAgentResult(
         type: 'success',
         message: `${originalTask.task_key} completed successfully.`,
       });
-      return { nextAction: 'done' };
+      return { nextAction: 'done', cleanupWorktree: true };
     }
 
     // Chain to next step (all workflow steps run the agent)

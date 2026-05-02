@@ -1,8 +1,9 @@
 import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
-import { startAgent, cancelAgent, getRunnerState } from '../executor/executor.js';
+import { startAgent, cancelAgent, getRunnerState, isGitRepoDetected } from '../executor/executor.js';
 import { broadcaster } from '../sse/broadcaster.js';
 import { getValidStatuses, isWorkflowStep, cleanupReviewFiles, getFirstWorkflowStep } from '../workflow/workflow-utils.js';
+import { removeWorktree, removeBranch } from '../worktree/worktree.js';
 import type { Task, ProjectConfig } from '../types.js';
 
 const tasks = new Hono();
@@ -321,9 +322,29 @@ tasks.patch('/:id', async (c) => {
 
   const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id)!;
 
-  // Clean up review files when task reaches done
+  // Clean up review files and worktree when task reaches done
   if (status && status === 'done') {
     cleanupReviewFiles(updatedTask.task_key, process.cwd());
+    if (isGitRepoDetected() && updatedTask.agent_worktree) {
+      removeWorktree(updatedTask.task_key, process.cwd()).catch(() => {});
+      db.query('UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?').run(id);
+    }
+    if (isGitRepoDetected()) {
+      const projectConfig = db.query<{ delete_branch_on_done: number }, []>(
+        'SELECT delete_branch_on_done FROM project_config WHERE id = 1'
+      ).get();
+      if (projectConfig?.delete_branch_on_done) {
+        removeBranch(updatedTask.task_key, process.cwd()).catch(() => {});
+      }
+    }
+  }
+
+  // Clean up worktree when moving to non-workflow status (todo, backlog)
+  if (status && (status === 'todo' || status === 'backlog')) {
+    if (isGitRepoDetected() && updatedTask.agent_worktree) {
+      removeWorktree(updatedTask.task_key, process.cwd()).catch(() => {});
+      db.query('UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?').run(id);
+    }
   }
 
   // Broadcast
@@ -352,8 +373,12 @@ tasks.delete('/:id', (c) => {
 
   db.query('DELETE FROM tasks WHERE id = ?').run(id);
 
-  // Clean up review files for deleted tasks
+  // Clean up review files, worktree, and branch for deleted tasks
   cleanupReviewFiles(task.task_key, process.cwd());
+  if (isGitRepoDetected()) {
+    removeWorktree(task.task_key, process.cwd()).catch(() => {});
+    removeBranch(task.task_key, process.cwd()).catch(() => {});
+  }
 
   broadcaster.broadcast('task:updated', { task: { ...task, _deleted: true } });
 

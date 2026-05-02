@@ -177,4 +177,9 @@ function runMigrations(db: Database): void {
     db.exec('PRAGMA foreign_keys = ON');
     db.exec('PRAGMA user_version = 3');
   }
+
+  if (version < 4) {
+    db.exec(`ALTER TABLE project_config ADD COLUMN delete_branch_on_done INTEGER NOT NULL DEFAULT 1`);
+    db.exec('PRAGMA user_version = 4');
+  }
 }

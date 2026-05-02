@@ -11,6 +11,7 @@ import {
   cleanupStaleWorktrees,
   isGitRepo,
   getRecentCommits,
+  removeBranch,
 } from './worktree.js';
 
 function gitSync(args: string[], cwd: string): string {
@@ -139,17 +140,57 @@ describe('createWorktree', () => {
     expect(branch).toBe('agent/TST-1');
   });
 
-  test('cleans up stale worktree and branch from previous run', async () => {
-    // Create and remove a worktree, leaving the branch
+  test('reuses existing valid worktree (preserves uncommitted work)', async () => {
     const wtPath1 = await createWorktree('TST-1', tmpDir, 'main');
-    await removeWorktree('TST-1', tmpDir);
 
-    // Second creation should succeed
+    // Create a file in the worktree
+    fs.writeFileSync(path.join(wtPath1, 'work.txt'), 'in progress\n');
+
+    // Second call should return the same path without destroying work
     const wtPath2 = await createWorktree('TST-1', tmpDir, 'main');
-    expect(fs.existsSync(wtPath2)).toBe(true);
+    expect(wtPath2).toBe(wtPath1);
+    expect(fs.existsSync(path.join(wtPath2, 'work.txt'))).toBe(true);
   });
 
-  test('preserves branch with unmerged commits by renaming', async () => {
+  test('reattaches worktree when directory is gone but branch exists', async () => {
+    const wtPath = await createWorktree('TST-1', tmpDir, 'main');
+    await removeWorktree('TST-1', tmpDir);
+
+    // Branch still exists, worktree directory is gone
+    const branches = gitSync(['branch', '--list', 'agent/TST-1'], tmpDir);
+    expect(branches).toContain('agent/TST-1');
+    expect(fs.existsSync(wtPath)).toBe(false);
+
+    // Should succeed by reattaching to the existing branch
+    const wtPath2 = await createWorktree('TST-1', tmpDir, 'main');
+    expect(fs.existsSync(wtPath2)).toBe(true);
+
+    const currentBranch = gitSync(['rev-parse', '--abbrev-ref', 'HEAD'], wtPath2);
+    expect(currentBranch).toBe('agent/TST-1');
+  });
+
+  test('succeeds when branch is checked out in main worktree', async () => {
+    const wtPath = await createWorktree('TST-1', tmpDir, 'main');
+    await removeWorktree('TST-1', tmpDir);
+
+    // Simulate user checking out the agent branch in the main repo
+    gitSync(['checkout', 'agent/TST-1'], tmpDir);
+    expect(gitSync(['rev-parse', '--abbrev-ref', 'HEAD'], tmpDir)).toBe('agent/TST-1');
+
+    // Should create the worktree without touching the user's checkout
+    const wtPath2 = await createWorktree('TST-1', tmpDir, 'main');
+    expect(fs.existsSync(wtPath2)).toBe(true);
+
+    // Main repo should still be on the agent branch (untouched)
+    expect(gitSync(['rev-parse', '--abbrev-ref', 'HEAD'], tmpDir)).toBe('agent/TST-1');
+    // Worktree should also be on the agent branch
+    expect(gitSync(['rev-parse', '--abbrev-ref', 'HEAD'], wtPath2)).toBe('agent/TST-1');
+
+    // Clean up: switch back so afterEach can remove the repo
+    gitSync(['checkout', 'main'], tmpDir);
+  });
+
+  test('reuses existing branch with commits after worktree removal', async () => {
     const wtPath = await createWorktree('TST-1', tmpDir, 'main');
 
     // Make a commit on the agent branch
@@ -159,22 +200,28 @@ describe('createWorktree', () => {
 
     await removeWorktree('TST-1', tmpDir);
 
-    // Now create again — the old branch should be renamed, not deleted
-    await createWorktree('TST-1', tmpDir, 'main');
+    // Recreating should reuse the branch (not rename/delete it)
+    const wtPath2 = await createWorktree('TST-1', tmpDir, 'main');
+    expect(fs.existsSync(wtPath2)).toBe(true);
+
+    // The committed file should still be there
+    expect(fs.existsSync(path.join(wtPath2, 'new-file.txt'))).toBe(true);
 
     const branches = gitSync(['branch'], tmpDir);
-    expect(branches).toContain('agent/TST-1-prev-');
+    expect(branches).toContain('agent/TST-1');
+    expect(branches).not.toContain('prev');
   });
 
-  test('deletes branch with no unmerged commits on recreation', async () => {
+  test('reuses existing branch without commits after worktree removal', async () => {
     await createWorktree('TST-1', tmpDir, 'main');
     // No commits made on the branch
     await removeWorktree('TST-1', tmpDir);
 
-    await createWorktree('TST-1', tmpDir, 'main');
+    const wtPath = await createWorktree('TST-1', tmpDir, 'main');
+    expect(fs.existsSync(wtPath)).toBe(true);
 
     const branches = gitSync(['branch'], tmpDir);
-    expect(branches).not.toContain('prev');
+    expect(branches).toContain('agent/TST-1');
   });
 });
 
@@ -212,6 +259,33 @@ describe('removeWorktree', () => {
   });
 });
 
+describe('removeBranch', () => {
+  let tmpDir: string;
+
+  beforeEach(() => {
+    tmpDir = initTestRepo();
+  });
+
+  afterEach(() => {
+    try { gitSync(['worktree', 'prune'], tmpDir); } catch {}
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('deletes the agent branch', async () => {
+    await createWorktree('TST-1', tmpDir, 'main');
+    await removeWorktree('TST-1', tmpDir);
+
+    await removeBranch('TST-1', tmpDir);
+
+    const branches = gitSync(['branch', '--list', 'agent/TST-1'], tmpDir);
+    expect(branches).not.toContain('agent/TST-1');
+  });
+
+  test('does not throw when branch does not exist', async () => {
+    await removeBranch('NONEXISTENT', tmpDir);
+  });
+});
+
 describe('checkUncommittedChanges', () => {
   let tmpDir: string;
 
@@ -240,6 +314,7 @@ describe('checkUncommittedChanges', () => {
     const result = await checkUncommittedChanges('TST-1', tmpDir);
     expect(result).not.toBeNull();
     expect(result).toContain('2 uncommitted file(s)');
+    expect(result).not.toContain('will be lost');
   });
 
   test('returns null for nonexistent worktree', async () => {

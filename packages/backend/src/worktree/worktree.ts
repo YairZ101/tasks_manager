@@ -38,23 +38,30 @@ export async function createWorktree(taskKey: string, repoRoot: string, mainBran
   const worktreePath = path.join(repoRoot, '.tasks_manager', 'worktrees', taskKey);
   const branchName = `agent/${taskKey}`;
 
-  // Clean up stale worktree from previous runs
-  await git(['worktree', 'remove', worktreePath, '--force'], repoRoot).catch(() => {});
-
-  // If the branch has unmerged commits, rename it to preserve the work
-  const unmerged = await git(
-    ['log', mainBranch + '..' + branchName, '--oneline'],
-    repoRoot
-  ).catch(() => ({ stdout: '' }));
-
-  if (unmerged.stdout.trim()) {
-    const timestamp = Date.now();
-    await git(['branch', '-m', branchName, `${branchName}-prev-${timestamp}`], repoRoot).catch(() => {});
-  } else {
-    await git(['branch', '-D', branchName], repoRoot).catch(() => {});
+  // Reuse existing worktree if it's still valid
+  if (fs.existsSync(worktreePath)) {
+    try {
+      // Verify it's a valid git worktree by checking HEAD
+      await git(['rev-parse', '--git-dir'], worktreePath);
+      return worktreePath;
+    } catch {
+      // Worktree directory exists but is broken — remove and recreate
+      await git(['worktree', 'remove', worktreePath, '--force'], repoRoot).catch(() => {});
+    }
   }
 
-  await git(['worktree', 'add', worktreePath, '-b', branchName, mainBranch], repoRoot);
+  // Check if the branch already exists
+  const branchExists = await git(['rev-parse', '--verify', branchName], repoRoot)
+    .then(() => true)
+    .catch(() => false);
+
+  if (branchExists) {
+    // --force allows the branch to be checked out even if it's
+    // already checked out in the main worktree
+    await git(['worktree', 'add', '--force', worktreePath, branchName], repoRoot);
+  } else {
+    await git(['worktree', 'add', worktreePath, '-b', branchName, mainBranch], repoRoot);
+  }
 
   // Initialize submodules if the repo uses them.
   // Check in the worktree itself (not repoRoot) since branches can diverge.
@@ -76,6 +83,11 @@ export async function removeWorktree(taskKey: string, repoRoot: string): Promise
   await git(['worktree', 'remove', worktreePath, '--force'], repoRoot).catch(() => {});
 }
 
+export async function removeBranch(taskKey: string, repoRoot: string): Promise<void> {
+  const branchName = `agent/${taskKey}`;
+  await git(['branch', '-D', branchName], repoRoot).catch(() => {});
+}
+
 export async function checkUncommittedChanges(taskKey: string, repoRoot: string): Promise<string | null> {
   const worktreePath = path.join(repoRoot, '.tasks_manager', 'worktrees', taskKey);
 
@@ -83,7 +95,7 @@ export async function checkUncommittedChanges(taskKey: string, repoRoot: string)
   if (!stdout.trim()) return null;
 
   const fileCount = stdout.trim().split('\n').length;
-  return `Agent left ${fileCount} uncommitted file(s) in the worktree. These will be lost when the worktree is removed.`;
+  return `Agent left ${fileCount} uncommitted file(s) in the worktree.`;
 }
 
 export async function cleanupStaleWorktrees(repoRoot: string): Promise<void> {

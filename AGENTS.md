@@ -109,6 +109,7 @@ Auto-advance chaining: when a step with `requires_review: false` completes, the 
 
 - **CLI-only agent execution**: The system only supports CLI-based agents (tools like Crush, Claude Code, Aider, Codex). There is no API/LLM adapter — the configured CLI tool is expected to be a full autonomous agent that can read/write files and run commands.
 - **Concurrent agent execution via worktrees**: Multiple agents can run simultaneously (up to `max_concurrent_agents` from `agent_config`, default 3) when in a git repository. Each agent gets its own git worktree at `.tasks_manager/worktrees/<task-key>` on branch `agent/<task-key>`. In non-git repos, falls back to single-agent mode.
+- **Persistent worktrees across steps**: Worktrees are shared across workflow steps for the same task. Each step works in the same worktree, accumulating changes. The worktree is only cleaned up when the task reaches `done`, is deleted, or is moved back to `todo`/`backlog`. `createWorktree` is idempotent — if a valid worktree already exists, it's reused.
 - **Concurrency tracking**: The executor uses a `Map<number, RunState>` keyed by task ID instead of a global mutex. `getRunnerState()` returns the active count, max concurrent limit, and list of active runs.
 - **Detached process groups**: CLI adapter spawns with `detached: true` and kills via process group (`-pid`) for clean tree termination.
 - **Buffered log writes**: Agent output is batched in a buffer and flushed every 50ms to avoid per-line SQLite transactions. The buffer is force-flushed when the agent completes or fails.

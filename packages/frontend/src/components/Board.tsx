@@ -19,15 +19,12 @@ import ConfirmDialog from './ConfirmDialog.js';
 export default function Board() {
   const { tasks, workflowSteps, setShowCreateTask, setSelectedTaskId, updateTaskInStore } = useAppStore();
 
-  const columns = [
-    { id: 'todo', title: 'Todo', emptyText: 'Drag tasks here', type: 'fixed' as const },
-    ...workflowSteps.map(s => ({
-      id: s.slug,
-      title: s.name,
-      emptyText: 'Tasks your agent is working on appear here',
-    })),
-    { id: 'done', title: 'Done', emptyText: 'Drag tasks here', type: 'fixed' as const },
-  ];
+  const columns = workflowSteps.map(s => ({
+    id: s.slug,
+    title: s.name,
+    emptyText: s.fixed ? 'Drag tasks here' : 'Tasks your agent is working on appear here',
+    type: s.fixed ? 'fixed' as const : undefined,
+  }));
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [pendingMove, setPendingMove] = useState<{
     task: Task;

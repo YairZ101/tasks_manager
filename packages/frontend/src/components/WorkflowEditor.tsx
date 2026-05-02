@@ -25,13 +25,14 @@ export interface EditorStep {
   name: string;
   requires_review: boolean;
   config?: string;
+  fixed?: boolean;
 }
 
 interface WorkflowEditorProps {
   steps: EditorStep[];
   onAdd: (slug: string) => void;
   onRemove: (step: EditorStep) => void;
-  onReorder: (steps: EditorStep[]) => void;
+  onReorder: (steps: EditorStep[], movedId: string) => void;
   onToggleReview: (step: EditorStep) => void;
   onSaveConfig?: (step: EditorStep, config: Record<string, any>) => void;
   showConfig?: boolean;
@@ -73,7 +74,7 @@ function SortableStepRow({
   } = useSortable({ id: step.id });
 
   const style = {
-    transform: CSS.Transform.toString(transform),
+    transform: CSS.Transform.toString(transform ? { ...transform, scaleX: 1, scaleY: 1 } : null),
     transition,
     opacity: isDragging ? 0.4 : 1,
   };
@@ -84,15 +85,15 @@ function SortableStepRow({
         <div
           {...attributes}
           {...listeners}
-          className="cursor-grab active:cursor-grabbing p-1 text-text-dim hover:text-text-muted"
+          className="cursor-grab active:cursor-grabbing px-0.5 py-1 text-text-dim hover:text-text-muted"
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <circle cx="5.5" cy="4" r="1.2" fill="currentColor" />
-            <circle cx="10.5" cy="4" r="1.2" fill="currentColor" />
-            <circle cx="5.5" cy="8" r="1.2" fill="currentColor" />
-            <circle cx="10.5" cy="8" r="1.2" fill="currentColor" />
-            <circle cx="5.5" cy="12" r="1.2" fill="currentColor" />
-            <circle cx="10.5" cy="12" r="1.2" fill="currentColor" />
+          <svg width="10" height="14" viewBox="0 0 10 14" fill="none">
+            <circle cx="3" cy="3" r="1.2" fill="currentColor" />
+            <circle cx="7" cy="3" r="1.2" fill="currentColor" />
+            <circle cx="3" cy="7" r="1.2" fill="currentColor" />
+            <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+            <circle cx="3" cy="11" r="1.2" fill="currentColor" />
+            <circle cx="7" cy="11" r="1.2" fill="currentColor" />
           </svg>
         </div>
         <span className="text-sm font-medium text-text flex-1">{step.name}</span>
@@ -124,13 +125,46 @@ function SortableStepRow({
           <button
             onClick={onDelete}
             disabled={isOnly}
-            className="p-1.5 text-text-muted hover:text-danger rounded transition-colors disabled:opacity-20"
+            className="p-1.5 text-text-muted hover:text-danger rounded transition-colors disabled:opacity-40 disabled:pointer-events-none"
           >
             <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
               <path d="M4 4l8 8M12 4l-8 8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
             </svg>
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+
+function FixedStepRow({
+  step,
+  hasConfig,
+  isEditing,
+  onToggleConfig,
+}: {
+  step: EditorStep;
+  hasConfig: boolean;
+  isEditing: boolean;
+  onToggleConfig: () => void;
+}) {
+  return (
+    <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-bg-card border border-border">
+      <div className="w-3.5" />
+      <span className="text-sm font-medium text-text flex-1">{step.name}</span>
+      <div className="flex gap-1 w-[60px] h-[28px] justify-end items-center">
+        {hasConfig && (
+          <button
+            onClick={onToggleConfig}
+            className={`p-1.5 rounded transition-colors ${isEditing ? 'text-accent' : 'text-text-muted hover:text-text'}`}
+          >
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none">
+              <path d="M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" stroke="currentColor" strokeWidth="1.5" />
+              <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1Z" stroke="currentColor" strokeWidth="1.5" />
+            </svg>
+          </button>
+        )}
       </div>
     </div>
   );
@@ -154,10 +188,11 @@ export default function WorkflowEditor({
   );
 
   const activeSlugs = new Set(steps.map(s => s.slug));
-  const availableSteps = STEP_CATALOG.filter(s => !activeSlugs.has(s.slug));
+  const availableSteps = STEP_CATALOG.filter(s => !activeSlugs.has(s.slug) && !s.fixed);
+  const sortableSteps = steps.filter(s => !s.fixed);
 
   const handleDragStart = (event: DragStartEvent) => {
-    const step = steps.find(s => s.id === String(event.active.id));
+    const step = sortableSteps.find(s => s.id === String(event.active.id));
     if (step) setDraggingStep(step);
   };
 
@@ -166,11 +201,11 @@ export default function WorkflowEditor({
     const { active, over } = event;
     if (!over || active.id === over.id) return;
 
-    const oldIndex = steps.findIndex(s => s.id === String(active.id));
-    const newIndex = steps.findIndex(s => s.id === String(over.id));
+    const oldIndex = sortableSteps.findIndex(s => s.id === String(active.id));
+    const newIndex = sortableSteps.findIndex(s => s.id === String(over.id));
     if (oldIndex === -1 || newIndex === -1) return;
 
-    onReorder(arrayMove(steps, oldIndex, newIndex));
+    onReorder(arrayMove(sortableSteps, oldIndex, newIndex), String(active.id));
   };
 
   const handleOpenConfig = (step: EditorStep) => {
@@ -187,6 +222,67 @@ export default function WorkflowEditor({
     setEditingStepId(null);
   };
 
+  const renderConfigForm = (step: EditorStep, schema: StepConfigOption[]) => (
+    <div className="ml-6 mt-1 p-3 rounded-lg bg-bg border border-border/50 space-y-3">
+      {schema.map(opt => (
+        <div key={opt.key}>
+          <label className="text-[11px] font-medium text-text-muted block mb-1">
+            {opt.label}
+          </label>
+          {opt.type === 'boolean' ? (
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="checkbox"
+                checked={editConfig[opt.key] ?? opt.default}
+                onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.checked }))}
+                className="rounded border-border"
+              />
+              <span className="text-xs text-text-muted">
+                {editConfig[opt.key] ?? opt.default ? 'Yes' : 'No'}
+              </span>
+            </label>
+          ) : opt.type === 'number' ? (
+            <input
+              type="number"
+              value={editConfig[opt.key] ?? opt.default}
+              onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: Number(e.target.value) }))}
+              className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
+            />
+          ) : opt.type === 'select' ? (
+            <select
+              value={editConfig[opt.key] ?? opt.default}
+              onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.value }))}
+              className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
+            >
+              {opt.options?.map(o => <option key={o} value={o}>{o}</option>)}
+            </select>
+          ) : (
+            <input
+              type="text"
+              value={editConfig[opt.key] ?? opt.default}
+              onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.value }))}
+              className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
+            />
+          )}
+        </div>
+      ))}
+      <div className="flex gap-2 pt-1">
+        <button
+          onClick={() => handleSaveConfig(step)}
+          className="px-3 py-1 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded transition-colors"
+        >
+          Save
+        </button>
+        <button
+          onClick={() => setEditingStepId(null)}
+          className="px-3 py-1 text-xs font-medium text-text-muted hover:text-text hover:bg-bg-hover rounded transition-colors"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
+
   return (
     <div className="space-y-5">
       {/* Current workflow */}
@@ -194,15 +290,31 @@ export default function WorkflowEditor({
         <h3 className="text-xs font-semibold text-text-muted uppercase tracking-wide mb-3">
           Your Workflow
         </h3>
-        <div className="space-y-1">
-          {/* Fixed: Todo */}
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-bg border border-border/50">
-            <span className="text-sm font-medium text-text-dim">Todo</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-card text-text-dim">Fixed</span>
+        <div className="relative pr-6 space-y-0.5">
+          {/* Flow arrow — vertical line with arrowhead on the right */}
+          <div className="absolute right-1 top-5 bottom-5 flex flex-col items-center">
+            <div className="flex-1 w-px bg-text-dim/60" />
+            <svg width="8" height="6" viewBox="0 0 8 6" fill="none" className="text-text-dim/60 -mt-px">
+              <path d="M1 1l3 4 3-4" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
           </div>
 
-          {/* Sortable steps */}
-          {steps.length === 0 && (
+          {/* Render all steps — fixed steps are non-sortable */}
+          {steps.filter(s => s.fixed && s.slug === 'todo').map(step => {
+            const schema = getConfigSchema(step.slug);
+            const hasConfig = showConfig && schema.length > 0;
+            const isEditing = editingStepId === step.id;
+            return (
+              <div key={step.id}>
+                <FixedStepRow step={step} hasConfig={hasConfig} isEditing={isEditing} onToggleConfig={() => handleOpenConfig(step)} />
+                {isEditing && onSaveConfig && renderConfigForm(step, schema)}
+              </div>
+            );
+          })}
+
+          {/* Sortable non-fixed steps */}
+          <div>
+          {sortableSteps.length === 0 && (
             <div className="flex items-center justify-center h-12 rounded-lg border border-dashed border-border text-xs text-text-dim">
               Add steps from the catalog below
             </div>
@@ -215,10 +327,10 @@ export default function WorkflowEditor({
             onDragEnd={handleDragEnd}
           >
             <SortableContext
-              items={steps.map(s => s.id)}
+              items={sortableSteps.map(s => s.id)}
               strategy={verticalListSortingStrategy}
             >
-              {steps.map((step) => {
+              {sortableSteps.map((step) => {
                 const schema = getConfigSchema(step.slug);
                 const hasConfig = showConfig && schema.length > 0;
                 const isEditing = editingStepId === step.id;
@@ -227,7 +339,7 @@ export default function WorkflowEditor({
                   <div key={step.id}>
                     <SortableStepRow
                       step={step}
-                      isOnly={steps.length <= 1}
+                      isOnly={sortableSteps.length <= 1}
                       hasConfig={hasConfig}
                       isEditing={isEditing}
                       onToggleConfig={() => handleOpenConfig(step)}
@@ -236,66 +348,8 @@ export default function WorkflowEditor({
                     />
 
                     {/* Config form */}
-                    {isEditing && onSaveConfig && (
-                      <div className="ml-6 mt-1 p-3 rounded-lg bg-bg border border-border/50 space-y-3">
-                        {schema.map(opt => (
-                          <div key={opt.key}>
-                            <label className="text-[11px] font-medium text-text-muted block mb-1">
-                              {opt.label}
-                            </label>
-                            {opt.type === 'boolean' ? (
-                              <label className="flex items-center gap-2 cursor-pointer">
-                                <input
-                                  type="checkbox"
-                                  checked={editConfig[opt.key] ?? opt.default}
-                                  onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.checked }))}
-                                  className="rounded border-border"
-                                />
-                                <span className="text-xs text-text-muted">
-                                  {editConfig[opt.key] ?? opt.default ? 'Yes' : 'No'}
-                                </span>
-                              </label>
-                            ) : opt.type === 'number' ? (
-                              <input
-                                type="number"
-                                value={editConfig[opt.key] ?? opt.default}
-                                onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: Number(e.target.value) }))}
-                                className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
-                              />
-                            ) : opt.type === 'select' ? (
-                              <select
-                                value={editConfig[opt.key] ?? opt.default}
-                                onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.value }))}
-                                className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
-                              >
-                                {opt.options?.map(o => <option key={o} value={o}>{o}</option>)}
-                              </select>
-                            ) : (
-                              <input
-                                type="text"
-                                value={editConfig[opt.key] ?? opt.default}
-                                onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.value }))}
-                                className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
-                              />
-                            )}
-                          </div>
-                        ))}
-                        <div className="flex gap-2 pt-1">
-                          <button
-                            onClick={() => handleSaveConfig(step)}
-                            className="px-3 py-1 text-xs font-medium text-white bg-accent hover:bg-accent-hover rounded transition-colors"
-                          >
-                            Save
-                          </button>
-                          <button
-                            onClick={() => setEditingStepId(null)}
-                            className="px-3 py-1 text-xs font-medium text-text-muted hover:text-text hover:bg-bg-hover rounded transition-colors"
-                          >
-                            Cancel
-                          </button>
-                        </div>
-                      </div>
-                    )}
+                    {isEditing && onSaveConfig && renderConfigForm(step, schema)}
+
                   </div>
                 );
               })}
@@ -303,25 +357,33 @@ export default function WorkflowEditor({
             <DragOverlay>
               {draggingStep ? (
                 <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-bg-card border border-accent/40 shadow-lg shadow-accent/10">
-                  <svg width="16" height="16" viewBox="0 0 16 16" fill="none" className="text-text-muted">
-                    <circle cx="5.5" cy="4" r="1.2" fill="currentColor" />
-                    <circle cx="10.5" cy="4" r="1.2" fill="currentColor" />
-                    <circle cx="5.5" cy="8" r="1.2" fill="currentColor" />
-                    <circle cx="10.5" cy="8" r="1.2" fill="currentColor" />
-                    <circle cx="5.5" cy="12" r="1.2" fill="currentColor" />
-                    <circle cx="10.5" cy="12" r="1.2" fill="currentColor" />
+                  <svg width="10" height="14" viewBox="0 0 10 14" fill="none" className="text-text-muted">
+                    <circle cx="3" cy="3" r="1.2" fill="currentColor" />
+                    <circle cx="7" cy="3" r="1.2" fill="currentColor" />
+                    <circle cx="3" cy="7" r="1.2" fill="currentColor" />
+                    <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+                    <circle cx="3" cy="11" r="1.2" fill="currentColor" />
+                    <circle cx="7" cy="11" r="1.2" fill="currentColor" />
                   </svg>
                   <span className="text-sm font-medium text-text">{draggingStep.name}</span>
                 </div>
               ) : null}
             </DragOverlay>
           </DndContext>
+          </div>
 
           {/* Fixed: Done */}
-          <div className="flex items-center gap-3 px-3 py-2 rounded-lg bg-bg border border-border/50">
-            <span className="text-sm font-medium text-text-dim">Done</span>
-            <span className="text-[10px] px-1.5 py-0.5 rounded bg-bg-card text-text-dim">Fixed</span>
-          </div>
+          {steps.filter(s => s.fixed && s.slug === 'done').map(step => {
+            const schema = getConfigSchema(step.slug);
+            const hasConfig = showConfig && schema.length > 0;
+            const isEditing = editingStepId === step.id;
+            return (
+              <div key={step.id}>
+                <FixedStepRow step={step} hasConfig={hasConfig} isEditing={isEditing} onToggleConfig={() => handleOpenConfig(step)} />
+                {isEditing && onSaveConfig && renderConfigForm(step, schema)}
+              </div>
+            );
+          })}
         </div>
       </div>
 

@@ -622,7 +622,7 @@ export default function InitWizard() {
                   }]);
                 }}
                 onRemove={(step) => setWorkflowSteps(prev => prev.filter(s => s.id !== step.id))}
-                onReorder={setWorkflowSteps}
+                onReorder={(steps) => setWorkflowSteps(steps)}
                 onToggleReview={(step) => setWorkflowSteps(prev =>
                   prev.map(s => s.id === step.id ? { ...s, requires_review: !s.requires_review } : s)
                 )}

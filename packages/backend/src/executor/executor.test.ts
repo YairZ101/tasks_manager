@@ -99,11 +99,11 @@ describe('buildPrompt', () => {
     expect(prompt).not.toContain('### Acceptance Criteria');
   });
 
-  test('includes implementation instruction', () => {
+  test('includes step instructions when stepSlug is provided', () => {
     const task = makeTask();
-    const prompt = buildPrompt(task, { workingDir: '/repo' });
+    const prompt = buildPrompt(task, { workingDir: '/repo', stepSlug: 'development' });
 
-    expect(prompt).toContain('Please implement the changes');
+    expect(prompt).toContain('## Instructions');
   });
 
   test('full prompt with all fields', () => {
@@ -128,39 +128,46 @@ describe('buildPrompt', () => {
     const task = makeTask({ task_key: 'PROJ-5', title: 'Add login' });
     const prompt = buildPrompt(task, {
       workingDir: '/worktree/path',
+      stepSlug: 'development',
       branchName: 'agent/PROJ-5',
       mainBranch: 'main',
-      recentCommits: 'abc123 some commit',
     });
 
     expect(prompt).toContain('git worktree at: /worktree/path');
     expect(prompt).toContain('branch: agent/PROJ-5');
     expect(prompt).toContain('main branch is: main');
-    expect(prompt).toContain('abc123 some commit');
-    expect(prompt).toContain('## Git Guidelines');
   });
 
   test('omits worktree header when branchName is absent', () => {
     const task = makeTask();
-    const prompt = buildPrompt(task, { workingDir: '/repo' });
+    const prompt = buildPrompt(task, { workingDir: '/repo', stepSlug: 'development' });
 
     expect(prompt).not.toContain('worktree');
     expect(prompt).toContain('repository at: /repo');
   });
 
-  test('includes git guidelines even without branch context', () => {
+  test('development step includes no-git instruction', () => {
     const task = makeTask();
-    const prompt = buildPrompt(task, { workingDir: '/repo' });
+    const prompt = buildPrompt(task, { workingDir: '/repo', stepSlug: 'development' });
 
-    expect(prompt).toContain('## Git Guidelines');
-    expect(prompt).toContain('commit your changes');
+    expect(prompt).toContain('Do NOT run any git commands');
+    expect(prompt).toContain('implement');
   });
 
-  test('omits recent commits block when recentCommits is empty', () => {
+  test('visual-qa step says do not modify code', () => {
     const task = makeTask();
-    const prompt = buildPrompt(task, { workingDir: '/repo', branchName: 'agent/TST-1', mainBranch: 'main', recentCommits: '' });
+    const prompt = buildPrompt(task, { workingDir: '/repo', stepSlug: 'visual-qa' });
 
-    expect(prompt).not.toContain('Recent commits for reference');
+    expect(prompt).toContain('Do NOT modify any code');
+    expect(prompt).toContain('visually test');
+  });
+
+  test('planning step includes plan-specific instructions', () => {
+    const task = makeTask();
+    const prompt = buildPrompt(task, { workingDir: '/repo', stepSlug: 'planning' });
+
+    expect(prompt).toContain('create a plan');
+    expect(prompt).toContain('Do NOT implement any code changes');
   });
 });
 
@@ -184,6 +191,7 @@ describe('startAgent (integration)', () => {
     initGitDetection(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
   });
 
   afterEach(async () => {
@@ -194,7 +202,7 @@ describe('startAgent (integration)', () => {
 
   test('throws 404 for non-existent task', async () => {
     try {
-      await startAgent(999, tmpDir);
+      await startAgent(999, tmpDir, 'development');
       expect.unreachable('should have thrown');
     } catch (err: any) {
       expect(err.status).toBe(404);
@@ -208,8 +216,8 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    const result = await startAgent(task.id, tmpDir);
-    expect(result.status).toBe('in-progress');
+    const result = await startAgent(task.id, tmpDir, 'development');
+    expect(result.status).toBe('development');
     expect(result.agent_status).toBe('running');
 
     await waitForRunnerIdle();
@@ -225,7 +233,7 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const finalTask = db.query("SELECT * FROM tasks WHERE id = ?").get(task.id) as any;
@@ -240,10 +248,10 @@ describe('startAgent (integration)', () => {
     const t1 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
     const t2 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-2'").get() as any;
 
-    await startAgent(t1.id, tmpDir);
+    await startAgent(t1.id, tmpDir, 'development');
 
     try {
-      await startAgent(t2.id, tmpDir);
+      await startAgent(t2.id, tmpDir, 'development');
       expect.unreachable('should have thrown');
     } catch (err: any) {
       expect(err.status).toBe(409);
@@ -257,7 +265,7 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const logs = db.query("SELECT * FROM task_logs WHERE task_id = ?").all(task.id) as any[];
@@ -272,7 +280,7 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const logs = db.query("SELECT * FROM task_logs WHERE task_id = ? AND level = 'agent'").all(task.id) as any[];
@@ -288,7 +296,7 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const logs = db.query("SELECT DISTINCT run_number FROM task_logs WHERE task_id = ?").all(task.id) as any[];
@@ -302,13 +310,13 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     // Reset to todo so we can run again
     db.query("UPDATE tasks SET status = 'todo', agent_status = NULL WHERE id = ?").run(task.id);
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const runs = db.query("SELECT DISTINCT run_number FROM task_logs WHERE task_id = ? ORDER BY run_number").all(task.id) as any[];
@@ -321,7 +329,7 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const finalTask = db.query("SELECT * FROM tasks WHERE id = ?").get(task.id) as any;
@@ -337,7 +345,7 @@ describe('startAgent (integration)', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle(10000);
 
     const errorLogs = db.query("SELECT * FROM task_logs WHERE task_id = ? AND level = 'error'").all(task.id) as any[];
@@ -359,6 +367,7 @@ describe('cancelAgent', () => {
     initGitDetection(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
   });
 
   afterEach(async () => {
@@ -395,7 +404,7 @@ describe('cancelAgent', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
 
     const result = await cancelAgent(task.id);
     expect(result.agent_status).toBe('failed');
@@ -410,7 +419,7 @@ describe('cancelAgent', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await cancelAgent(task.id);
 
     const infoLogs = db.query("SELECT * FROM task_logs WHERE task_id = ? AND level = 'info'").all(task.id) as any[];
@@ -426,7 +435,7 @@ describe('cancelAgent', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
 
     // Fire two concurrent cancel requests
     await Promise.all([cancelAgent(task.id), cancelAgent(task.id)]);
@@ -451,6 +460,7 @@ describe('startAgent — adapter errors', () => {
     initGitDetection(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
   });
 
   afterEach(async () => {
@@ -465,7 +475,7 @@ describe('startAgent — adapter errors', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle(10000);
 
     const finalTask = db.query("SELECT * FROM tasks WHERE id = ?").get(task.id) as any;
@@ -487,6 +497,7 @@ describe('shutdownAllAgents', () => {
     initGitDetection(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
   });
 
   afterEach(async () => {
@@ -507,7 +518,7 @@ describe('shutdownAllAgents', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
 
     await shutdownAllAgents();
 
@@ -524,7 +535,7 @@ describe('shutdownAllAgents', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await shutdownAllAgents();
 
     const state = getRunnerState();
@@ -542,6 +553,7 @@ describe('startAgent — git worktree mode', () => {
     initGitDetection(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
   });
 
   afterEach(async () => {
@@ -562,8 +574,8 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    const result = await startAgent(task.id, tmpDir);
-    expect(result.status).toBe('in-progress');
+    const result = await startAgent(task.id, tmpDir, 'development');
+    expect(result.status).toBe('development');
     expect(result.agent_status).toBe('running');
 
     await waitForRunnerIdle();
@@ -582,7 +594,7 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const worktreePath = path.join(tmpDir, '.tasks_manager', 'worktrees', 'TST-1');
@@ -595,7 +607,7 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     // The branch should still exist (for the user to merge)
@@ -609,7 +621,7 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
 
     // Poll until worktree columns are set (worktree creation is async)
     const deadline = Date.now() + 5000;
@@ -630,7 +642,7 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const finalTask = db.query("SELECT * FROM tasks WHERE id = ?").get(task.id) as any;
@@ -648,7 +660,7 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const warnLogs = db.query("SELECT * FROM task_logs WHERE task_id = ? AND level = 'warn'").all(task.id) as any[];
@@ -662,7 +674,7 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
     await waitForRunnerIdle();
 
     const logs = db.query("SELECT * FROM task_logs WHERE task_id = ? AND level = 'agent'").all(task.id) as any[];
@@ -678,8 +690,8 @@ describe('startAgent — git worktree mode', () => {
     const t1 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
     const t2 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-2'").get() as any;
 
-    await startAgent(t1.id, tmpDir);
-    await startAgent(t2.id, tmpDir);
+    await startAgent(t1.id, tmpDir, 'development');
+    await startAgent(t2.id, tmpDir, 'development');
 
     // Both should be running simultaneously
     const state = getRunnerState();
@@ -704,11 +716,11 @@ describe('startAgent — git worktree mode', () => {
     const t2 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-2'").get() as any;
     const t3 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-3'").get() as any;
 
-    await startAgent(t1.id, tmpDir);
-    await startAgent(t2.id, tmpDir);
+    await startAgent(t1.id, tmpDir, 'development');
+    await startAgent(t2.id, tmpDir, 'development');
 
     try {
-      await startAgent(t3.id, tmpDir);
+      await startAgent(t3.id, tmpDir, 'development');
       expect.unreachable('should have thrown');
     } catch (err: any) {
       expect(err.status).toBe(409);
@@ -724,10 +736,10 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
 
     try {
-      await startAgent(task.id, tmpDir);
+      await startAgent(task.id, tmpDir, 'development');
       expect.unreachable('should have thrown');
     } catch (err: any) {
       expect(err.status).toBe(409);
@@ -741,7 +753,7 @@ describe('startAgent — git worktree mode', () => {
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
 
-    await startAgent(task.id, tmpDir);
+    await startAgent(task.id, tmpDir, 'development');
 
     const result = await cancelAgent(task.id);
     expect(result.agent_status).toBe('failed');
@@ -763,6 +775,7 @@ describe('shutdownAllAgents — git mode with multiple agents', () => {
     initGitDetection(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
   });
 
   afterEach(async () => {
@@ -780,8 +793,8 @@ describe('shutdownAllAgents — git mode with multiple agents', () => {
     const t1 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
     const t2 = db.query("SELECT id FROM tasks WHERE task_key = 'TST-2'").get() as any;
 
-    await startAgent(t1.id, tmpDir);
-    await startAgent(t2.id, tmpDir);
+    await startAgent(t1.id, tmpDir, 'development');
+    await startAgent(t2.id, tmpDir, 'development');
     expect(getRunnerState().activeCount).toBe(2);
 
     await shutdownAllAgents();

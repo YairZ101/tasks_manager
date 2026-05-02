@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
 import { startAgent, cancelAgent, getRunnerState } from '../executor/executor.js';
 import { broadcaster } from '../sse/broadcaster.js';
+import { getValidStatuses, isWorkflowStep, cleanupReviewFiles, getFirstWorkflowStep } from '../workflow/workflow-utils.js';
 import type { Task, ProjectConfig } from '../types.js';
 
 const tasks = new Hono();
@@ -128,9 +129,15 @@ tasks.post('/', async (c) => {
 
   // If run=true, start the agent
   if (run) {
+    const firstStep = getFirstWorkflowStep();
+    if (!firstStep) {
+      db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
+      broadcaster.broadcast('task:updated', { task: { ...task, _deleted: true } });
+      return c.json({ error: 'No workflow steps configured' }, 400);
+    }
     try {
       const workingDir = process.cwd();
-      const updatedTask = await startAgent(task.id, workingDir);
+      const updatedTask = await startAgent(task.id, workingDir, firstStep.slug);
       return c.json({ task: updatedTask }, 201);
     } catch (err: any) {
       // Rollback: delete the task since the atomic create-and-run failed
@@ -174,7 +181,7 @@ tasks.patch('/:id', async (c) => {
     return c.json({ error: 'Invalid task ID' }, 400);
   }
 
-  const task = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id);
+  let task = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id);
   if (!task) {
     return c.json({ error: 'Task not found' }, 404);
   }
@@ -208,21 +215,25 @@ tasks.patch('/:id', async (c) => {
 
   // Handle status change
   if (status && status !== task.status) {
-    const validStatuses = ['backlog', 'todo', 'in-progress', 'done'];
+    const validStatuses = getValidStatuses();
     if (!validStatuses.includes(status)) {
       return c.json({ error: 'Invalid status' }, 400);
     }
 
-    // Blocked transitions
-    if (status === 'backlog' && (task.status === 'in-progress' || task.status === 'done')) {
+    // Blocked transitions: can only move to backlog from todo
+    if (status === 'backlog' && task.status !== 'todo') {
       return c.json({ error: 'Cannot move to backlog from ' + task.status }, 400);
     }
 
-    // If moving to in-progress, delegate to executor
-    if (status === 'in-progress') {
+    // If moving to a workflow step, start the agent
+    if (isWorkflowStep(status)) {
+      // Cancel running agent if moving away from current step
+      if (isWorkflowStep(task.status) && task.agent_status === 'running') {
+        await cancelAgent(id);
+      }
       try {
         const workingDir = process.cwd();
-        const updatedTask = await startAgent(id, workingDir);
+        const updatedTask = await startAgent(id, workingDir, status);
         return c.json({ task: updatedTask });
       } catch (err: any) {
         const statusCode = err.status || 500;
@@ -234,9 +245,14 @@ tasks.patch('/:id', async (c) => {
       }
     }
 
-    // If moving away from in-progress while running, cancel agent
-    if (task.status === 'in-progress' && task.agent_status === 'running') {
+    // If moving away from a workflow step while agent is running, cancel it
+    if (isWorkflowStep(task.status) && task.agent_status === 'running') {
       await cancelAgent(id);
+      // Re-read task after cancel to get updated agent_status
+      const refreshed = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id);
+      if (refreshed) {
+        task = refreshed;
+      }
     }
 
     // Calculate sort_order for target column
@@ -255,7 +271,6 @@ tasks.patch('/:id', async (c) => {
     if (status === 'todo' || status === 'backlog') {
       newAgentStatus = null;
     }
-    // If moving to done, preserve agent_status
 
     // Build update including any field changes alongside the status change
     const setClauses = ['status = ?', 'agent_status = ?', 'sort_order = ?', 'agent_pid = NULL', 'agent_started_at = NULL'];
@@ -306,6 +321,11 @@ tasks.patch('/:id', async (c) => {
 
   const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id)!;
 
+  // Clean up review files when task reaches done
+  if (status && status === 'done') {
+    cleanupReviewFiles(updatedTask.task_key, process.cwd());
+  }
+
   // Broadcast
   broadcaster.broadcast('task:updated', { task: updatedTask });
 
@@ -331,6 +351,9 @@ tasks.delete('/:id', (c) => {
   }
 
   db.query('DELETE FROM tasks WHERE id = ?').run(id);
+
+  // Clean up review files for deleted tasks
+  cleanupReviewFiles(task.task_key, process.cwd());
 
   broadcaster.broadcast('task:updated', { task: { ...task, _deleted: true } });
 

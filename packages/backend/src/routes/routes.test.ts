@@ -9,7 +9,6 @@ import logsRoutes from './logs.js';
 import agentConfigRoutes from './agent-config.js';
 import initRoutes from './init.js';
 import workflowStepsRoutes from './workflow-steps.js';
-import type { ProjectConfig } from '../types.js';
 
 function createApp() {
   const app = new Hono();
@@ -18,29 +17,6 @@ function createApp() {
   app.route('/agent-config', agentConfigRoutes);
   app.route('/workflow-steps', workflowStepsRoutes);
   app.route('/init', initRoutes);
-
-  // Inline route mirroring index.ts
-  app.patch('/project-config', async (c) => {
-    const db = getDb();
-    const body = await c.req.json().catch(() => null);
-    if (!body) return c.json({ error: 'Invalid JSON' }, 400);
-    const { delete_branch_on_done } = body;
-    const updates: string[] = [];
-    const params: any[] = [];
-    if (delete_branch_on_done !== undefined) {
-      if (typeof delete_branch_on_done !== 'boolean') {
-        return c.json({ error: 'delete_branch_on_done must be a boolean' }, 400);
-      }
-      updates.push('delete_branch_on_done = ?');
-      params.push(delete_branch_on_done ? 1 : 0);
-    }
-    if (updates.length > 0) {
-      db.query(`UPDATE project_config SET ${updates.join(', ')} WHERE id = 1`).run(...params);
-    }
-    const projectConfig = db.query<ProjectConfig, []>('SELECT * FROM project_config WHERE id = 1').get();
-    return c.json({ projectConfig });
-  });
-
   return app;
 }
 
@@ -195,6 +171,25 @@ describe('Tasks routes (real)', () => {
     expect(res.status).toBe(200);
     const data = await res.json();
     expect(data.task.status).toBe('done');
+  });
+
+  test('PATCH /tasks/:id status change to done clears agent_status', async () => {
+    const db = getDb();
+    db.query(
+      "INSERT INTO tasks (task_key, title, status, agent_status, sort_order) VALUES ('TST-1', 'Test', 'development', 'completed', 1)"
+    ).run();
+    const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
+
+    const res = await app.request(`/tasks/${task.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status: 'done' }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json();
+    expect(data.task.status).toBe('done');
+    expect(data.task.agent_status).toBeNull();
+    expect(data.task.agent_pid).toBeNull();
   });
 
   test('PATCH /tasks/:id blocks backlog from done', async () => {
@@ -587,8 +582,10 @@ describe('Workflow steps routes (real)', () => {
     const res = await app.request('/workflow-steps');
     expect(res.status).toBe(200);
     const data = await res.json() as any;
-    expect(data.steps).toHaveLength(1);
-    expect(data.steps[0].slug).toBe('development');
+    expect(data.steps).toHaveLength(3);
+    expect(data.steps.map((s: any) => s.slug)).toContain('todo');
+    expect(data.steps.map((s: any) => s.slug)).toContain('development');
+    expect(data.steps.map((s: any) => s.slug)).toContain('done');
   });
 
   test('GET /workflow-steps/catalog returns catalog with active flags', async () => {
@@ -679,7 +676,7 @@ describe('Workflow steps routes (real)', () => {
     expect(res.status).toBe(204);
 
     const remaining = db.query("SELECT * FROM workflow_steps").all();
-    expect(remaining).toHaveLength(1);
+    expect(remaining).toHaveLength(3);
   });
 
   test('DELETE /workflow-steps/:id blocks removing last step', async () => {
@@ -719,72 +716,53 @@ describe('Workflow steps routes (real)', () => {
     const task = db.query("SELECT status FROM tasks WHERE task_key = 'TST-1'").get() as any;
     expect(task.status).toBe('todo');
   });
-});
 
-describe('Project config routes (real)', () => {
-  let app: Hono;
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-routes-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
+  test('POST /workflow-steps inserts new step before Done', async () => {
     const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
-    app = createApp();
+    const doneBefore = db.query("SELECT sort_order FROM workflow_steps WHERE slug = 'done'").get() as any;
+
+    const res = await app.request('/workflow-steps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'planning' }),
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json() as any;
+    expect(data.step.sort_order).toBeLessThan(doneBefore.sort_order);
   });
 
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  test('POST /workflow-steps rejects fixed step slug', async () => {
+    const res = await app.request('/workflow-steps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'todo' }),
+    });
+    expect(res.status).toBe(400);
   });
 
-  test('PATCH /project-config updates delete_branch_on_done', async () => {
-    const res = await app.request('/project-config', {
+  test('DELETE /workflow-steps/:id rejects deleting fixed step', async () => {
+    const db = getDb();
+    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'done'").get() as any;
+
+    const res = await app.request(`/workflow-steps/${step.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ move_tasks_to: 'todo' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test('PATCH /workflow-steps/:id updates config on fixed step', async () => {
+    const db = getDb();
+    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'done'").get() as any;
+
+    const res = await app.request(`/workflow-steps/${step.id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ delete_branch_on_done: false }),
+      body: JSON.stringify({ config: { deleteBranch: false } }),
     });
     expect(res.status).toBe(200);
     const data = await res.json() as any;
-    expect(data.projectConfig.delete_branch_on_done).toBe(0);
-  });
-
-  test('PATCH /project-config returns updated config', async () => {
-    // Default is 1 (true)
-    const res1 = await app.request('/project-config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ delete_branch_on_done: false }),
-    });
-    const data1 = await res1.json() as any;
-    expect(data1.projectConfig.delete_branch_on_done).toBe(0);
-
-    // Toggle back
-    const res2 = await app.request('/project-config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ delete_branch_on_done: true }),
-    });
-    const data2 = await res2.json() as any;
-    expect(data2.projectConfig.delete_branch_on_done).toBe(1);
-  });
-
-  test('PATCH /project-config rejects non-boolean delete_branch_on_done', async () => {
-    const res = await app.request('/project-config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ delete_branch_on_done: 'yes' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /project-config rejects invalid JSON', async () => {
-    const res = await app.request('/project-config', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: 'not json',
-    });
-    expect(res.status).toBe(400);
+    expect(JSON.parse(data.step.config).deleteBranch).toBe(false);
   });
 });

@@ -50,11 +50,13 @@ describe('Database initialization', () => {
     expect(tables).toContain('workflow_steps');
   });
 
-  test('workflow_steps table is empty for fresh DB (no legacy tasks)', () => {
+  test('workflow_steps table has fixed Todo and Done for fresh DB (no legacy tasks)', () => {
     initDb(tmpDir);
     const db = getDb();
     const steps = db.query('SELECT * FROM workflow_steps').all() as any[];
-    expect(steps).toHaveLength(0);
+    expect(steps).toHaveLength(2);
+    expect(steps.find((s: any) => s.slug === 'todo')?.fixed).toBe(1);
+    expect(steps.find((s: any) => s.slug === 'done')?.fixed).toBe(1);
   });
 
   test('workflow_steps table seeds in-progress for DBs with legacy tasks', () => {
@@ -65,10 +67,8 @@ describe('Database initialization', () => {
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test')").run();
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'in-progress', 1)").run();
     const steps = db.query('SELECT * FROM workflow_steps').all() as any[];
-    // The migration already ran and found no in-progress tasks at creation time,
-    // so the seed wasn't inserted. This is correct for fresh DBs.
-    // For real upgrades from v2→v3, the tasks exist before the migration runs.
-    expect(steps).toHaveLength(0);
+    // Fresh DB: no in-progress tasks at v3 migration time, but v5 seeds Todo/Done
+    expect(steps).toHaveLength(2);
   });
 
   test('agent_config has default row', () => {
@@ -84,7 +84,7 @@ describe('Database initialization', () => {
     initDb(tmpDir);
     const db = getDb();
     const row = db.query<{ user_version: number }, []>('PRAGMA user_version').get();
-    expect(row?.user_version).toBe(4);
+    expect(row?.user_version).toBe(5);
   });
 
   test('idempotent — calling initDb twice does not error', () => {

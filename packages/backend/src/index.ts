@@ -14,6 +14,7 @@ import logsRoutes from './routes/logs.js';
 import agentConfigRoutes from './routes/agent-config.js';
 import agentControlRoutes from './routes/agent-control.js';
 import initRoutes from './routes/init.js';
+import workflowStepsRoutes from './routes/workflow-steps.js';
 import type { ProjectConfig } from './types.js';
 
 const DEFAULT_PORT = 4200;
@@ -60,9 +61,10 @@ app.onError((err, c) => {
 app.get('/status', (c) => {
   const db = getDb();
   const projectConfig = db.query<ProjectConfig, []>('SELECT * FROM project_config WHERE id = 1').get();
+  const hasWorkflowSteps = db.query<{ cnt: number }, []>('SELECT COUNT(*) as cnt FROM workflow_steps').get();
   const runnerState = getRunnerState();
   return c.json({
-    initialized: !!projectConfig,
+    initialized: !!projectConfig && (hasWorkflowSteps?.cnt ?? 0) > 0,
     projectConfig: projectConfig || undefined,
     repoName: path.basename(repoRoot),
     activeRuns: runnerState.runs,
@@ -80,6 +82,7 @@ app.route('/tasks/:id/agent', agentControlRoutes);
 app.route('/tasks/:id/logs', logsRoutes);
 app.route('/tasks', tasksRoutes);
 app.route('/agent-config', agentConfigRoutes);
+app.route('/workflow-steps', workflowStepsRoutes);
 app.route('/init', initRoutes);
 
 // Serve frontend static files in production

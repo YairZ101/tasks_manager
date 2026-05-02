@@ -8,12 +8,14 @@ import tasksRoutes from './tasks.js';
 import logsRoutes from './logs.js';
 import agentConfigRoutes from './agent-config.js';
 import initRoutes from './init.js';
+import workflowStepsRoutes from './workflow-steps.js';
 
 function createApp() {
   const app = new Hono();
   app.route('/tasks/:id/logs', logsRoutes);
   app.route('/tasks', tasksRoutes);
   app.route('/agent-config', agentConfigRoutes);
+  app.route('/workflow-steps', workflowStepsRoutes);
   app.route('/init', initRoutes);
   return app;
 }
@@ -28,6 +30,7 @@ describe('Tasks routes (real)', () => {
     initDb(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
     app = createApp();
   });
 
@@ -203,7 +206,7 @@ describe('Tasks routes (real)', () => {
   test('DELETE blocks on running agent', async () => {
     const db = getDb();
     db.query(
-      "INSERT INTO tasks (task_key, title, status, agent_status, sort_order) VALUES ('TST-99', 'Running', 'in-progress', 'running', 1)"
+      "INSERT INTO tasks (task_key, title, status, agent_status, sort_order) VALUES ('TST-99', 'Running', 'development', 'running', 1)"
     ).run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-99'").get() as any;
 
@@ -334,6 +337,7 @@ describe('Logs routes (real)', () => {
     initDb(tmpDir);
     const db = getDb();
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
     app = createApp();
   });
 
@@ -533,5 +537,162 @@ describe('Init routes (real)', () => {
     expect(res.status).toBe(400);
     const data = await res.json();
     expect(data.error).toContain('already initialized');
+  });
+});
+
+describe('Workflow steps routes (real)', () => {
+  let tmpDir: string;
+  let app: ReturnType<typeof createApp>;
+
+  beforeEach(() => {
+    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-routes-'));
+    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
+    initDb(tmpDir);
+    const db = getDb();
+    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
+    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
+    app = createApp();
+  });
+
+  afterEach(() => {
+    closeDb();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  });
+
+  test('GET /workflow-steps returns active steps', async () => {
+    const res = await app.request('/workflow-steps');
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.steps).toHaveLength(1);
+    expect(data.steps[0].slug).toBe('development');
+  });
+
+  test('GET /workflow-steps/catalog returns catalog with active flags', async () => {
+    const res = await app.request('/workflow-steps/catalog');
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.catalog.length).toBeGreaterThan(0);
+    const dev = data.catalog.find((s: any) => s.slug === 'development');
+    expect(dev.active).toBe(true);
+    const planning = data.catalog.find((s: any) => s.slug === 'planning');
+    expect(planning.active).toBe(false);
+  });
+
+  test('POST /workflow-steps adds a step from the catalog', async () => {
+    const res = await app.request('/workflow-steps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'planning' }),
+    });
+    expect(res.status).toBe(201);
+    const data = await res.json() as any;
+    expect(data.step.slug).toBe('planning');
+    expect(data.step.name).toBe('Planning');
+  });
+
+  test('POST /workflow-steps rejects unknown slug', async () => {
+    const res = await app.request('/workflow-steps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'nonexistent' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test('POST /workflow-steps rejects duplicate slug', async () => {
+    const res = await app.request('/workflow-steps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'development' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  test('PATCH /workflow-steps/:id updates sort_order', async () => {
+    const db = getDb();
+    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'development'").get() as any;
+
+    const res = await app.request(`/workflow-steps/${step.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ sort_order: 5.0 }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.step.sort_order).toBe(5.0);
+  });
+
+  test('PATCH /workflow-steps/:id updates requires_review', async () => {
+    const db = getDb();
+    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'development'").get() as any;
+
+    const res = await app.request(`/workflow-steps/${step.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ requires_review: true }),
+    });
+    expect(res.status).toBe(200);
+    const data = await res.json() as any;
+    expect(data.step.requires_review).toBe(1);
+  });
+
+  test('DELETE /workflow-steps/:id removes a step', async () => {
+    // Add a second step so we can delete one
+    await app.request('/workflow-steps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'planning' }),
+    });
+
+    const db = getDb();
+    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'planning'").get() as any;
+
+    const res = await app.request(`/workflow-steps/${step.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ move_tasks_to: 'todo' }),
+    });
+    expect(res.status).toBe(204);
+
+    const remaining = db.query("SELECT * FROM workflow_steps").all();
+    expect(remaining).toHaveLength(1);
+  });
+
+  test('DELETE /workflow-steps/:id blocks removing last step', async () => {
+    const db = getDb();
+    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'development'").get() as any;
+
+    const res = await app.request(`/workflow-steps/${step.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ move_tasks_to: 'todo' }),
+    });
+    expect(res.status).toBe(400);
+    const data = await res.json() as any;
+    expect(data.error).toContain('last workflow step');
+  });
+
+  test('DELETE /workflow-steps/:id moves tasks when step has tasks', async () => {
+    const db = getDb();
+    // Add a second step
+    await app.request('/workflow-steps', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ slug: 'planning' }),
+    });
+
+    // Create a task in the planning step
+    db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'planning', 1)").run();
+
+    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'planning'").get() as any;
+    const res = await app.request(`/workflow-steps/${step.id}`, {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ move_tasks_to: 'todo' }),
+    });
+    expect(res.status).toBe(204);
+
+    const task = db.query("SELECT status FROM tasks WHERE task_key = 'TST-1'").get() as any;
+    expect(task.status).toBe('todo');
   });
 });

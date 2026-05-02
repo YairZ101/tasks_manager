@@ -5,6 +5,7 @@ interface ConfirmDialogProps {
   destructive?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
+  children?: React.ReactNode;
 }
 
 export default function ConfirmDialog({
@@ -14,6 +15,7 @@ export default function ConfirmDialog({
   destructive,
   onConfirm,
   onCancel,
+  children,
 }: ConfirmDialogProps) {
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center animate-fade-in">
@@ -21,6 +23,7 @@ export default function ConfirmDialog({
       <div className="relative w-full max-w-sm bg-bg-raised border border-border rounded-xl shadow-2xl p-5 animate-slide-up">
         <h3 className="text-sm font-semibold text-text mb-2">{title}</h3>
         <p className="text-sm text-text-muted mb-5">{message}</p>
+        {children}
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}

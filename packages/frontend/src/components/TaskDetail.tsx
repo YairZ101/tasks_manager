@@ -39,7 +39,7 @@ export function buildLogRows(logs: TaskLog[], collapsedRuns: Set<number>): LogRo
 }
 
 export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailProps) {
-  const { tasks, updateTaskInStore, removeTaskFromStore, setSelectedTaskId, activeRuns, maxConcurrentAgents, addActiveRun } = useAppStore();
+  const { tasks, workflowSteps, updateTaskInStore, removeTaskFromStore, setSelectedTaskId, activeRuns, maxConcurrentAgents, addActiveRun } = useAppStore();
   const task = tasks.find((t) => t.id === taskId);
 
   const [editing, setEditing] = useState(false);
@@ -48,6 +48,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
   const [acceptance, setAcceptance] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
   const [pendingMoveStatus, setPendingMoveStatus] = useState<string | null>(null);
+  const [showSendBack, setShowSendBack] = useState(false);
   const [closing, setClosing] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
@@ -94,6 +95,9 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
       setTitle(task.title);
       setDescription(task.description);
       setAcceptance(task.acceptance);
+      setShowSendBack(false);
+      setClosing(false);
+      setEditing(false);
     }
   }, [task?.id]);
 
@@ -296,6 +300,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
   const handleConfirmMove = async () => {
     if (!task || !pendingMoveStatus) return;
     try {
+      await api.cancelAgent(task.id);
       const data = await api.updateTask(task.id, { status: pendingMoveStatus });
       updateTaskInStore(data.task);
       toast.success(`${task.task_key} moved to ${pendingMoveStatus}`);
@@ -323,6 +328,45 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
   const isRunning = task.agent_status === 'running';
   const isReadOnly = isRunning;
   const canStartAgent = activeRuns.length < maxConcurrentAgents && !isRunning;
+  const currentStepInfo = workflowSteps.find(s => s.slug === task.status);
+  const isInWorkflowStep = !!currentStepInfo;
+  const showApprove = isInWorkflowStep && currentStepInfo?.requires_review && task.agent_status === 'completed';
+  const showRetry = isInWorkflowStep && task.agent_status === 'failed';
+
+  const handleApproveAndContinue = async () => {
+    if (!task) return;
+    const currentIndex = workflowSteps.findIndex(s => s.slug === task.status);
+    const nextStep = workflowSteps[currentIndex + 1];
+    const nextStatus = nextStep?.slug ?? 'done';
+    try {
+      const data = await api.updateTask(task.id, { status: nextStatus });
+      updateTaskInStore(data.task);
+    } catch (err: any) {
+      toast.error(err.data?.error || err.message || 'Failed to advance task');
+    }
+  };
+
+  const handleRetry = async () => {
+    if (!task) return;
+    try {
+      const data = await api.startAgent(task.id);
+      updateTaskInStore(data.task);
+      addActiveRun({ taskId: task.id, taskKey: task.task_key });
+    } catch (err: any) {
+      toast.error(err.data?.error || err.message || 'Failed to retry');
+    }
+  };
+
+  const handleSendBack = async (targetSlug: string) => {
+    if (!task) return;
+    setShowSendBack(false);
+    try {
+      const data = await api.updateTask(task.id, { status: targetSlug });
+      updateTaskInStore(data.task);
+    } catch (err: any) {
+      toast.error(err.data?.error || err.message || 'Failed to send back');
+    }
+  };
 
   return (
     <div ref={panelRef} onAnimationEnd={handleAnimationEnd} className={`absolute top-0 right-0 w-[440px] h-full border-l border-border bg-bg-raised flex flex-col z-30 shadow-2xl shadow-black/30 max-lg:fixed max-lg:inset-0 max-lg:w-full max-lg:z-40 max-lg:border-l-0 max-lg:shadow-none ${closing ? 'animate-slide-out-right' : 'animate-slide-in-right'}`}>
@@ -432,7 +476,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
           )}
 
           {/* Action buttons */}
-          <div className="flex gap-2 pt-2 border-t border-border">
+          <div className="flex items-center gap-2 pt-2 border-t border-border">
             {isRunning ? (
               <button
                 onClick={handleCancelAgent}
@@ -443,7 +487,64 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
                 </svg>
                 Cancel Agent
               </button>
-            ) : (
+            ) : showApprove ? (
+              <>
+                <button
+                  onClick={handleApproveAndContinue}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-success-dim text-success hover:bg-success/20 text-xs font-medium rounded-lg transition-colors"
+                >
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                    <path d="M2 6.5l3 3 5-6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+                  </svg>
+                  Approve &amp; Continue
+                </button>
+                {currentStepInfo && workflowSteps.indexOf(currentStepInfo) > 0 && (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowSendBack(!showSendBack)}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-warning hover:bg-warning-dim text-xs font-medium rounded-lg transition-colors"
+                    >
+                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                        <path d="M8 3L4 6l4 3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      Send Back
+                    </button>
+                    {showSendBack && (
+                      <div className="absolute top-full left-0 mt-1 py-1 bg-bg-raised border border-border rounded-lg shadow-lg z-10 min-w-[140px]">
+                        {workflowSteps
+                          .slice(0, workflowSteps.indexOf(currentStepInfo))
+                          .map(s => (
+                            <button
+                              key={s.slug}
+                              onClick={() => handleSendBack(s.slug)}
+                              className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-bg-hover transition-colors"
+                            >
+                              {s.name}
+                            </button>
+                          ))}
+                        <button
+                          onClick={() => handleSendBack('todo')}
+                          className="w-full text-left px-3 py-1.5 text-xs text-text hover:bg-bg-hover transition-colors"
+                        >
+                          Todo
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </>
+            ) : showRetry ? (
+              <button
+                onClick={handleRetry}
+                disabled={!canStartAgent}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-warning-dim text-warning hover:bg-warning/20 text-xs font-medium rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+                  <path d="M2 6a4 4 0 017.2-2.4M10 2v2.4H7.6M10 6a4 4 0 01-7.2 2.4M2 10V7.6h2.4" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
+                </svg>
+                Retry
+              </button>
+            ) : task.status === 'todo' ? (
               <button
                 onClick={handleRunAgent}
                 disabled={!canStartAgent}
@@ -452,54 +553,19 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
                   <path d="M2 1l8 5-8 5V1z" fill="currentColor" />
                 </svg>
-                Run Agent
+                Start Workflow
               </button>
-            )}
-            {(task.status === 'backlog' || task.status === 'done' || task.status === 'in-progress') && (
-              <button
-                onClick={handleMoveToTodo}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-text hover:bg-bg-hover text-xs font-medium rounded-lg transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M6 10V3M3.5 5.5L6 3l2.5 2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M1 11h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-                Move to Todo
-              </button>
-            )}
-            {task.status === 'todo' && (
-              <button
-                onClick={handleMoveToBacklog}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-text hover:bg-bg-hover text-xs font-medium rounded-lg transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M6 2v7M3.5 6.5L6 9l2.5-2.5" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round" />
-                  <path d="M1 1h10" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-                </svg>
-                Move to Backlog
-              </button>
-            )}
-            {(task.status === 'backlog' || task.status === 'todo' || task.status === 'in-progress') && (
-              <button
-                onClick={handleMarkDone}
-                className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-text hover:bg-bg-hover text-xs font-medium rounded-lg transition-colors"
-              >
-                <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                  <path d="M2 6.5l3 3 5-6" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-                Move to Done
-              </button>
-            )}
-            <button
-              onClick={() => setShowDeleteConfirm(true)}
-              disabled={isRunning}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-text-muted hover:text-danger hover:bg-danger-dim text-xs font-medium rounded-lg transition-colors disabled:opacity-30 disabled:cursor-not-allowed ml-auto"
-            >
-              <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
-                <path d="M2 3h8M4 3V2a1 1 0 011-1h2a1 1 0 011 1v1M9 3v7a1 1 0 01-1 1H4a1 1 0 01-1-1V3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
-              </svg>
-              Delete
-            </button>
+            ) : null}
+
+            {/* More actions dropdown */}
+            <MoreActionsMenu
+              task={task}
+              onMoveToTodo={handleMoveToTodo}
+              onMoveToBacklog={handleMoveToBacklog}
+              onMarkDone={handleMarkDone}
+              onDelete={() => setShowDeleteConfirm(true)}
+              isRunning={isRunning}
+            />
           </div>
         </div>
 
@@ -535,7 +601,7 @@ export default function TaskDetail({ taskId, registerLogCallback }: TaskDetailPr
 
               {logs.length === 0 && !loadingLogs ? (
                 <div className="flex items-center justify-center h-full text-text-dim text-[11px]">
-                  No agent runs yet. Click &apos;Run Agent&apos; to start.
+                  No agent runs yet. Click &apos;Start Workflow&apos; to start.
                 </div>
               ) : (
                 <div
@@ -652,12 +718,13 @@ function StatusBadge({ status }: { status: string }) {
   const colors: Record<string, string> = {
     backlog: 'bg-bg text-text-dim border-border',
     todo: 'bg-warning-dim text-warning border-warning/20',
-    'in-progress': 'bg-running-dim text-running border-running/20',
     done: 'bg-success-dim text-success border-success/20',
   };
 
+  const fallback = 'bg-running-dim text-running border-running/20';
+
   return (
-    <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-md border ${colors[status] || ''}`}>
+    <span className={`px-2 py-0.5 text-[10px] font-semibold rounded-md border ${colors[status] || fallback}`}>
       {status}
     </span>
   );
@@ -690,4 +757,68 @@ function getLogColor(level: string): string {
     default:
       return 'text-text';
   }
+}
+
+function MoreActionsMenu({
+  task,
+  onMoveToTodo,
+  onMoveToBacklog,
+  onMarkDone,
+  onDelete,
+  isRunning,
+}: {
+  task: Task;
+  onMoveToTodo: () => void;
+  onMoveToBacklog: () => void;
+  onMarkDone: () => void;
+  onDelete: () => void;
+  isRunning: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+
+  const items: { label: string; onClick: () => void; danger?: boolean; disabled?: boolean }[] = [];
+
+  if (task.status !== 'todo' && task.status !== 'backlog') {
+    items.push({ label: 'Move to Todo', onClick: onMoveToTodo });
+  }
+  if (task.status === 'todo') {
+    items.push({ label: 'Move to Backlog', onClick: onMoveToBacklog });
+  }
+  if (task.status !== 'done') {
+    items.push({ label: 'Move to Done', onClick: onMarkDone });
+  }
+  items.push({ label: 'Delete', onClick: onDelete, danger: true, disabled: isRunning });
+
+  return (
+    <div className="relative ml-auto">
+      <button
+        onClick={() => setOpen(!open)}
+        className="p-1.5 text-text-muted hover:text-text hover:bg-bg-hover rounded-lg transition-colors"
+      >
+        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+          <circle cx="7" cy="3" r="1.2" fill="currentColor" />
+          <circle cx="7" cy="7" r="1.2" fill="currentColor" />
+          <circle cx="7" cy="11" r="1.2" fill="currentColor" />
+        </svg>
+      </button>
+      {open && (
+        <div className="absolute bottom-full right-0 mb-1 py-1 bg-bg-raised border border-border rounded-lg shadow-lg z-10 min-w-[150px]">
+          {items.map(item => (
+            <button
+              key={item.label}
+              onClick={() => { setOpen(false); item.onClick(); }}
+              disabled={item.disabled}
+              className={`w-full text-left px-3 py-1.5 text-xs transition-colors disabled:opacity-30 ${
+                item.danger
+                  ? 'text-danger hover:bg-danger-dim'
+                  : 'text-text hover:bg-bg-hover'
+              }`}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }

@@ -8,8 +8,10 @@ import {
   removeWorktree,
   checkUncommittedChanges,
   detectMainBranch,
-  getRecentCommits,
 } from '../worktree/worktree.js';
+import { getStepInfo, getNextStepSlug, isWorkflowStep, cleanupReviewFiles } from '../workflow/workflow-utils.js';
+import { getStepInstructions } from '../workflow/step-config.js';
+import { STEP_CATALOG } from '../workflow/step-catalog.js';
 
 interface RunState {
   taskId: number;
@@ -66,9 +68,12 @@ export async function awaitAllCompletions(): Promise<void> {
 
 export interface BuildPromptOpts {
   workingDir: string;
+  stepSlug?: string;
+  stepName?: string;
+  stepDescription?: string;
+  stepConfig?: Record<string, unknown>;
   branchName?: string;
   mainBranch?: string;
-  recentCommits?: string;
 }
 
 export function buildPrompt(task: Task, opts: BuildPromptOpts): string {
@@ -80,6 +85,14 @@ export function buildPrompt(task: Task, opts: BuildPromptOpts): string {
     parts.push(`The main branch is: ${opts.mainBranch}`);
   } else {
     parts.push(`You are working in the repository at: ${opts.workingDir}`);
+  }
+
+  if (opts.stepName) {
+    parts.push('');
+    parts.push(`## Step: ${opts.stepName}`);
+    if (opts.stepDescription) {
+      parts.push(opts.stepDescription);
+    }
   }
 
   parts.push('');
@@ -97,21 +110,9 @@ export function buildPrompt(task: Task, opts: BuildPromptOpts): string {
     parts.push(task.acceptance);
   }
 
-  parts.push('');
-  parts.push('Please implement the changes needed to complete this task.');
-
-  parts.push('');
-  parts.push('## Git Guidelines');
-  parts.push('');
-  parts.push('- When you are done, commit your changes on this branch. Do not leave uncommitted files.');
-  parts.push('- If the task involves multiple distinct logical changes, use separate commits for each. Otherwise, a single commit is fine.');
-  parts.push('- Write clear commit messages: a short summary line (imperative mood), optionally followed by a blank line and a longer explanation of why the change was made.');
-
-  if (opts.recentCommits) {
-    parts.push('- Match the commit message style used in this repo. Recent commits for reference:');
-    parts.push('```');
-    parts.push(opts.recentCommits);
-    parts.push('```');
+  if (opts.stepSlug) {
+    parts.push('');
+    parts.push(...getStepInstructions(opts.stepSlug, opts.stepConfig));
   }
 
   return parts.join('\n');
@@ -119,7 +120,8 @@ export function buildPrompt(task: Task, opts: BuildPromptOpts): string {
 
 export async function startAgent(
   taskId: number,
-  workingDir: string
+  workingDir: string,
+  targetStepSlug?: string
 ): Promise<Task> {
   const db = getDb();
 
@@ -175,18 +177,23 @@ export async function startAgent(
     originalTask = task;
     runState.taskKey = task.task_key;
 
-    // Update task status to in-progress (transactional)
+    // Determine target step
+    const stepSlug = targetStepSlug || task.status;
+    if (!isWorkflowStep(stepSlug)) {
+      throw Object.assign(new Error(`Cannot start agent on status "${stepSlug}"`), { status: 400 });
+    }
+
     const prepareRun = db.transaction(() => {
       const maxOrder = db
         .query<{ max_order: number | null }, [string]>(
           `SELECT MAX(sort_order) as max_order FROM tasks WHERE status = ?`
         )
-        .get('in-progress');
+        .get(stepSlug);
       const newOrder = (maxOrder?.max_order ?? 0) + 1.0;
 
       db.query(
-        `UPDATE tasks SET status = 'in-progress', agent_status = 'running', sort_order = ? WHERE id = ?`
-      ).run(newOrder, taskId);
+        `UPDATE tasks SET status = ?, agent_status = 'running', sort_order = ? WHERE id = ?`
+      ).run(stepSlug, newOrder, taskId);
 
       const runRow = db
         .query<{ max_run: number | null }, [number]>(
@@ -285,6 +292,7 @@ export async function startAgent(
       const useWorktree = gitRepoDetected === true;
       let branchName: string | undefined;
       let mainBranch: string | undefined;
+      let chainResult: { nextSlug: string } | null = null;
 
       try {
         // Create worktree if in git mode
@@ -300,12 +308,20 @@ export async function startAgent(
           ).run(effectiveDir, branchName, taskId);
         }
 
-        const recentCommits = await getRecentCommits(workingDir);
+        const currentStepInfo = getStepInfo(stepSlug);
+        const catalogEntry = STEP_CATALOG.find(s => s.slug === stepSlug);
+        let stepConfig: Record<string, unknown> | undefined;
+        if (currentStepInfo?.config) {
+          try { stepConfig = JSON.parse(currentStepInfo.config); } catch {}
+        }
         const prompt = buildPrompt(updatedTask, {
           workingDir: effectiveDir,
+          stepSlug,
+          stepName: currentStepInfo?.name,
+          stepDescription: catalogEntry?.description,
+          stepConfig,
           branchName,
           mainBranch,
-          recentCommits,
         });
 
         const adapter = new CliAdapter(config);
@@ -332,7 +348,10 @@ export async function startAgent(
           broadcastLog('warn', warnMsg);
         }
 
-        handleAgentResult(result, task, updatedTask, taskId, db, insertLogStmt, runNumber, broadcastLog);
+        const action = handleAgentResult(result, task, updatedTask, taskId, stepSlug, db, insertLogStmt, runNumber, broadcastLog);
+        if (action.nextAction === 'chain' && action.nextSlug) {
+          chainResult = { nextSlug: action.nextSlug };
+        }
       } catch (err: any) {
         clearTimeout(timeoutTimer);
         if (flushTimer) clearTimeout(flushTimer);
@@ -394,6 +413,19 @@ export async function startAgent(
         activeRuns.delete(taskId);
         runState.resolveCompletion();
       }
+
+      // Chain AFTER cleanup — slot is freed
+      if (chainResult) {
+        try {
+          await startAgent(taskId, workingDir, chainResult.nextSlug);
+        } catch (err: any) {
+          // Concurrency limit or other error — task stays in current step
+          try {
+            insertLogStmt.run(taskId, runNumber, 'warn', `Auto-advance to ${chainResult.nextSlug} delayed: ${err.message}`);
+          } catch {}
+          broadcastLog('warn', `Auto-advance to ${chainResult.nextSlug} delayed: ${err.message}`);
+        }
+      }
     };
 
     // Fire and forget
@@ -421,35 +453,79 @@ export async function startAgent(
   }
 }
 
+interface AgentResultAction {
+  nextAction: 'chain' | 'done' | 'wait-for-review';
+  nextSlug?: string;
+}
+
 function handleAgentResult(
   result: { success: boolean; summary: string },
   originalTask: Task,
   updatedTask: Task,
   taskId: number,
+  stepSlug: string,
   db: ReturnType<typeof getDb>,
   insertLogStmt: any,
   runNumber: number,
   broadcastLog: (level: string, message: string) => void,
-): void {
+): AgentResultAction {
   if (result.success) {
-    const maxDoneOrder = db
+    const currentStep = getStepInfo(stepSlug);
+
+    // If step requires review, stay put and wait for human
+    if (currentStep?.requires_review) {
+      db.query(
+        `UPDATE tasks SET agent_status = 'completed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
+      ).run(taskId);
+
+      const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
+      broadcaster.broadcast('task:updated', { task: finalTask });
+      broadcaster.broadcast('agent:status', { taskId, taskKey: originalTask.task_key, status: 'completed' });
+      broadcaster.broadcast('toast', {
+        type: 'success',
+        message: `${originalTask.task_key} ready for review.`,
+      });
+      return { nextAction: 'wait-for-review' };
+    }
+
+    // Auto-advance to next step
+    const nextSlug = getNextStepSlug(stepSlug);
+
+    // Calculate sort_order for target column
+    const maxOrder = db
       .query<{ max_order: number | null }, [string]>(
         `SELECT MAX(sort_order) as max_order FROM tasks WHERE status = ?`
       )
-      .get('done');
-    const doneOrder = (maxDoneOrder?.max_order ?? 0) + 1.0;
+      .get(nextSlug);
+    const newOrder = (maxOrder?.max_order ?? 0) + 1.0;
 
     db.query(
-      `UPDATE tasks SET status = 'done', agent_status = 'completed', agent_pid = NULL, agent_started_at = NULL, sort_order = ? WHERE id = ?`
-    ).run(doneOrder, taskId);
+      `UPDATE tasks SET status = ?, agent_status = 'completed', agent_pid = NULL, agent_started_at = NULL, sort_order = ? WHERE id = ?`
+    ).run(nextSlug, newOrder, taskId);
 
     const finalTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(taskId)!;
     broadcaster.broadcast('task:updated', { task: finalTask });
     broadcaster.broadcast('agent:status', { taskId, taskKey: originalTask.task_key, status: 'completed' });
+
+    if (nextSlug === 'done') {
+      cleanupReviewFiles(originalTask.task_key, process.cwd());
+      broadcaster.broadcast('toast', {
+        type: 'success',
+        message: `${originalTask.task_key} completed successfully.`,
+      });
+      return { nextAction: 'done' };
+    }
+
+    // Chain to next step (all workflow steps run the agent)
+    if (isWorkflowStep(nextSlug)) {
+      return { nextAction: 'chain', nextSlug };
+    }
+
     broadcaster.broadcast('toast', {
       type: 'success',
-      message: `${originalTask.task_key} completed successfully.`,
+      message: `${originalTask.task_key} advanced to ${nextSlug}.`,
     });
+    return { nextAction: 'done' };
   } else {
     db.query(
       `UPDATE tasks SET agent_status = 'failed', agent_pid = NULL, agent_started_at = NULL WHERE id = ?`
@@ -462,6 +538,7 @@ function handleAgentResult(
       type: 'error',
       message: `${originalTask.task_key} failed: ${result.summary}`,
     });
+    return { nextAction: 'done' };
   }
 }
 

@@ -111,4 +111,70 @@ function runMigrations(db: Database): void {
     db.exec(`ALTER TABLE tasks ADD COLUMN agent_branch TEXT DEFAULT NULL`);
     db.exec(`PRAGMA user_version = 2`);
   }
+
+  if (version < 3) {
+    // Create workflow_steps table
+    db.exec(`
+      CREATE TABLE workflow_steps (
+        id              INTEGER PRIMARY KEY AUTOINCREMENT,
+        slug            TEXT NOT NULL UNIQUE,
+        name            TEXT NOT NULL,
+        requires_review INTEGER NOT NULL DEFAULT 0,
+        config          TEXT NOT NULL DEFAULT '{}',
+        sort_order      REAL NOT NULL,
+        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      )
+    `);
+
+    // Seed default step only if existing tasks use 'in-progress' status.
+    // New projects get their workflow steps from the init wizard instead.
+    db.exec(`
+      INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order)
+      SELECT 'in-progress', 'In Progress', 0, '{}', 1.0
+      WHERE EXISTS (SELECT 1 FROM tasks WHERE status = 'in-progress')
+    `);
+
+    // Recreate tasks table without the status CHECK constraint.
+    // Create new table first, copy data, drop old, rename new.
+    // This avoids FK resolution issues with RENAME on some Bun/SQLite versions.
+    db.exec('PRAGMA foreign_keys = OFF');
+    db.exec(`
+      CREATE TABLE tasks_new (
+        id            INTEGER PRIMARY KEY AUTOINCREMENT,
+        task_key      TEXT UNIQUE NOT NULL,
+        title         TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 500),
+        description   TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 50000),
+        acceptance    TEXT NOT NULL DEFAULT '' CHECK (length(acceptance) <= 50000),
+        status        TEXT NOT NULL DEFAULT 'backlog',
+        agent_status  TEXT DEFAULT NULL
+                      CHECK (agent_status IS NULL OR agent_status IN ('running', 'completed', 'failed')),
+        agent_pid     INTEGER DEFAULT NULL,
+        agent_started_at TEXT DEFAULT NULL,
+        sort_order    REAL NOT NULL DEFAULT 0,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        agent_worktree TEXT DEFAULT NULL,
+        agent_branch  TEXT DEFAULT NULL
+      )
+    `);
+    db.exec(`
+      INSERT INTO tasks_new (id, task_key, title, description, acceptance, status,
+        agent_status, agent_pid, agent_started_at, sort_order, created_at, updated_at,
+        agent_worktree, agent_branch)
+      SELECT id, task_key, title, description, acceptance, status,
+        agent_status, agent_pid, agent_started_at, sort_order, created_at, updated_at,
+        agent_worktree, agent_branch
+      FROM tasks
+    `);
+    db.exec('DROP TABLE tasks');
+    db.exec('ALTER TABLE tasks_new RENAME TO tasks');
+    db.exec(`
+      CREATE TRIGGER tasks_updated_at AFTER UPDATE ON tasks
+      BEGIN
+        UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id;
+      END
+    `);
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec('PRAGMA user_version = 3');
+  }
 }

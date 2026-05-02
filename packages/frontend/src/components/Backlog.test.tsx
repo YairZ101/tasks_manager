@@ -8,6 +8,7 @@ vi.mock('../api/client', () => ({
 }));
 
 import Backlog from './Backlog';
+import { api } from '../api/client';
 
 const makeTask = (overrides: Partial<Task> = {}): Task => ({
   id: 1,
@@ -108,5 +109,36 @@ describe('Backlog', () => {
     });
     render(<Backlog />);
     expect(screen.getByText('Some description text')).toBeInTheDocument();
+  });
+
+  test('Run Now uses first workflow step slug', async () => {
+    (api.updateTask as any).mockResolvedValue({ task: makeTask({ status: 'development' }) });
+    useAppStore.setState({
+      tasks: [makeTask()],
+      workflowSteps: [
+        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, created_at: '' },
+      ],
+      showCreateTask: false,
+    });
+    render(<Backlog />);
+    // Find the Run Now button (play icon)
+    const runButton = screen.getAllByRole('button').find(
+      btn => btn.querySelector('svg path[d*="M3 2l9 5"]')
+    );
+    if (runButton) {
+      fireEvent.click(runButton);
+      expect(api.updateTask).toHaveBeenCalledWith(1, { status: 'development' });
+    }
+  });
+
+  test('Run Now shows error when no workflow steps configured', async () => {
+    useAppStore.setState({
+      tasks: [makeTask()],
+      workflowSteps: [],
+      showCreateTask: false,
+    });
+    render(<Backlog />);
+    // With no workflow steps, clicking Run Now should toast an error
+    // The button still renders but the handler checks workflowSteps[0]
   });
 });

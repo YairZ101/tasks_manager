@@ -8,6 +8,7 @@ export default function Sidebar() {
     setCurrentView,
     toggleSidebar,
     setShowAgentConfig,
+    setShowWorkflowSettings,
   } = useAppStore();
 
   const backlogCount = tasks.filter((t) => t.status === 'backlog').length;
@@ -91,7 +92,20 @@ export default function Sidebar() {
         </nav>
 
         {/* Settings */}
-        <div className="px-2 py-3 border-t border-border">
+        <div className="px-2 py-3 border-t border-border space-y-1">
+          <NavItem
+            icon={
+              <svg width="18" height="18" viewBox="0 0 18 18" fill="none">
+                <path d="M3 5h12M3 9h12M3 13h12" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" />
+                <circle cx="6" cy="5" r="1.5" fill="currentColor" />
+                <circle cx="12" cy="9" r="1.5" fill="currentColor" />
+                <circle cx="8" cy="13" r="1.5" fill="currentColor" />
+              </svg>
+            }
+            label="Workflow"
+            collapsed={sidebarCollapsed}
+            onClick={() => setShowWorkflowSettings(true)}
+          />
           <NavItem
             icon={
               <svg width="18" height="18" viewBox="0 0 24 24" fill="none">

@@ -6,7 +6,7 @@ import Tooltip from './Tooltip.js';
 import ConfirmDialog from './ConfirmDialog.js';
 
 export default function Backlog() {
-  const { tasks, setShowCreateTask, setSelectedTaskId, updateTaskInStore, removeTaskFromStore } = useAppStore();
+  const { tasks, workflowSteps, setShowCreateTask, setSelectedTaskId, updateTaskInStore, removeTaskFromStore } = useAppStore();
   const [search, setSearch] = useState('');
   const [deleteTarget, setDeleteTarget] = useState<Task | null>(null);
 
@@ -34,8 +34,13 @@ export default function Backlog() {
   };
 
   const handleRunNow = async (task: Task) => {
+    const firstStep = workflowSteps[0];
+    if (!firstStep) {
+      toast.error('No workflow steps configured');
+      return;
+    }
     try {
-      const data = await api.updateTask(task.id, { status: 'in-progress' });
+      const data = await api.updateTask(task.id, { status: firstStep.slug });
       updateTaskInStore(data.task);
     } catch (err: any) {
       toast.error(err.data?.error || err.message || 'Failed to start agent');

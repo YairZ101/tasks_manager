@@ -6,6 +6,7 @@ export function useEventSource() {
   const updateTaskInStore = useAppStore((s) => s.updateTaskInStore);
   const removeTaskFromStore = useAppStore((s) => s.removeTaskFromStore);
   const fetchTasks = useAppStore((s) => s.fetchTasks);
+  const fetchWorkflowSteps = useAppStore((s) => s.fetchWorkflowSteps);
   const addActiveRun = useAppStore((s) => s.addActiveRun);
   const removeActiveRun = useAppStore((s) => s.removeActiveRun);
   const esRef = useRef<EventSource | null>(null);
@@ -72,6 +73,7 @@ export function useEventSource() {
 
     es.addEventListener('stale', () => {
       fetchTasks();
+      fetchWorkflowSteps();
       // Re-fetch runner state on stale reconnect
       api.getStatus().then((data) => {
         useAppStore.setState({
@@ -79,6 +81,10 @@ export function useEventSource() {
           maxConcurrentAgents: data.maxConcurrentAgents ?? 3,
         });
       }).catch(() => {});
+    });
+
+    es.addEventListener('workflow:updated', () => {
+      fetchWorkflowSteps();
     });
 
     es.onerror = () => {
@@ -98,7 +104,7 @@ export function useEventSource() {
     return () => {
       es.close();
     };
-  }, [updateTaskInStore, removeTaskFromStore, fetchTasks, addActiveRun, removeActiveRun]);
+  }, [updateTaskInStore, removeTaskFromStore, fetchTasks, fetchWorkflowSteps, addActiveRun, removeActiveRun]);
 
   return { registerLogCallback };
 }

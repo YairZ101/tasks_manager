@@ -96,4 +96,28 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ prefix, repoName }),
     }),
+
+  // Workflow Steps
+  getWorkflowSteps: () => request<{ steps: any[] }>('/workflow-steps'),
+
+  getWorkflowCatalog: () =>
+    request<{ catalog: any[] }>('/workflow-steps/catalog'),
+
+  addWorkflowStep: (slug: string, position?: number) =>
+    request<{ step: any }>('/workflow-steps', {
+      method: 'POST',
+      body: JSON.stringify({ slug, position }),
+    }),
+
+  updateWorkflowStep: (id: number, data: { sort_order?: number; config?: any; requires_review?: boolean }) =>
+    request<{ step: any }>(`/workflow-steps/${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify(data),
+    }),
+
+  removeWorkflowStep: (id: number, moveTasksTo?: string) =>
+    request<void>(`/workflow-steps/${id}`, {
+      method: 'DELETE',
+      body: JSON.stringify({ move_tasks_to: moveTasksTo }),
+    }),
 };

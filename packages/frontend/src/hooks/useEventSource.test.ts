@@ -6,6 +6,7 @@ const mockStore = {
   updateTaskInStore: vi.fn(),
   removeTaskFromStore: vi.fn(),
   fetchTasks: vi.fn(),
+  fetchWorkflowSteps: vi.fn(),
   addActiveRun: vi.fn(),
   removeActiveRun: vi.fn(),
 };
@@ -299,7 +300,7 @@ describe('useEventSource', () => {
   });
 
   describe('stale event', () => {
-    test('calls fetchTasks on stale event', () => {
+    test('calls fetchTasks and fetchWorkflowSteps on stale event', () => {
       renderHook(() => useEventSource());
 
       act(() => {
@@ -308,6 +309,20 @@ describe('useEventSource', () => {
       });
 
       expect(mockStore.fetchTasks).toHaveBeenCalledOnce();
+      expect(mockStore.fetchWorkflowSteps).toHaveBeenCalledOnce();
+    });
+  });
+
+  describe('workflow:updated event', () => {
+    test('calls fetchWorkflowSteps on workflow:updated', () => {
+      renderHook(() => useEventSource());
+
+      act(() => {
+        const listeners = getES().listeners.get('workflow:updated') ?? [];
+        listeners.forEach((cb) => cb({}));
+      });
+
+      expect(mockStore.fetchWorkflowSteps).toHaveBeenCalledOnce();
     });
   });
 });

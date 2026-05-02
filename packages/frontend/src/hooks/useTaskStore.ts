@@ -7,7 +7,7 @@ export interface Task {
   title: string;
   description: string;
   acceptance: string;
-  status: 'backlog' | 'todo' | 'in-progress' | 'done';
+  status: string;
   agent_status: 'running' | 'completed' | 'failed' | null;
   agent_pid: number | null;
   agent_started_at: string | null;
@@ -25,6 +25,16 @@ export interface TaskLog {
   timestamp: string;
   level: string;
   message: string;
+}
+
+export interface WorkflowStep {
+  id: number;
+  slug: string;
+  name: string;
+  requires_review: number;
+  config: string;
+  sort_order: number;
+  created_at: string;
 }
 
 interface ActiveRun {
@@ -46,6 +56,9 @@ interface AppState {
   activeRuns: ActiveRun[];
   maxConcurrentAgents: number;
 
+  // Workflow steps
+  workflowSteps: WorkflowStep[];
+
   // Selected task
   selectedTaskId: number | null;
 
@@ -57,6 +70,7 @@ interface AppState {
 
   // Agent config modal
   showAgentConfig: boolean;
+  showWorkflowSettings: boolean;
 
   // Create task modal
   showCreateTask: boolean;
@@ -72,7 +86,10 @@ interface AppState {
   toggleSidebar: () => void;
   setSidebarCollapsed: (collapsed: boolean) => void;
   setShowAgentConfig: (show: boolean) => void;
+  setShowWorkflowSettings: (show: boolean) => void;
   setShowCreateTask: (show: boolean, defaultStatus?: 'backlog' | 'todo') => void;
+  fetchWorkflowSteps: () => Promise<void>;
+  setWorkflowSteps: (steps: WorkflowStep[]) => void;
   addActiveRun: (run: ActiveRun) => void;
   removeActiveRun: (taskId: number) => void;
 }
@@ -85,10 +102,12 @@ export const useAppStore = create<AppState>((set) => ({
   tasks: [],
   activeRuns: [],
   maxConcurrentAgents: 3,
+  workflowSteps: [],
   selectedTaskId: null,
   currentView: 'board',
   sidebarCollapsed: typeof window !== 'undefined' && window.innerWidth < 1024,
   showAgentConfig: false,
+  showWorkflowSettings: false,
   showCreateTask: false,
   createTaskDefaultStatus: 'backlog',
 
@@ -140,11 +159,23 @@ export const useAppStore = create<AppState>((set) => ({
   toggleSidebar: () => set((s) => ({ sidebarCollapsed: !s.sidebarCollapsed })),
   setSidebarCollapsed: (collapsed) => set({ sidebarCollapsed: collapsed }),
   setShowAgentConfig: (show) => set({ showAgentConfig: show }),
+  setShowWorkflowSettings: (show) => set({ showWorkflowSettings: show }),
   setShowCreateTask: (show, defaultStatus) =>
     set({
       showCreateTask: show,
       createTaskDefaultStatus: defaultStatus || 'backlog',
     }),
+
+  fetchWorkflowSteps: async () => {
+    try {
+      const data = await api.getWorkflowSteps();
+      set({ workflowSteps: data.steps });
+    } catch {
+      // Error handled silently
+    }
+  },
+
+  setWorkflowSteps: (steps: WorkflowStep[]) => set({ workflowSteps: steps }),
 
   addActiveRun: (run: ActiveRun) => {
     set((state) => {

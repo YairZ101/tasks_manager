@@ -1,5 +1,5 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
-import { render, screen, act } from '@testing-library/react';
+import { render, screen, act, fireEvent } from '@testing-library/react';
 import { useAppStore } from '../hooks/useTaskStore';
 import type { Task, TaskLog } from '../hooks/useTaskStore';
 import { buildLogRows } from './TaskDetail';
@@ -70,22 +70,24 @@ describe('TaskDetail', () => {
     expect(container.innerHTML).toBe('');
   });
 
-  test('Run Agent button is enabled when under concurrency limit', () => {
+  test('Start Workflow button is enabled when under concurrency limit', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'todo' })],
       selectedTaskId: 1,
+      workflowSteps: [],
       activeRuns: [],
       maxConcurrentAgents: 3,
     });
     render(<TaskDetail taskId={1} registerLogCallback={noop} />);
-    const btn = screen.getByText('Run Agent').closest('button');
+    const btn = screen.getByText('Start Workflow').closest('button');
     expect(btn).not.toBeDisabled();
   });
 
-  test('Run Agent button is disabled when concurrency limit reached', () => {
+  test('Start Workflow button is disabled when concurrency limit reached', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'todo' })],
       selectedTaskId: 1,
+      workflowSteps: [],
       activeRuns: [
         { taskId: 10, taskKey: 'TST-10' },
         { taskId: 11, taskKey: 'TST-11' },
@@ -94,7 +96,7 @@ describe('TaskDetail', () => {
       maxConcurrentAgents: 3,
     });
     render(<TaskDetail taskId={1} registerLogCallback={noop} />);
-    const btn = screen.getByText('Run Agent').closest('button');
+    const btn = screen.getByText('Start Workflow').closest('button');
     expect(btn).toBeDisabled();
   });
 
@@ -102,12 +104,103 @@ describe('TaskDetail', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'in-progress', agent_status: 'running' })],
       selectedTaskId: 1,
+      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
       activeRuns: [{ taskId: 1, taskKey: 'TST-1' }],
       maxConcurrentAgents: 3,
     });
     render(<TaskDetail taskId={1} registerLogCallback={noop} />);
     // When running, Cancel Agent button is shown instead
     expect(screen.getByText('Cancel Agent')).toBeInTheDocument();
+  });
+
+  test('shows Approve & Continue for review step with completed agent', () => {
+    useAppStore.setState({
+      tasks: [makeTask({ status: 'planning', agent_status: 'completed' })],
+      selectedTaskId: 1,
+      workflowSteps: [
+        { id: 1, slug: 'planning', name: 'Planning', requires_review: 1, config: '{}', sort_order: 1, created_at: '' },
+        { id: 2, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 2, created_at: '' },
+      ],
+      activeRuns: [],
+      maxConcurrentAgents: 3,
+    });
+    render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+    expect(screen.getByText(/Approve/)).toBeInTheDocument();
+  });
+
+  test('shows Retry for failed agent on workflow step', () => {
+    useAppStore.setState({
+      tasks: [makeTask({ status: 'development', agent_status: 'failed' })],
+      selectedTaskId: 1,
+      workflowSteps: [
+        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, created_at: '' },
+      ],
+      activeRuns: [],
+      maxConcurrentAgents: 3,
+    });
+    render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+    expect(screen.getByText('Retry')).toBeInTheDocument();
+  });
+
+  test('shows more actions menu with Move to Done', () => {
+    useAppStore.setState({
+      tasks: [makeTask({ status: 'todo' })],
+      selectedTaskId: 1,
+      workflowSteps: [],
+      activeRuns: [],
+      maxConcurrentAgents: 3,
+    });
+    render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+    // Find the three-dot menu button
+    const moreButton = screen.getAllByRole('button').find(
+      btn => btn.querySelector('svg circle[cy="7"]')
+    );
+    expect(moreButton).toBeTruthy();
+    fireEvent.click(moreButton!);
+    expect(screen.getByText('Move to Done')).toBeInTheDocument();
+    expect(screen.getByText('Delete')).toBeInTheDocument();
+  });
+
+  test('does not show Start Workflow for non-todo tasks', () => {
+    useAppStore.setState({
+      tasks: [makeTask({ status: 'development', agent_status: null })],
+      selectedTaskId: 1,
+      workflowSteps: [
+        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, created_at: '' },
+      ],
+      activeRuns: [],
+      maxConcurrentAgents: 3,
+    });
+    render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+    expect(screen.queryByText('Start Workflow')).not.toBeInTheDocument();
+  });
+
+  test('resets editing and closing state when switching tasks', () => {
+    useAppStore.setState({
+      tasks: [
+        makeTask({ id: 1, task_key: 'TST-1', title: 'Task One', status: 'todo' }),
+        makeTask({ id: 2, task_key: 'TST-2', title: 'Task Two', status: 'todo' }),
+      ],
+      selectedTaskId: 1,
+      workflowSteps: [],
+      activeRuns: [],
+      maxConcurrentAgents: 3,
+    });
+    const { rerender } = render(<TaskDetail taskId={1} registerLogCallback={noop} />);
+
+    // Click description to enter edit mode
+    const desc = screen.getByText('No description');
+    fireEvent.click(desc);
+    expect(screen.getByText('Save')).toBeInTheDocument();
+
+    // Switch to task 2
+    useAppStore.setState({ selectedTaskId: 2 });
+    rerender(<TaskDetail taskId={2} registerLogCallback={noop} />);
+
+    // Edit mode should be reset — Save button should not be visible
+    expect(screen.queryByText('Save')).not.toBeInTheDocument();
+    // Should show the new task's title
+    expect(screen.getByText('Task Two')).toBeInTheDocument();
   });
 
   test('SSE logs received before loadLogs resolves are not lost', async () => {

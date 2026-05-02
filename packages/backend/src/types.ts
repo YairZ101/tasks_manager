@@ -4,7 +4,7 @@ export interface Task {
   title: string;
   description: string;
   acceptance: string;
-  status: 'backlog' | 'todo' | 'in-progress' | 'done';
+  status: string;
   agent_status: 'running' | 'completed' | 'failed' | null;
   agent_pid: number | null;
   agent_started_at: string | null;
@@ -42,8 +42,18 @@ export interface ProjectConfig {
   created_at: string;
 }
 
-export type TaskStatus = Task['status'];
+export type TaskStatus = string;
 export type AgentStatus = NonNullable<Task['agent_status']>;
+
+export interface WorkflowStep {
+  id: number;
+  slug: string;
+  name: string;
+  requires_review: number;
+  config: string;
+  sort_order: number;
+  created_at: string;
+}
 
 export interface RunnerState {
   activeCount: number;

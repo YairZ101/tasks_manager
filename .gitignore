@@ -6,9 +6,6 @@ packages/frontend/dist/
 packages/backend/dist/
 *.tsbuildinfo
 
-# Bun
-bun.lock
-
 # IDE
 .vscode/
 .idea/

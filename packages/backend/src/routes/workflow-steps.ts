@@ -25,7 +25,7 @@ workflowSteps.get('/catalog', (c) => {
   ).all();
   const activeSlugs = new Set(activeSteps.map(s => s.slug));
 
-  const catalog = STEP_CATALOG.map(entry => ({
+  const catalog = STEP_CATALOG.filter(entry => !entry.fixed).map(entry => ({
     ...entry,
     active: activeSlugs.has(entry.slug),
   }));
@@ -52,6 +52,11 @@ workflowSteps.post('/', async (c) => {
     return c.json({ error: `"${slug}" is not in the step catalog` }, 400);
   }
 
+  // Fixed steps (todo, done) cannot be added manually
+  if (catalogEntry.fixed) {
+    return c.json({ error: `"${slug}" is a fixed step and cannot be added` }, 400);
+  }
+
   // Check if already active
   const existing = db.query<{ id: number }, [string]>(
     'SELECT id FROM workflow_steps WHERE slug = ?'
@@ -60,23 +65,33 @@ workflowSteps.post('/', async (c) => {
     return c.json({ error: `"${slug}" is already in the workflow` }, 400);
   }
 
-  // Check max columns (todo + steps + done = max 10)
+  // Check max columns (total steps including fixed Todo/Done = max 10)
   const count = db.query<{ cnt: number }, []>(
     'SELECT COUNT(*) as cnt FROM workflow_steps'
   ).get();
-  if ((count?.cnt ?? 0) + 1 + 2 > 10) {
+  if ((count?.cnt ?? 0) + 1 > 10) {
     return c.json({ error: 'Maximum 10 columns (including Todo and Done)' }, 400);
   }
 
-  // Calculate sort_order
+  // Calculate sort_order — new steps go before the Done step
   let sortOrder: number;
   if (typeof position === 'number' && Number.isFinite(position)) {
     sortOrder = position;
   } else {
-    const maxOrder = db.query<{ max_order: number | null }, []>(
-      'SELECT MAX(sort_order) as max_order FROM workflow_steps'
+    const doneStep = db.query<{ sort_order: number }, []>(
+      "SELECT sort_order FROM workflow_steps WHERE slug = 'done'"
     ).get();
-    sortOrder = (maxOrder?.max_order ?? 0) + 1.0;
+    const maxNonFixed = db.query<{ max_order: number | null }, []>(
+      'SELECT MAX(sort_order) as max_order FROM workflow_steps WHERE fixed = 0'
+    ).get();
+
+    if (doneStep && maxNonFixed?.max_order !== null) {
+      sortOrder = (maxNonFixed.max_order + doneStep.sort_order) / 2;
+    } else if (doneStep) {
+      sortOrder = doneStep.sort_order - 1.0;
+    } else {
+      sortOrder = (maxNonFixed?.max_order ?? 0) + 1.0;
+    }
   }
 
   // Write defaults to config at creation time
@@ -185,9 +200,14 @@ workflowSteps.delete('/:id', async (c) => {
     return c.json({ error: 'Step not found' }, 404);
   }
 
-  // Check minimum — need at least 1 workflow step
+  // Fixed steps cannot be deleted
+  if (step.fixed) {
+    return c.json({ error: 'Cannot remove a fixed step' }, 400);
+  }
+
+  // Check minimum — need at least 1 non-fixed workflow step
   const count = db.query<{ cnt: number }, []>(
-    'SELECT COUNT(*) as cnt FROM workflow_steps'
+    'SELECT COUNT(*) as cnt FROM workflow_steps WHERE fixed = 0'
   ).get();
   if ((count?.cnt ?? 0) <= 1) {
     return c.json({ error: 'Cannot remove the last workflow step' }, 400);
@@ -211,11 +231,10 @@ workflowSteps.delete('/:id', async (c) => {
     }
 
     // Validate move target
-    const validTargets = ['todo', 'done'];
     const otherSteps = db.query<{ slug: string }, [number]>(
       'SELECT slug FROM workflow_steps WHERE id != ?'
     ).all(id);
-    validTargets.push(...otherSteps.map(s => s.slug));
+    const validTargets = otherSteps.map(s => s.slug);
 
     if (!validTargets.includes(moveTasksTo)) {
       return c.json({ error: `Invalid move target: "${moveTasksTo}"` }, 400);

@@ -104,7 +104,7 @@ describe('TaskDetail', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'in-progress', agent_status: 'running' })],
       selectedTaskId: 1,
-      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
+      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, fixed: 0, created_at: '' }],
       activeRuns: [{ taskId: 1, taskKey: 'TST-1' }],
       maxConcurrentAgents: 3,
     });
@@ -118,8 +118,8 @@ describe('TaskDetail', () => {
       tasks: [makeTask({ status: 'planning', agent_status: 'completed' })],
       selectedTaskId: 1,
       workflowSteps: [
-        { id: 1, slug: 'planning', name: 'Planning', requires_review: 1, config: '{}', sort_order: 1, created_at: '' },
-        { id: 2, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 2, created_at: '' },
+        { id: 1, slug: 'planning', name: 'Planning', requires_review: 1, config: '{}', sort_order: 1, fixed: 0, created_at: '' },
+        { id: 2, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 2, fixed: 0, created_at: '' },
       ],
       activeRuns: [],
       maxConcurrentAgents: 3,
@@ -133,7 +133,7 @@ describe('TaskDetail', () => {
       tasks: [makeTask({ status: 'development', agent_status: 'failed' })],
       selectedTaskId: 1,
       workflowSteps: [
-        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, created_at: '' },
+        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, fixed: 0, created_at: '' },
       ],
       activeRuns: [],
       maxConcurrentAgents: 3,
@@ -166,7 +166,7 @@ describe('TaskDetail', () => {
       tasks: [makeTask({ status: 'development', agent_status: null })],
       selectedTaskId: 1,
       workflowSteps: [
-        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, created_at: '' },
+        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, fixed: 0, created_at: '' },
       ],
       activeRuns: [],
       maxConcurrentAgents: 3,

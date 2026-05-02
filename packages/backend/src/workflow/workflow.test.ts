@@ -133,6 +133,8 @@ describe('workflow-utils', () => {
     db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
     db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('planning', 'Planning', 1, '{}', 1.0)").run();
     db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 2.0)").run();
+    // Update Done's sort_order to be after development (migration seeds it at max+1 but we inserted after)
+    db.query("UPDATE workflow_steps SET sort_order = 10.0 WHERE slug = 'done'").run();
   });
 
   afterEach(() => {

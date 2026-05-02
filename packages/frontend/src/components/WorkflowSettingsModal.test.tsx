@@ -23,9 +23,15 @@ const makeWorkflowStep = (overrides: Partial<WorkflowStep> = {}): WorkflowStep =
   requires_review: 0,
   config: '{}',
   sort_order: 1,
+  fixed: 0,
   created_at: '',
   ...overrides,
 });
+
+const fixedSteps: WorkflowStep[] = [
+  makeWorkflowStep({ id: 100, slug: 'todo', name: 'Todo', sort_order: 0, fixed: 1 }),
+  makeWorkflowStep({ id: 101, slug: 'done', name: 'Done', sort_order: 100, fixed: 1, config: '{"deleteBranch":true}' }),
+];
 
 describe('WorkflowSettingsModal', () => {
   const onClose = vi.fn();
@@ -44,7 +50,7 @@ describe('WorkflowSettingsModal', () => {
 
   test('renders modal with title and close button', () => {
     useAppStore.setState({
-      workflowSteps: [makeWorkflowStep()],
+      workflowSteps: [...fixedSteps, makeWorkflowStep()],
     });
     render(<WorkflowSettingsModal onClose={onClose} />);
     expect(screen.getByText('Workflow Steps')).toBeInTheDocument();
@@ -52,7 +58,7 @@ describe('WorkflowSettingsModal', () => {
 
   test('calls onClose when close button is clicked', () => {
     useAppStore.setState({
-      workflowSteps: [makeWorkflowStep()],
+      workflowSteps: [...fixedSteps, makeWorkflowStep()],
     });
     render(<WorkflowSettingsModal onClose={onClose} />);
     fireEvent.click(screen.getByRole('button', { name: 'Close' }));
@@ -62,6 +68,7 @@ describe('WorkflowSettingsModal', () => {
   test('renders active workflow steps', () => {
     useAppStore.setState({
       workflowSteps: [
+        ...fixedSteps,
         makeWorkflowStep({ id: 1, slug: 'planning', name: 'Planning', requires_review: 1 }),
         makeWorkflowStep({ id: 2, slug: 'development', name: 'Development' }),
       ],
@@ -73,7 +80,7 @@ describe('WorkflowSettingsModal', () => {
 
   test('renders fixed Todo and Done rows', () => {
     useAppStore.setState({
-      workflowSteps: [makeWorkflowStep()],
+      workflowSteps: [...fixedSteps, makeWorkflowStep()],
     });
     render(<WorkflowSettingsModal onClose={onClose} />);
     expect(screen.getByText('Todo')).toBeInTheDocument();
@@ -82,7 +89,7 @@ describe('WorkflowSettingsModal', () => {
 
   test('shows available steps from catalog after loading', async () => {
     useAppStore.setState({
-      workflowSteps: [makeWorkflowStep()],
+      workflowSteps: [...fixedSteps, makeWorkflowStep()],
     });
     render(<WorkflowSettingsModal onClose={onClose} />);
     // Catalog is fetched async — wait for it
@@ -94,7 +101,7 @@ describe('WorkflowSettingsModal', () => {
 
   test('calls addWorkflowStep when Add is clicked', async () => {
     useAppStore.setState({
-      workflowSteps: [makeWorkflowStep()],
+      workflowSteps: [...fixedSteps, makeWorkflowStep()],
       fetchWorkflowSteps: vi.fn(),
     });
     render(<WorkflowSettingsModal onClose={onClose} />);
@@ -107,7 +114,7 @@ describe('WorkflowSettingsModal', () => {
 
   test('calls updateWorkflowStep when review toggle is clicked', async () => {
     useAppStore.setState({
-      workflowSteps: [makeWorkflowStep()],
+      workflowSteps: [...fixedSteps, makeWorkflowStep()],
       fetchWorkflowSteps: vi.fn(),
     });
     render(<WorkflowSettingsModal onClose={onClose} />);
@@ -119,6 +126,7 @@ describe('WorkflowSettingsModal', () => {
   test('shows delete confirmation when remove is triggered', async () => {
     useAppStore.setState({
       workflowSteps: [
+        ...fixedSteps,
         makeWorkflowStep({ id: 1, slug: 'planning', name: 'Planning' }),
         makeWorkflowStep({ id: 2, slug: 'development', name: 'Development' }),
       ],

@@ -617,7 +617,7 @@ describe('startAgent — git worktree mode', () => {
 
   test('agent branch is kept on completion when delete_branch_on_done is disabled', async () => {
     const db = getDb();
-    db.query("UPDATE project_config SET delete_branch_on_done = 0 WHERE id = 1").run();
+    db.query("UPDATE workflow_steps SET config = '{\"deleteBranch\":false}' WHERE slug = 'done'").run();
     db.query("UPDATE agent_config SET cli_cmd = 'echo hello', cli_prompt_mode = 'argument' WHERE id = 1").run();
     db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'todo', 1)").run();
     const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;

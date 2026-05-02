@@ -14,9 +14,14 @@ const makeStep = (overrides: Partial<EditorStep> = {}): EditorStep => ({
   ...overrides,
 });
 
+const fixedSteps: EditorStep[] = [
+  { id: 'todo', slug: 'todo', name: 'Todo', requires_review: false, fixed: true },
+  { id: 'done', slug: 'done', name: 'Done', requires_review: false, fixed: true, config: '{"deleteBranch":true}' },
+];
+
 describe('WorkflowEditor', () => {
   const defaultProps = {
-    steps: [] as EditorStep[],
+    steps: fixedSteps as EditorStep[],
     onAdd: vi.fn(),
     onRemove: vi.fn(),
     onReorder: vi.fn(),
@@ -40,8 +45,10 @@ describe('WorkflowEditor', () => {
 
   test('renders workflow steps between Todo and Done', () => {
     const steps = [
+      ...fixedSteps.filter(s => s.slug === 'todo'),
       makeStep({ id: 'planning', slug: 'planning', name: 'Planning', requires_review: true }),
       makeStep({ id: 'development', slug: 'development', name: 'Development' }),
+      ...fixedSteps.filter(s => s.slug === 'done'),
     ];
     render(<WorkflowEditor {...defaultProps} steps={steps} />);
     expect(screen.getByText('Planning')).toBeInTheDocument();
@@ -57,7 +64,7 @@ describe('WorkflowEditor', () => {
   });
 
   test('hides step from available list when already active', () => {
-    const steps = [makeStep()];
+    const steps = [...fixedSteps, makeStep()];
     render(<WorkflowEditor {...defaultProps} steps={steps} />);
     // Development should appear in the workflow section but not in available steps
     const addButtons = screen.getAllByText('Add');
@@ -76,6 +83,7 @@ describe('WorkflowEditor', () => {
   test('calls onRemove when X button is clicked', () => {
     const onRemove = vi.fn();
     const steps = [
+      ...fixedSteps,
       makeStep({ id: 'a', slug: 'planning', name: 'Planning' }),
       makeStep({ id: 'b', slug: 'development', name: 'Development' }),
     ];
@@ -90,7 +98,7 @@ describe('WorkflowEditor', () => {
 
   test('calls onToggleReview when toggle is clicked', () => {
     const onToggleReview = vi.fn();
-    const steps = [makeStep()];
+    const steps = [...fixedSteps, makeStep()];
     render(<WorkflowEditor {...defaultProps} steps={steps} onToggleReview={onToggleReview} />);
     const toggleBtn = screen.getByText('Pause for review').closest('button')!;
     fireEvent.click(toggleBtn);
@@ -99,6 +107,7 @@ describe('WorkflowEditor', () => {
 
   test('shows "all steps added" when catalog is exhausted', () => {
     const steps = [
+      ...fixedSteps,
       makeStep({ id: 'planning', slug: 'planning', name: 'Planning' }),
       makeStep({ id: 'development', slug: 'development', name: 'Development' }),
       makeStep({ id: 'visual-qa', slug: 'visual-qa', name: 'Visual QA' }),
@@ -109,7 +118,7 @@ describe('WorkflowEditor', () => {
   });
 
   test('does not show gear icon when showConfig is false', () => {
-    const steps = [makeStep({ id: 'planning', slug: 'planning', name: 'Planning', config: '{"planLocation":"doc/"}' })];
+    const steps = [...fixedSteps, makeStep({ id: 'planning', slug: 'planning', name: 'Planning', config: '{"planLocation":"doc/"}' })];
     render(<WorkflowEditor {...defaultProps} steps={steps} showConfig={false} />);
     // Planning has config but showConfig is off — no gear icon
     const gearButtons = screen.getAllByRole('button').filter(

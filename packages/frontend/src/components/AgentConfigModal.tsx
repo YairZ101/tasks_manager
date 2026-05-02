@@ -11,7 +11,7 @@ const PRESETS = [
   { label: 'Custom CLI', cli_cmd: '', cli_prompt_mode: 'stdin', cli_prompt_flag: null },
 ] as const;
 
-type SettingsPage = 'agent' | 'concurrency' | 'git';
+type SettingsPage = 'agent' | 'concurrency';
 
 const NAV_ITEMS: { id: SettingsPage; label: string; icon: React.ReactNode }[] = [
   {
@@ -34,18 +34,6 @@ const NAV_ITEMS: { id: SettingsPage; label: string; icon: React.ReactNode }[] = 
       </svg>
     ),
   },
-  {
-    id: 'git',
-    label: 'Git',
-    icon: (
-      <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-        <circle cx="4" cy="4" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <circle cx="10" cy="4" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <circle cx="4" cy="10" r="1.5" stroke="currentColor" strokeWidth="1.2" />
-        <path d="M4 5.5v3M5.5 4h3" stroke="currentColor" strokeWidth="1.2" />
-      </svg>
-    ),
-  },
 ];
 
 export default function AgentConfigModal() {
@@ -64,17 +52,13 @@ export default function AgentConfigModal() {
   const [timeoutMs, setTimeoutMs] = useState(1800000);
   const [maxConcurrent, setMaxConcurrent] = useState(3);
   const [testResult, setTestResult] = useState<{ success: boolean; error?: string } | null>(null);
-  const [deleteBranchOnDone, setDeleteBranchOnDone] = useState(true);
 
   // Load config
   useEffect(() => {
     async function load() {
       try {
-        const [agentData, statusData] = await Promise.all([
-          api.getAgentConfig(),
-          api.getStatus(),
-        ]);
-        const c = agentData.config;
+        const data = await api.getAgentConfig();
+        const c = data.config;
         if (c) {
           setCliCmd(c.cli_cmd || '');
           setCliPromptMode(c.cli_prompt_mode || 'stdin');
@@ -82,11 +66,8 @@ export default function AgentConfigModal() {
           setTimeoutMs(c.timeout_ms || 1800000);
           setMaxConcurrent(c.max_concurrent_agents ?? 3);
         }
-        if (statusData.projectConfig) {
-          setDeleteBranchOnDone(!!statusData.projectConfig.delete_branch_on_done);
-        }
       } catch {
-        toast.error('Failed to load settings');
+        toast.error('Failed to load agent config');
       } finally {
         setLoading(false);
       }
@@ -103,18 +84,13 @@ export default function AgentConfigModal() {
   const handleSave = async () => {
     setSaving(true);
     try {
-      await Promise.all([
-        api.updateAgentConfig({
-          cli_cmd: cliCmd || null,
-          cli_prompt_mode: cliPromptMode,
-          cli_prompt_flag: cliPromptFlag || null,
-          timeout_ms: timeoutMs,
-          max_concurrent_agents: maxConcurrent,
-        }),
-        api.updateProjectConfig({
-          delete_branch_on_done: deleteBranchOnDone,
-        }),
-      ]);
+      await api.updateAgentConfig({
+        cli_cmd: cliCmd || null,
+        cli_prompt_mode: cliPromptMode,
+        cli_prompt_flag: cliPromptFlag || null,
+        timeout_ms: timeoutMs,
+        max_concurrent_agents: maxConcurrent,
+      });
       toast.success('Settings saved');
       useAppStore.setState({ maxConcurrentAgents: maxConcurrent });
       setShowAgentConfig(false);
@@ -228,10 +204,6 @@ export default function AgentConfigModal() {
                 {activePage === 'concurrency' && <ConcurrencyPage
                   maxConcurrent={maxConcurrent}
                   setMaxConcurrent={setMaxConcurrent}
-                />}
-                {activePage === 'git' && <GitPage
-                  deleteBranchOnDone={deleteBranchOnDone}
-                  setDeleteBranchOnDone={setDeleteBranchOnDone}
                 />}
               </>
             )}
@@ -420,33 +392,6 @@ function ConcurrencyPage({
         </p>
         <p className="text-[10px] text-text-dim mt-1">
           Requires a git repository for values above 1. Non-git projects are limited to 1.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function GitPage({
-  deleteBranchOnDone,
-  setDeleteBranchOnDone,
-}: {
-  deleteBranchOnDone: boolean;
-  setDeleteBranchOnDone: (v: boolean) => void;
-}) {
-  return (
-    <div className="space-y-4">
-      <div>
-        <label className="flex items-center gap-2 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={deleteBranchOnDone}
-            onChange={(e) => setDeleteBranchOnDone(e.target.checked)}
-            className="w-3.5 h-3.5 rounded border-border accent-accent"
-          />
-          <span className="text-xs font-semibold text-text">Delete branch when task is done</span>
-        </label>
-        <p className="text-xs text-text-muted mt-2 ml-5.5">
-          When enabled, the <code className="text-[11px] font-mono bg-bg-hover px-1 rounded">agent/{'<task-key>'}</code> branch is deleted after the task reaches Done. Disable to keep branches for reference or manual PR creation.
         </p>
       </div>
     </div>

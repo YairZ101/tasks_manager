@@ -269,7 +269,7 @@ tasks.patch('/:id', async (c) => {
 
     // Determine agent_status after transition
     let newAgentStatus: string | null = task.agent_status;
-    if (status === 'todo' || status === 'backlog') {
+    if (!isWorkflowStep(status)) {
       newAgentStatus = null;
     }
 
@@ -320,32 +320,42 @@ tasks.patch('/:id', async (c) => {
     }
   }
 
-  const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id)!;
-
   // Clean up review files and worktree when task reaches done
   if (status && status === 'done') {
-    cleanupReviewFiles(updatedTask.task_key, process.cwd());
-    if (isGitRepoDetected() && updatedTask.agent_worktree) {
-      removeWorktree(updatedTask.task_key, process.cwd()).catch(() => {});
-      db.query('UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?').run(id);
-    }
+    cleanupReviewFiles(task.task_key, process.cwd());
     if (isGitRepoDetected()) {
-      const projectConfig = db.query<{ delete_branch_on_done: number }, []>(
-        'SELECT delete_branch_on_done FROM project_config WHERE id = 1'
-      ).get();
-      if (projectConfig?.delete_branch_on_done) {
-        removeBranch(updatedTask.task_key, process.cwd()).catch(() => {});
+      const taskForCleanup = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id);
+      if (taskForCleanup?.agent_worktree) {
+        removeWorktree(taskForCleanup.task_key, process.cwd()).catch(() => {});
+        db.query('UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?').run(id);
+      }
+      const doneStep = db.query<{ config: string }, [string]>(
+        'SELECT config FROM workflow_steps WHERE slug = ?'
+      ).get('done');
+      let deleteBranch = true;
+      if (doneStep?.config) {
+        try {
+          const cfg = JSON.parse(doneStep.config);
+          if (cfg.deleteBranch === false) deleteBranch = false;
+        } catch {}
+      }
+      if (deleteBranch) {
+        removeBranch(task.task_key, process.cwd()).catch(() => {});
       }
     }
   }
 
-  // Clean up worktree when moving to non-workflow status (todo, backlog)
-  if (status && (status === 'todo' || status === 'backlog')) {
-    if (isGitRepoDetected() && updatedTask.agent_worktree) {
-      removeWorktree(updatedTask.task_key, process.cwd()).catch(() => {});
+  // Clean up worktree when moving to a non-agent status
+  if (status && (status === 'backlog' || status === 'todo')) {
+    const taskForCleanup = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id);
+    if (isGitRepoDetected() && taskForCleanup?.agent_worktree) {
+      removeWorktree(taskForCleanup.task_key, process.cwd()).catch(() => {});
       db.query('UPDATE tasks SET agent_worktree = NULL, agent_branch = NULL WHERE id = ?').run(id);
     }
   }
+
+  // Re-read after all cleanup to get final state
+  const updatedTask = db.query<Task, [number]>('SELECT * FROM tasks WHERE id = ?').get(id)!;
 
   // Broadcast
   broadcaster.broadcast('task:updated', { task: updatedTask });

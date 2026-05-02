@@ -1,7 +1,7 @@
 import { describe, test, expect, vi, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { useAppStore } from '../hooks/useTaskStore';
-import type { Task } from '../hooks/useTaskStore';
+import type { Task, WorkflowStep } from '../hooks/useTaskStore';
 
 vi.mock('../api/client', () => ({
   api: { updateTask: vi.fn(), cancelAgent: vi.fn() },
@@ -27,6 +27,12 @@ const makeTask = (overrides: Partial<Task> = {}): Task => ({
   ...overrides,
 });
 
+const defaultSteps: WorkflowStep[] = [
+  { id: 1, slug: 'todo', name: 'Todo', requires_review: 0, config: '{}', sort_order: 0, fixed: 1, created_at: '' },
+  { id: 2, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, fixed: 0, created_at: '' },
+  { id: 3, slug: 'done', name: 'Done', requires_review: 0, config: '{}', sort_order: 2, fixed: 1, created_at: '' },
+];
+
 describe('Board', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -35,7 +41,7 @@ describe('Board', () => {
   test('shows empty state when no board tasks', () => {
     useAppStore.setState({
       tasks: [],
-      workflowSteps: [],
+      workflowSteps: defaultSteps,
       showCreateTask: false,
     });
     render(<Board />);
@@ -46,7 +52,7 @@ describe('Board', () => {
   test('shows empty state when only backlog tasks exist', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'backlog' })],
-      workflowSteps: [],
+      workflowSteps: defaultSteps,
       showCreateTask: false,
     });
     render(<Board />);
@@ -56,7 +62,7 @@ describe('Board', () => {
   test('renders three columns when tasks exist', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'todo' })],
-      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
+      workflowSteps: defaultSteps,
       showCreateTask: false,
     });
     render(<Board />);
@@ -71,7 +77,7 @@ describe('Board', () => {
         makeTask({ id: 1, task_key: 'TST-1', title: 'Todo Item', status: 'todo' }),
         makeTask({ id: 2, task_key: 'TST-2', title: 'Done Item', status: 'done' }),
       ],
-      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
+      workflowSteps: defaultSteps,
       showCreateTask: false,
     });
     render(<Board />);
@@ -82,7 +88,7 @@ describe('Board', () => {
   test('has New Task button when board has tasks', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'todo' })],
-      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
+      workflowSteps: defaultSteps,
       showCreateTask: false,
     });
     render(<Board />);

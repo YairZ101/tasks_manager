@@ -226,29 +226,38 @@ export default function WorkflowEditor({
     <div className="ml-6 mt-1 p-3 rounded-lg bg-bg border border-border/50 space-y-3">
       {schema.map(opt => (
         <div key={opt.key}>
-          <label className="text-[11px] font-medium text-text-muted block mb-1">
-            {opt.label}
-          </label>
           {opt.type === 'boolean' ? (
-            <label className="flex items-center gap-2 cursor-pointer">
-              <input
-                type="checkbox"
-                checked={editConfig[opt.key] ?? opt.default}
-                onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.checked }))}
-                className="rounded border-border"
-              />
-              <span className="text-xs text-text-muted">
-                {editConfig[opt.key] ?? opt.default ? 'Yes' : 'No'}
+            <button
+              type="button"
+              onClick={() => setEditConfig(prev => ({ ...prev, [opt.key]: !(prev[opt.key] ?? opt.default) }))}
+              className="flex items-center gap-1.5 text-[11px] text-text-muted hover:text-text transition-colors"
+            >
+              <span>{opt.label}</span>
+              <span className={`relative inline-flex h-4 w-7 flex-shrink-0 items-center rounded-full transition-colors ${
+                (editConfig[opt.key] ?? opt.default) ? 'bg-accent' : 'bg-border'
+              }`}>
+                <span className={`inline-block h-3 w-3 rounded-full bg-white transition-transform ${
+                  (editConfig[opt.key] ?? opt.default) ? 'translate-x-3.5' : 'translate-x-0.5'
+                }`} />
               </span>
-            </label>
+            </button>
           ) : opt.type === 'number' ? (
+            <>
+            <label className="text-[11px] font-medium text-text-muted block mb-1">
+              {opt.label}
+            </label>
             <input
               type="number"
               value={editConfig[opt.key] ?? opt.default}
               onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: Number(e.target.value) }))}
               className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
             />
+            </>
           ) : opt.type === 'select' ? (
+            <>
+            <label className="text-[11px] font-medium text-text-muted block mb-1">
+              {opt.label}
+            </label>
             <select
               value={editConfig[opt.key] ?? opt.default}
               onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.value }))}
@@ -256,13 +265,19 @@ export default function WorkflowEditor({
             >
               {opt.options?.map(o => <option key={o} value={o}>{o}</option>)}
             </select>
+            </>
           ) : (
+            <>
+            <label className="text-[11px] font-medium text-text-muted block mb-1">
+              {opt.label}
+            </label>
             <input
               type="text"
               value={editConfig[opt.key] ?? opt.default}
               onChange={(e) => setEditConfig(prev => ({ ...prev, [opt.key]: e.target.value }))}
               className="w-full px-2 py-1 text-xs bg-bg-input border border-border rounded text-text focus:outline-none focus:border-border-focus"
             />
+            </>
           )}
         </div>
       ))}

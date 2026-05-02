@@ -34,6 +34,7 @@ export interface WorkflowStep {
   requires_review: number;
   config: string;
   sort_order: number;
+  fixed: number;
   created_at: string;
 }
 

@@ -17,9 +17,18 @@ export interface CatalogStep {
   requiresReview: boolean;
   description: string;
   configSchema: StepConfigOption[];
+  fixed?: boolean;
 }
 
 export const STEP_CATALOG: CatalogStep[] = [
+  {
+    slug: 'todo',
+    name: 'Todo',
+    requiresReview: false,
+    description: 'Tasks ready to be worked on.',
+    configSchema: [],
+    fixed: true,
+  },
   {
     slug: 'planning',
     name: 'Planning',
@@ -52,6 +61,16 @@ export const STEP_CATALOG: CatalogStep[] = [
     configSchema: [
       { key: 'draft', label: 'Create as draft PR', type: 'boolean', default: false },
     ],
+  },
+  {
+    slug: 'done',
+    name: 'Done',
+    requiresReview: false,
+    description: 'Completed tasks.',
+    configSchema: [
+      { key: 'deleteBranch', label: 'Delete branch when task is done', type: 'boolean', default: true },
+    ],
+    fixed: true,
   },
 ];
 

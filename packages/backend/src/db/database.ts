@@ -182,4 +182,44 @@ function runMigrations(db: Database): void {
     db.exec(`ALTER TABLE project_config ADD COLUMN delete_branch_on_done INTEGER NOT NULL DEFAULT 1`);
     db.exec('PRAGMA user_version = 4');
   }
+
+  if (version < 5) {
+    // Add fixed column to workflow_steps (0 = user-managed, 1 = fixed/non-removable)
+    db.exec(`ALTER TABLE workflow_steps ADD COLUMN fixed INTEGER NOT NULL DEFAULT 0`);
+
+    // Determine sort_order bounds for Todo and Done
+    const minOrder = db.query<{ val: number | null }, []>(
+      'SELECT MIN(sort_order) as val FROM workflow_steps'
+    ).get();
+    const maxOrder = db.query<{ val: number | null }, []>(
+      'SELECT MAX(sort_order) as val FROM workflow_steps'
+    ).get();
+
+    const todoOrder = (minOrder?.val ?? 1) - 1.0;
+    const doneOrder = (maxOrder?.val ?? 1) + 1.0;
+
+    // Read delete_branch_on_done from project_config before dropping it
+    const projConfig = db.query<{ delete_branch_on_done: number }, []>(
+      'SELECT delete_branch_on_done FROM project_config WHERE id = 1'
+    ).get();
+    const deleteBranch = projConfig?.delete_branch_on_done ?? 1;
+    const doneConfig = JSON.stringify({ deleteBranch: !!deleteBranch });
+
+    // Seed Todo and Done as fixed steps (upsert to ensure fixed=1 and config are set)
+    db.query(
+      `INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order, fixed)
+       VALUES (?, 'Todo', 0, '{}', ?, 1)
+       ON CONFLICT(slug) DO UPDATE SET fixed = 1, sort_order = MIN(excluded.sort_order, sort_order)`
+    ).run('todo', todoOrder);
+    db.query(
+      `INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order, fixed)
+       VALUES (?, 'Done', 0, ?, ?, 1)
+       ON CONFLICT(slug) DO UPDATE SET fixed = 1, config = excluded.config, sort_order = MAX(excluded.sort_order, sort_order)`
+    ).run('done', doneConfig, doneOrder);
+
+    // Migrate tasks from 'todo'/'done' status — these now reference workflow_steps rows
+    // (no actual data migration needed since the slug values stay the same)
+
+    db.exec('PRAGMA user_version = 5');
+  }
 }

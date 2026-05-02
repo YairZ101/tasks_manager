@@ -15,14 +15,22 @@ export function getValidStatuses(): string[] {
   const steps = db.query<{ slug: string }, []>(
     'SELECT slug FROM workflow_steps ORDER BY sort_order'
   ).all();
-  cachedValidStatuses = ['backlog', 'todo', ...steps.map(s => s.slug), 'done'];
+  cachedValidStatuses = ['backlog', ...steps.map(s => s.slug)];
   return cachedValidStatuses;
 }
 
 export function isWorkflowStep(slug: string): boolean {
   const db = getDb();
   const step = db.query<{ id: number }, [string]>(
-    'SELECT id FROM workflow_steps WHERE slug = ?'
+    'SELECT id FROM workflow_steps WHERE slug = ? AND fixed = 0'
+  ).get(slug);
+  return !!step;
+}
+
+export function isFixedStep(slug: string): boolean {
+  const db = getDb();
+  const step = db.query<{ id: number }, [string]>(
+    'SELECT id FROM workflow_steps WHERE slug = ? AND fixed = 1'
   ).get(slug);
   return !!step;
 }
@@ -57,7 +65,7 @@ export function getNextStepSlug(currentSlug: string): string {
 export function getFirstWorkflowStep(): WorkflowStep | null {
   const db = getDb();
   return db.query<WorkflowStep, []>(
-    'SELECT * FROM workflow_steps ORDER BY sort_order ASC LIMIT 1'
+    'SELECT * FROM workflow_steps WHERE fixed = 0 ORDER BY sort_order ASC LIMIT 1'
   ).get() ?? null;
 }
 

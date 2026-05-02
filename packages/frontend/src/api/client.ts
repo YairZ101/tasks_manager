@@ -97,13 +97,6 @@ export const api = {
       body: JSON.stringify({ prefix, repoName }),
     }),
 
-  // Project Config
-  updateProjectConfig: (data: { delete_branch_on_done?: boolean }) =>
-    request<{ projectConfig: any }>('/project-config', {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-
   // Workflow Steps
   getWorkflowSteps: () => request<{ steps: any[] }>('/workflow-steps'),
 

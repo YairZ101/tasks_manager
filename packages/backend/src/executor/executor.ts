@@ -359,10 +359,17 @@ export async function startAgent(
             await removeWorktree(updatedTask.task_key, workingDir);
           } catch {}
 
-          const projectConfig = db.query<{ delete_branch_on_done: number }, []>(
-            'SELECT delete_branch_on_done FROM project_config WHERE id = 1'
-          ).get();
-          if (projectConfig?.delete_branch_on_done) {
+          const doneStep = db.query<{ config: string }, [string]>(
+            'SELECT config FROM workflow_steps WHERE slug = ?'
+          ).get('done');
+          let deleteBranch = true;
+          if (doneStep?.config) {
+            try {
+              const cfg = JSON.parse(doneStep.config);
+              if (cfg.deleteBranch === false) deleteBranch = false;
+            } catch {}
+          }
+          if (deleteBranch) {
             try {
               await removeBranch(updatedTask.task_key, workingDir);
             } catch {}

@@ -78,34 +78,6 @@ app.get('/events', (c) => {
   return broadcaster.connect(c, lastEventId);
 });
 
-app.patch('/project-config', async (c) => {
-  const db = getDb();
-  const body = await c.req.json().catch(() => null);
-  if (!body) {
-    return c.json({ error: 'Invalid JSON' }, 400);
-  }
-
-  const { delete_branch_on_done } = body;
-
-  const updates: string[] = [];
-  const params: any[] = [];
-
-  if (delete_branch_on_done !== undefined) {
-    if (typeof delete_branch_on_done !== 'boolean') {
-      return c.json({ error: 'delete_branch_on_done must be a boolean' }, 400);
-    }
-    updates.push('delete_branch_on_done = ?');
-    params.push(delete_branch_on_done ? 1 : 0);
-  }
-
-  if (updates.length > 0) {
-    db.query(`UPDATE project_config SET ${updates.join(', ')} WHERE id = 1`).run(...params);
-  }
-
-  const projectConfig = db.query<ProjectConfig, []>('SELECT * FROM project_config WHERE id = 1').get();
-  return c.json({ projectConfig });
-});
-
 app.route('/tasks/:id/agent', agentControlRoutes);
 app.route('/tasks/:id/logs', logsRoutes);
 app.route('/tasks', tasksRoutes);

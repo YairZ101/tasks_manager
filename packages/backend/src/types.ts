@@ -39,6 +39,7 @@ export interface ProjectConfig {
   task_prefix: string;
   next_task_number: number;
   repo_name: string;
+  delete_branch_on_done: number;
   created_at: string;
 }
 

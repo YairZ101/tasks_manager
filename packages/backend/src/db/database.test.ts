@@ -84,7 +84,7 @@ describe('Database initialization', () => {
     initDb(tmpDir);
     const db = getDb();
     const row = db.query<{ user_version: number }, []>('PRAGMA user_version').get();
-    expect(row?.user_version).toBe(3);
+    expect(row?.user_version).toBe(4);
   });
 
   test('idempotent — calling initDb twice does not error', () => {
@@ -300,6 +300,13 @@ describe('Project config', () => {
       'UPDATE project_config SET next_task_number = next_task_number + 1 WHERE id = 1 RETURNING next_task_number - 1 AS seq'
     ).get() as any;
     expect(row2.seq).toBe(2);
+  });
+
+  test('project_config has delete_branch_on_done column with default', () => {
+    const db = getDb();
+    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'repo')").run();
+    const config = db.query('SELECT delete_branch_on_done FROM project_config WHERE id = 1').get() as any;
+    expect(config.delete_branch_on_done).toBe(1);
   });
 
   test('only allows id = 1', () => {

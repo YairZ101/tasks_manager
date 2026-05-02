@@ -7,6 +7,8 @@ vi.mock('../api/client', () => ({
     getAgentConfig: vi.fn(),
     updateAgentConfig: vi.fn(),
     testAgentConfig: vi.fn(),
+    getStatus: vi.fn(),
+    updateProjectConfig: vi.fn(),
   },
 }));
 
@@ -28,6 +30,10 @@ describe('AgentConfigModal', () => {
         timeout_ms: 1800000,
         max_concurrent_agents: 3,
       },
+    });
+    (api.getStatus as any).mockResolvedValue({
+      initialized: true,
+      projectConfig: { delete_branch_on_done: 1 },
     });
   });
 
@@ -75,8 +81,9 @@ describe('AgentConfigModal', () => {
     expect(useAppStore.getState().showAgentConfig).toBe(false);
   });
 
-  test('Save calls updateAgentConfig', async () => {
+  test('Save calls updateAgentConfig and updateProjectConfig', async () => {
     (api.updateAgentConfig as any).mockResolvedValue({ config: {} });
+    (api.updateProjectConfig as any).mockResolvedValue({ projectConfig: {} });
     render(<AgentConfigModal />);
     await waitFor(() => {
       expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
@@ -84,6 +91,7 @@ describe('AgentConfigModal', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));
     await waitFor(() => {
       expect(api.updateAgentConfig).toHaveBeenCalled();
+      expect(api.updateProjectConfig).toHaveBeenCalled();
     });
   });
 
@@ -112,6 +120,29 @@ describe('AgentConfigModal', () => {
     });
   });
 
+  test('displays timeout in minutes with decimal precision', async () => {
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('30')).toBeInTheDocument();
+    });
+  });
+
+  test('displays sub-minute timeout as decimal', async () => {
+    (api.getAgentConfig as any).mockResolvedValue({
+      config: {
+        cli_cmd: 'echo test',
+        cli_prompt_mode: 'stdin',
+        cli_prompt_flag: null,
+        timeout_ms: 30000,
+        max_concurrent_agents: 3,
+      },
+    });
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('0.5')).toBeInTheDocument();
+    });
+  });
+
   test('switches to Concurrency page', async () => {
     render(<AgentConfigModal />);
     await waitFor(() => {
@@ -129,5 +160,35 @@ describe('AgentConfigModal', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: /Concurrency/ }));
     expect(screen.getByText(/git worktree/)).toBeInTheDocument();
+  });
+
+  test('renders Git nav item', async () => {
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Git/ })).toBeInTheDocument();
+    });
+  });
+
+  test('switches to Git page and shows delete branch checkbox', async () => {
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Git/ }));
+    expect(screen.getByText('Delete branch when task is done')).toBeInTheDocument();
+    expect(screen.getByRole('checkbox')).toBeChecked();
+  });
+
+  test('Git page checkbox reflects disabled state', async () => {
+    (api.getStatus as any).mockResolvedValue({
+      initialized: true,
+      projectConfig: { delete_branch_on_done: 0 },
+    });
+    render(<AgentConfigModal />);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('echo test')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole('button', { name: /Git/ }));
+    expect(screen.getByRole('checkbox')).not.toBeChecked();
   });
 });

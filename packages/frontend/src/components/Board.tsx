@@ -16,14 +16,18 @@ import Column from './Column.js';
 import TaskCard from './TaskCard.js';
 import ConfirmDialog from './ConfirmDialog.js';
 
-const COLUMNS = [
-  { id: 'todo', title: 'Todo', emptyText: 'Drag tasks here' },
-  { id: 'in-progress', title: 'In Progress', emptyText: 'Tasks your agent is working on appear here' },
-  { id: 'done', title: 'Done', emptyText: 'Drag tasks here' },
-] as const;
-
 export default function Board() {
-  const { tasks, setShowCreateTask, setSelectedTaskId, updateTaskInStore } = useAppStore();
+  const { tasks, workflowSteps, setShowCreateTask, setSelectedTaskId, updateTaskInStore } = useAppStore();
+
+  const columns = [
+    { id: 'todo', title: 'Todo', emptyText: 'Drag tasks here', type: 'fixed' as const },
+    ...workflowSteps.map(s => ({
+      id: s.slug,
+      title: s.name,
+      emptyText: 'Tasks your agent is working on appear here',
+    })),
+    { id: 'done', title: 'Done', emptyText: 'Drag tasks here', type: 'fixed' as const },
+  ];
   const [activeTask, setActiveTask] = useState<Task | null>(null);
   const [pendingMove, setPendingMove] = useState<{
     task: Task;
@@ -66,10 +70,12 @@ export default function Board() {
       targetStatus = String(over.id);
     }
 
-    if (!['todo', 'in-progress', 'done'].includes(targetStatus)) return;
+    const validColumnIds = new Set(columns.map(c => c.id));
+    if (!validColumnIds.has(targetStatus)) return;
 
     // If dragging a running task away, show confirmation
-    if (task.status === 'in-progress' && task.agent_status === 'running' && targetStatus !== 'in-progress') {
+    const isFromWorkflowStep = workflowSteps.some(s => s.slug === task.status);
+    if (isFromWorkflowStep && task.agent_status === 'running' && targetStatus !== task.status) {
       setPendingMove({ task, newStatus: targetStatus });
       return;
     }
@@ -171,14 +177,14 @@ export default function Board() {
       </div>
 
       {/* Board columns */}
-      <div className="flex-1 flex gap-4 p-4 overflow-x-auto max-sm:flex-col max-sm:overflow-y-auto max-sm:overflow-x-hidden">
+      <div className="flex-1 flex gap-4 p-4 overflow-x-auto max-sm:snap-x max-sm:snap-mandatory max-sm:overflow-y-hidden">
         <DndContext
           sensors={sensors}
           collisionDetection={pointerWithin}
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          {COLUMNS.map((col) => (
+          {columns.map((col) => (
             <Column
               key={col.id}
               id={col.id}

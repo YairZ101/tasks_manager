@@ -19,7 +19,7 @@ export default function Column({ id, title, emptyText, tasks, onTaskClick }: Col
   return (
     <div
       ref={setNodeRef}
-      className={`flex flex-col flex-1 min-w-[200px] rounded-xl bg-bg-raised border transition-colors max-sm:min-w-0 ${
+      className={`flex flex-col flex-1 min-w-[200px] rounded-xl bg-bg-raised border transition-colors max-sm:min-w-full max-sm:snap-start max-sm:flex-shrink-0 ${
         isOver ? 'border-accent/40 bg-accent-dim/30' : 'border-border'
       }`}
     >

@@ -2,8 +2,10 @@ import { useState, useEffect } from 'react';
 import { toast } from 'sonner';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { api } from '../api/client.js';
+import { STEP_CATALOG } from '../workflow/step-catalog.js';
+import WorkflowEditor, { type EditorStep } from './WorkflowEditor.js';
 
-type WizardStep = 'agent-config' | 'test' | 'prefix' | 'manual-prefix';
+type WizardStep = 'agent-config' | 'test' | 'prefix' | 'manual-prefix' | 'workflow';
 
 const PRESETS = [
   { label: 'Crush', cli_cmd: 'crush run', cli_prompt_mode: 'argument', cli_prompt_flag: null },
@@ -41,20 +43,33 @@ export default function InitWizard() {
   const [savingPrefix, setSavingPrefix] = useState(false);
   const [prefixError, setPrefixError] = useState('');
 
+  // Workflow
+  const [workflowSteps, setWorkflowSteps] = useState<EditorStep[]>([]);
+
   // Check if agent config already exists (partial init)
   useEffect(() => {
     async function checkPartialInit() {
       try {
-        const data = await api.getAgentConfig();
-        if (data.config?.cli_cmd || data.config?.api_url) {
-          // Agent already configured — skip to prefix generation
+        const [configData, statusData] = await Promise.all([
+          api.getAgentConfig(),
+          api.getStatus(),
+        ]);
+
+        const hasAgent = configData.config?.cli_cmd;
+        const hasPrefix = !!statusData.projectConfig;
+
+        if (hasAgent && hasPrefix) {
+          // Agent + prefix configured but no workflow steps — go straight to workflow
+          setStep('workflow');
+          if (configData.config.cli_cmd) setCliCmd(configData.config.cli_cmd);
+          if (configData.config.cli_prompt_mode) setCliPromptMode(configData.config.cli_prompt_mode);
+          if (configData.config.cli_prompt_flag) setCliPromptFlag(configData.config.cli_prompt_flag);
+        } else if (hasAgent) {
+          // Agent configured — skip to prefix
           setStep('prefix');
-          if (data.config.type) setConfigType(data.config.type);
-          if (data.config.cli_cmd) setCliCmd(data.config.cli_cmd);
-          if (data.config.cli_prompt_mode) setCliPromptMode(data.config.cli_prompt_mode);
-          if (data.config.cli_prompt_flag) setCliPromptFlag(data.config.cli_prompt_flag);
-          if (data.config.api_url) setApiUrl(data.config.api_url);
-          // Auto-start prefix generation
+          if (configData.config.cli_cmd) setCliCmd(configData.config.cli_cmd);
+          if (configData.config.cli_prompt_mode) setCliPromptMode(configData.config.cli_prompt_mode);
+          if (configData.config.cli_prompt_flag) setCliPromptFlag(configData.config.cli_prompt_flag);
           handleGeneratePrefix();
         }
       } catch {
@@ -129,11 +144,62 @@ export default function InitWizard() {
     setSavingPrefix(true);
     try {
       await api.savePrefix(prefix);
-      await checkStatus();
+      setStep('workflow');
     } catch (err: any) {
       toast.error(err.data?.error || err.message || 'Failed to save prefix');
     } finally {
       setSavingPrefix(false);
+    }
+  };
+
+  const handleSaveWorkflow = async () => {
+    try {
+      const currentSteps = await api.getWorkflowSteps();
+      const activeSet = new Set(currentSteps.steps.map((s: any) => s.slug));
+
+      // Add steps in order
+      for (let i = 0; i < workflowSteps.length; i++) {
+        const ws = workflowSteps[i];
+        if (!activeSet.has(ws.slug)) {
+          await api.addWorkflowStep(ws.slug, i + 1);
+        }
+      }
+
+      // Remove seed steps that aren't in the user's selection
+      const selectedSet = new Set(workflowSteps.map(s => s.slug));
+      for (const step of currentSteps.steps) {
+        if (!selectedSet.has(step.slug)) {
+          await api.removeWorkflowStep(step.id, 'todo');
+        }
+      }
+
+      // Apply requires_review and config overrides
+      const savedSteps = await api.getWorkflowSteps();
+      for (const ws of workflowSteps) {
+        const saved = savedSteps.steps.find((s: any) => s.slug === ws.slug);
+        if (!saved) continue;
+        const catalogEntry = STEP_CATALOG.find(s => s.slug === ws.slug);
+        const catalogDefault = catalogEntry?.requiresReview ?? false;
+        const needsUpdate: any = {};
+        if (ws.requires_review !== catalogDefault) {
+          needsUpdate.requires_review = ws.requires_review;
+        }
+        if (ws.config && ws.config !== '{}') {
+          try {
+            const parsed = JSON.parse(ws.config);
+            if (Object.keys(parsed).length > 0) {
+              needsUpdate.config = parsed;
+            }
+          } catch {}
+        }
+        if (Object.keys(needsUpdate).length > 0) {
+          await api.updateWorkflowStep(saved.id, needsUpdate);
+        }
+      }
+
+      await checkStatus();
+    } catch (err: any) {
+      toast.error(err.data?.error || err.message || 'Failed to save workflow');
     }
   };
 
@@ -160,9 +226,9 @@ export default function InitWizard() {
 
         {/* Steps indicator */}
         <div className="flex items-center justify-center gap-2 mb-8">
-          {['Agent Setup', 'Test', 'Project Key'].map((label, i) => {
+          {['Agent Setup', 'Test', 'Project Key', 'Workflow'].map((label, i) => {
             const stepIndex = i;
-            const currentIndex = step === 'agent-config' ? 0 : step === 'test' ? 1 : 2;
+            const currentIndex = step === 'agent-config' ? 0 : step === 'test' ? 1 : (step === 'prefix' || step === 'manual-prefix') ? 2 : 3;
             const isActive = stepIndex === currentIndex;
             const isDone = stepIndex < currentIndex;
 
@@ -530,6 +596,49 @@ export default function InitWizard() {
                   className="flex-1 py-2.5 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-30"
                 >
                   {savingPrefix ? 'Setting up...' : 'Continue'}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {step === 'workflow' && (
+            <div className="space-y-4">
+              <h2 className="text-sm font-semibold text-text">Build Your Workflow</h2>
+              <p className="text-xs text-text-muted">
+                Add steps from the catalog below. Drag to reorder. Every task will go through these steps between Todo and Done.
+              </p>
+
+              <WorkflowEditor
+                steps={workflowSteps}
+                onAdd={(slug) => {
+                  const entry = STEP_CATALOG.find(s => s.slug === slug);
+                  if (!entry) return;
+                  setWorkflowSteps(prev => [...prev, {
+                    id: slug,
+                    slug,
+                    name: entry.name,
+                    requires_review: entry.requiresReview,
+                    config: JSON.stringify(Object.fromEntries(entry.configSchema.map(o => [o.key, o.default]))),
+                  }]);
+                }}
+                onRemove={(step) => setWorkflowSteps(prev => prev.filter(s => s.id !== step.id))}
+                onReorder={setWorkflowSteps}
+                onToggleReview={(step) => setWorkflowSteps(prev =>
+                  prev.map(s => s.id === step.id ? { ...s, requires_review: !s.requires_review } : s)
+                )}
+                onSaveConfig={(step, config) => setWorkflowSteps(prev =>
+                  prev.map(s => s.id === step.id ? { ...s, config: JSON.stringify(config) } : s)
+                )}
+                showConfig
+              />
+
+              <div className="flex gap-2 pt-2">
+                <button
+                  onClick={handleSaveWorkflow}
+                  disabled={workflowSteps.length === 0}
+                  className="flex-1 py-2.5 bg-accent hover:bg-accent-hover text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-30"
+                >
+                  Get Started
                 </button>
               </div>
             </div>

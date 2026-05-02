@@ -24,6 +24,7 @@ export default defineConfig({
       },
       '/tasks': 'http://127.0.0.1:4200',
       '/agent-config': 'http://127.0.0.1:4200',
+      '/workflow-steps': 'http://127.0.0.1:4200',
       '/init': 'http://127.0.0.1:4200',
     },
   },

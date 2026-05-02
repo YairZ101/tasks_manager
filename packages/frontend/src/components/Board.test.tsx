@@ -35,6 +35,7 @@ describe('Board', () => {
   test('shows empty state when no board tasks', () => {
     useAppStore.setState({
       tasks: [],
+      workflowSteps: [],
       showCreateTask: false,
     });
     render(<Board />);
@@ -45,6 +46,7 @@ describe('Board', () => {
   test('shows empty state when only backlog tasks exist', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'backlog' })],
+      workflowSteps: [],
       showCreateTask: false,
     });
     render(<Board />);
@@ -54,6 +56,7 @@ describe('Board', () => {
   test('renders three columns when tasks exist', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'todo' })],
+      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
       showCreateTask: false,
     });
     render(<Board />);
@@ -68,6 +71,7 @@ describe('Board', () => {
         makeTask({ id: 1, task_key: 'TST-1', title: 'Todo Item', status: 'todo' }),
         makeTask({ id: 2, task_key: 'TST-2', title: 'Done Item', status: 'done' }),
       ],
+      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
       showCreateTask: false,
     });
     render(<Board />);
@@ -78,6 +82,7 @@ describe('Board', () => {
   test('has New Task button when board has tasks', () => {
     useAppStore.setState({
       tasks: [makeTask({ status: 'todo' })],
+      workflowSteps: [{ id: 1, slug: 'in-progress', name: 'In Progress', requires_review: 0, config: '{}', sort_order: 1, created_at: '' }],
       showCreateTask: false,
     });
     render(<Board />);

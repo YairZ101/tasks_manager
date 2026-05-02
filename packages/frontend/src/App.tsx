@@ -8,6 +8,7 @@ import Backlog from './components/Backlog.js';
 import TaskDetail from './components/TaskDetail.js';
 import CreateTaskModal from './components/CreateTaskModal.js';
 import AgentConfigModal from './components/AgentConfigModal.js';
+import WorkflowSettingsModal from './components/WorkflowSettingsModal.js';
 import InitWizard from './components/InitWizard.js';
 
 // Acquire the lock once at module load — outside React lifecycle so
@@ -91,8 +92,11 @@ function AppContent() {
     selectedTaskId,
     showAgentConfig,
     showCreateTask,
+    showWorkflowSettings,
+    setShowWorkflowSettings,
     checkStatus,
     fetchTasks,
+    fetchWorkflowSteps,
     toggleSidebar,
     setSidebarCollapsed,
   } = useAppStore();
@@ -116,8 +120,9 @@ function AppContent() {
   useEffect(() => {
     if (initialized) {
       fetchTasks();
+      fetchWorkflowSteps();
     }
-  }, [initialized, fetchTasks]);
+  }, [initialized, fetchTasks, fetchWorkflowSteps]);
 
   // Listen for toast events from SSE
   useEffect(() => {
@@ -188,6 +193,7 @@ function AppContent() {
       </main>
       {showCreateTask && <CreateTaskModal />}
       {showAgentConfig && <AgentConfigModal />}
+      {showWorkflowSettings && <WorkflowSettingsModal onClose={() => setShowWorkflowSettings(false)} />}
     </div>
   );
 }

@@ -66,7 +66,7 @@ export default function TaskCard({ task, isDragging, onClick, showActions }: Tas
 
       {/* Quick run button for todo tasks */}
       {(task.status === 'todo' || showActions) && canStartAgent && (
-        <Tooltip label="Run Agent" className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100">
+        <Tooltip label="Start Workflow" className="absolute top-2.5 right-2.5 opacity-0 group-hover:opacity-100">
           <button
             onClick={handleRunAgent}
             className="p-1 rounded-md text-text-muted hover:text-success hover:bg-success-dim transition-all"

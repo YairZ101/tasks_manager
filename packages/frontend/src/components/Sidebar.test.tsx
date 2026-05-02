@@ -50,6 +50,17 @@ describe('Sidebar', () => {
     expect(useAppStore.getState().showAgentConfig).toBe(true);
   });
 
+  test('renders Workflow nav item', () => {
+    render(<Sidebar />);
+    expect(screen.getByText('Workflow')).toBeInTheDocument();
+  });
+
+  test('clicking Workflow opens workflow settings', () => {
+    render(<Sidebar />);
+    fireEvent.click(screen.getByText('Workflow'));
+    expect(useAppStore.getState().showWorkflowSettings).toBe(true);
+  });
+
   test('shows backlog badge count', () => {
     useAppStore.setState({
       tasks: [

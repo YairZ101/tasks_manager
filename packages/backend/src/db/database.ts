@@ -135,13 +135,11 @@ function runMigrations(db: Database): void {
     `);
 
     // Recreate tasks table without the status CHECK constraint.
-    // Must disable foreign keys — task_logs references tasks(id).
-    db.exec(`PRAGMA foreign_keys = OFF`);
-
-    db.exec(`ALTER TABLE tasks RENAME TO tasks_old`);
-
+    // Create new table first, copy data, drop old, rename new.
+    // This avoids FK resolution issues with RENAME on some Bun/SQLite versions.
+    db.exec('PRAGMA foreign_keys = OFF');
     db.exec(`
-      CREATE TABLE tasks (
+      CREATE TABLE tasks_new (
         id            INTEGER PRIMARY KEY AUTOINCREMENT,
         task_key      TEXT UNIQUE NOT NULL,
         title         TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 500),
@@ -159,27 +157,24 @@ function runMigrations(db: Database): void {
         agent_branch  TEXT DEFAULT NULL
       )
     `);
-
     db.exec(`
-      INSERT INTO tasks (id, task_key, title, description, acceptance, status,
+      INSERT INTO tasks_new (id, task_key, title, description, acceptance, status,
         agent_status, agent_pid, agent_started_at, sort_order, created_at, updated_at,
         agent_worktree, agent_branch)
       SELECT id, task_key, title, description, acceptance, status,
         agent_status, agent_pid, agent_started_at, sort_order, created_at, updated_at,
         agent_worktree, agent_branch
-      FROM tasks_old
+      FROM tasks
     `);
-    db.exec(`DROP TABLE tasks_old`);
-
-    // Recreate trigger (lost when old table was dropped)
+    db.exec('DROP TABLE tasks');
+    db.exec('ALTER TABLE tasks_new RENAME TO tasks');
     db.exec(`
       CREATE TRIGGER tasks_updated_at AFTER UPDATE ON tasks
       BEGIN
         UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id;
       END
     `);
-
-    db.exec(`PRAGMA foreign_keys = ON`);
-    db.exec(`PRAGMA user_version = 3`);
+    db.exec('PRAGMA foreign_keys = ON');
+    db.exec('PRAGMA user_version = 3');
   }
 }

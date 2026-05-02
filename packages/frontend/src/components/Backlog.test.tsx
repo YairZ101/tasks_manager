@@ -116,7 +116,7 @@ describe('Backlog', () => {
     useAppStore.setState({
       tasks: [makeTask()],
       workflowSteps: [
-        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, created_at: '' },
+        { id: 1, slug: 'development', name: 'Development', requires_review: 0, config: '{}', sort_order: 1, fixed: 0, created_at: '' },
       ],
       showCreateTask: false,
     });

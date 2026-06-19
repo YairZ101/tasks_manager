@@ -198,3 +198,7 @@ When starting `bun run dev` for Playwright or manual testing, always use `run_in
 ## CI
 
 GitHub Actions with 4 jobs: `test-backend`, `test-frontend`, `typecheck` (frontend only), `build`. All use `bun install --frozen-lockfile`. Backend tests run with `--timeout 30000` and `CI=true` env var.
+
+## Planning Docs (`doc/plans/`)
+
+Design docs in `doc/plans/` are **append-only decision records**, not living documentation. Do **not** rewrite the substance of an existing plan to reflect a new decision — write a new doc that names what it supersedes, and mark the old one with a one-line "Superseded by …" banner while leaving its body intact. Once a feature ships, the code is the source of truth, not the plan. Full convention: [`doc/plans/README.md`](doc/plans/README.md).

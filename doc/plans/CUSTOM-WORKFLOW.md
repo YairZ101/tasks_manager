@@ -249,7 +249,7 @@ function getValidStatuses(): string[] {
 
 **Status-setting ownership:** Currently `startAgent()` both sets `status = 'in-progress'` and starts the agent. After the refactor, the **caller** (route handler or auto-advance logic) sets the status, and `startAgent()` only starts the agent. `startAgent()` receives the target step slug and validates it's a workflow step, but doesn't write the status — that's already done before `startAgent()` is called.
 
-**Review file loading:** Before calling `buildPrompt()`, the executor reads all review files matching `.tasks_manager/reviews/{task_key}-*.md`, parses the step name and run number from the filename, reads the content, and passes them as the `reviewFiles` array. This happens for every step, not just Development.
+**Review file loading:** ⚠️ *Superseded by [INTER-STEP-STATE.md](./INTER-STEP-STATE.md) — the journal replaces this; retained as a historical record.* Before calling `buildPrompt()`, the executor reads all review files matching `.tasks_manager/reviews/{task_key}-*.md`, parses the step name and run number from the filename, reads the content, and passes them as the `reviewFiles` array. This happens for every step, not just Development.
 
 ```typescript
 function isWorkflowStep(slug: string): boolean {
@@ -382,6 +382,8 @@ Each step type has a config-to-prompt renderer that translates the JSON config i
 The renderers live in a dedicated module (`executor/step-config.ts`) — a single `renderStepConfig(slug: string, config: Record<string, unknown>): string[]` function that returns an array of instruction lines. It dispatches by slug with a switch-case. This keeps all config-to-prompt logic in one place, close to `buildPrompt()`. The executor calls `getStepInfo()` (which now returns `config`) and passes the parsed config to `buildPrompt()`.
 
 ### Step Review Files
+
+> ⚠️ **Superseded by [INTER-STEP-STATE.md](./INTER-STEP-STATE.md)**, which replaces this cross-step review-file channel with the journal. Section retained as a historical record.
 
 `agent-review` steps produce findings that other steps need to see. These are persisted as markdown files in `.tasks_manager/reviews/` **in the main repo root** (not inside the worktree), named `{task_key}-{step_slug}-run{n}.md` (e.g., `PROJ-5-code-review-run1.md`). The directory is inside `.tasks_manager/` which already has a self-ignoring `.gitignore`, so review files are never committed to the repo.
 

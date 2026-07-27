@@ -1,768 +1,144 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
-import { Hono } from 'hono';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { initDb, getDb, closeDb } from '../db/database.js';
-import tasksRoutes from './tasks.js';
-import logsRoutes from './logs.js';
-import agentConfigRoutes from './agent-config.js';
-import initRoutes from './init.js';
-import workflowStepsRoutes from './workflow-steps.js';
+import { closeDb, getDb, initDb } from '../db/database.js';
+import { createApp } from '../app.js';
+import { compileFlow, createMinimalFlow, createRecommendedFlow } from '@tasks-manager/flow-core';
+import { initEngine, shutdownEngine } from '../flow/engine.js';
 
-function createApp() {
-  const app = new Hono();
-  app.route('/tasks/:id/logs', logsRoutes);
-  app.route('/tasks', tasksRoutes);
-  app.route('/agent-config', agentConfigRoutes);
-  app.route('/workflow-steps', workflowStepsRoutes);
-  app.route('/init', initRoutes);
-  return app;
-}
+let root = '';
+let app: ReturnType<typeof createApp>;
 
-describe('Tasks routes (real)', () => {
-  let app: Hono;
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-routes-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
-    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
-    app = createApp();
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('GET /tasks returns empty list', async () => {
-    const res = await app.request('/tasks');
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.tasks).toEqual([]);
-  });
-
-  test('POST /tasks creates a task with auto key', async () => {
-    const res = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'My Task' }),
-    });
-    expect(res.status).toBe(201);
-    const data = await res.json();
-    expect(data.task.task_key).toBe('TST-1');
-    expect(data.task.status).toBe('backlog');
-  });
-
-  test('POST /tasks with status=todo', async () => {
-    const res = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Todo', status: 'todo' }),
-    });
-    expect(res.status).toBe(201);
-    const { task } = await res.json();
-    expect(task.status).toBe('todo');
-  });
-
-  test('POST /tasks rejects missing title', async () => {
-    const res = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('POST /tasks rejects in-progress as create status', async () => {
-    const res = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Bad', status: 'in-progress' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('POST /tasks rejects invalid JSON', async () => {
-    const res = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: 'not json',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('GET /tasks/:id returns a task', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Find Me' }),
-    });
-    const { task } = await createRes.json();
-
-    const res = await app.request(`/tasks/${task.id}`);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.task.title).toBe('Find Me');
-  });
-
-  test('GET /tasks/:id returns 404', async () => {
-    const res = await app.request('/tasks/9999');
-    expect(res.status).toBe(404);
-  });
-
-  test('GET /tasks/:id returns 400 for NaN', async () => {
-    const res = await app.request('/tasks/abc');
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /tasks/:id updates title and description', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Original' }),
-    });
-    const { task } = await createRes.json();
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Updated', description: 'new' }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.task.title).toBe('Updated');
-    expect(data.task.description).toBe('new');
-  });
-
-  test('PATCH /tasks/:id rejects empty title', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Valid' }),
-    });
-    const { task } = await createRes.json();
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: '' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /tasks/:id status change to done', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Finish me', status: 'todo' }),
-    });
-    const { task } = await createRes.json();
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'done' }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.task.status).toBe('done');
-  });
-
-  test('PATCH /tasks/:id status change to done clears agent_status', async () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, agent_status, sort_order) VALUES ('TST-1', 'Test', 'development', 'completed', 1)"
-    ).run();
-    const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'done' }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.task.status).toBe('done');
-    expect(data.task.agent_status).toBeNull();
-    expect(data.task.agent_pid).toBeNull();
-  });
-
-  test('PATCH /tasks/:id blocks backlog from done', async () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-99', 'Done', 'done', 1)"
-    ).run();
-    const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-99'").get() as any;
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'backlog' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('DELETE /tasks/:id removes task', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Delete Me' }),
-    });
-    const { task } = await createRes.json();
-
-    const delRes = await app.request(`/tasks/${task.id}`, { method: 'DELETE' });
-    expect(delRes.status).toBe(204);
-
-    const getRes = await app.request(`/tasks/${task.id}`);
-    expect(getRes.status).toBe(404);
-  });
-
-  test('DELETE blocks on running agent', async () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, agent_status, sort_order) VALUES ('TST-99', 'Running', 'development', 'running', 1)"
-    ).run();
-    const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-99'").get() as any;
-
-    const res = await app.request(`/tasks/${task.id}`, { method: 'DELETE' });
-    expect(res.status).toBe(409);
-  });
-
-  test('GET /tasks?q= filters by query', async () => {
-    await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Alpha' }),
-    });
-    await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Beta' }),
-    });
-
-    const res = await app.request('/tasks?q=Alpha');
-    const data = await res.json();
-    expect(data.tasks).toHaveLength(1);
-    expect(data.tasks[0].title).toBe('Alpha');
-  });
-
-  test('GET /tasks?status= filters by status', async () => {
-    await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'BL', status: 'backlog' }),
-    });
-    await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'TD', status: 'todo' }),
-    });
-
-    const res = await app.request('/tasks?status=todo');
-    const data = await res.json();
-    expect(data.tasks).toHaveLength(1);
-    expect(data.tasks[0].title).toBe('TD');
-  });
-
-  test('PATCH /tasks/:id returns 404 for missing task', async () => {
-    const res = await app.request('/tasks/9999', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'x' }),
-    });
-    expect(res.status).toBe(404);
-  });
-
-  test('PATCH /tasks/:id returns 400 for NaN id', async () => {
-    const res = await app.request('/tasks/abc', {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'x' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /tasks/:id rejects invalid JSON', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Valid' }),
-    });
-    const { task } = await createRes.json();
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: 'not json',
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /tasks/:id rejects invalid status value', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Task' }),
-    });
-    const { task } = await createRes.json();
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ status: 'bogus' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /tasks/:id rejects non-finite sort_order', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Task' }),
-    });
-    const { task } = await createRes.json();
-
-    const res = await app.request(`/tasks/${task.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sort_order: Infinity }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('DELETE /tasks/:id returns 400 for NaN id', async () => {
-    const res = await app.request('/tasks/abc', { method: 'DELETE' });
-    expect(res.status).toBe(400);
-  });
-
-  test('DELETE /tasks/:id returns 404 for non-existent', async () => {
-    const res = await app.request('/tasks/9999', { method: 'DELETE' });
-    expect(res.status).toBe(404);
-  });
+beforeEach(() => {
+  root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-routes-'));
+  initDb(root);
+  const db = getDb();
+  db.query("INSERT INTO project_config(id,task_prefix,repo_name) VALUES(1,'TST','test')").run();
+  const definition = createMinimalFlow();
+  const compiled = compileFlow(definition);
+  const flow = db.query("INSERT INTO flows(name,is_default) VALUES('Default',1)").run();
+  const version = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,1,'published',?,?,datetime('now'))")
+    .run(Number(flow.lastInsertRowid), JSON.stringify(definition), JSON.stringify(compiled));
+  db.query('UPDATE flows SET active_version_id=? WHERE id=?').run(Number(version.lastInsertRowid), Number(flow.lastInsertRowid));
+  app = createApp(root);
+  initEngine(root);
 });
 
-describe('Logs routes (real)', () => {
-  let app: Hono;
-  let tmpDir: string;
+afterEach(async () => { await shutdownEngine(); closeDb(); fs.rmSync(root, { recursive: true, force: true }); });
 
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-routes-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
+describe('outcome-flow routes', () => {
+  test('creates, lists, and edits tasks using queue semantics', async () => {
+    const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Ship graph', queue_state: 'ready' }) });
+    expect(created.status).toBe(201);
+    const task = (await created.json() as any).task;
+    expect(task.task_key).toBe('TST-1');
+    expect(task.operational_state).toBe('ready');
+    const patched = await app.request(`/tasks/${task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ queue_state: 'backlog' }) });
+    expect((await patched.json() as any).task.operational_state).toBe('backlog');
+    const listed = await app.request('/tasks?state=backlog');
+    expect((await listed.json() as any).tasks).toHaveLength(1);
+  });
+
+  test('uses optimistic revisions and refuses an invalid publish', async () => {
+    const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Review flow', definition: createRecommendedFlow() }) });
+    const flow = (await created.json() as any).flow;
+    const draftResponse = await app.request(`/flows/${flow.id}/draft`);
+    const draft = (await draftResponse.json() as any).draft;
+    const invalid = { ...draft.definition, connections: [] };
+    const save = await app.request(`/flows/${flow.id}/draft`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ definition: invalid, revision: draft.draft_revision }) });
+    expect(save.status).toBe(200);
+    const stale = await app.request(`/flows/${flow.id}/draft`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ definition: invalid, revision: draft.draft_revision }) });
+    expect(stale.status).toBe(409);
+    const publish = await app.request(`/flows/${flow.id}/publish`, { method: 'POST' });
+    expect(publish.status).toBe(422);
+  });
+
+  test('starts at a Decision and resolves to a Result exactly once', async () => {
     const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
-    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
-    app = createApp();
+    const definition: any = {
+      schemaVersion: 1,
+      nodes: [
+        { id: 'begin', type: 'begin', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Begin' } },
+        { id: 'review', type: 'decision', typeVersion: 1, position: { x: 1, y: 0 }, config: { name: 'Review', choices: [{ id: 'yes', label: 'Approve', commentRequired: false, tone: 'positive' }] } },
+        { id: 'done', type: 'result', typeVersion: 1, position: { x: 2, y: 0 }, config: { name: 'Completed', category: 'completed' } },
+      ],
+      connections: [
+        { id: 'a', sourceNodeId: 'begin', sourceOutcomeId: 'started', targetNodeId: 'review' },
+        { id: 'b', sourceNodeId: 'review', sourceOutcomeId: 'yes', targetNodeId: 'done' },
+      ],
+    };
+    const compiled = compileFlow(definition);
+    const flow = db.query("INSERT INTO flows(name) VALUES('Decision')").run();
+    const version = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,1,'published',?,?,datetime('now'))")
+      .run(Number(flow.lastInsertRowid), JSON.stringify(definition), JSON.stringify(compiled));
+    db.query('UPDATE flows SET active_version_id=? WHERE id=?').run(Number(version.lastInsertRowid), Number(flow.lastInsertRowid));
+    const task = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Review me', queue_state: 'ready' }) });
+    const taskId = (await task.json() as any).task.id;
+    const started = await app.request('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: taskId, flow_id: Number(flow.lastInsertRowid) }) });
+    const run = (await started.json() as any).run;
+    expect(run.status).toBe('waiting');
+    const detail = await app.request(`/runs/${run.id}`);
+    const attempt = (await detail.json() as any).attempts.at(-1);
+    const decided = await app.request(`/runs/${run.id}/decisions/${attempt.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ outcome_id: 'yes' }) });
+    expect((await decided.json() as any).run.status).toBe('finished');
+    const repeated = await app.request(`/runs/${run.id}/decisions/${attempt.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ outcome_id: 'yes' }) });
+    expect(repeated.status).toBe(200);
   });
 
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('GET /tasks/:id/logs returns logs', async () => {
-    const createRes = await app.request('/tasks', {
+  test('tests a proposed Agent command without saving it first', async () => {
+    const response = await app.request('/agent-config/test', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Logged Task' }),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ cli_cmd: 'sh -c "printf OK"', cli_prompt_mode: 'argument', cli_prompt_flag: '' }),
     });
-    const { task } = await createRes.json();
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ success: true, output: 'OK' });
+    expect(getDb().query<{ cli_cmd: string | null }, []>('SELECT cli_cmd FROM agent_config WHERE id = 1').get()?.cli_cmd).toBeNull();
+  });
 
+  test('streams proposed Agent output to the setup screen', async () => {
+    const response = await app.request('/agent-config/test', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'text/event-stream' },
+      body: JSON.stringify({ cli_cmd: 'sh -c "printf OK"', cli_prompt_mode: 'argument', cli_prompt_flag: '', stream: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-type')).toContain('text/event-stream');
+    await expect(response.text()).resolves.toContain('event: complete');
+  });
+
+  test('initializes the agent, project, and selected Flow in one final request', async () => {
     const db = getDb();
-    db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 1, 'info', 'hello')").run(task.id);
-
-    const res = await app.request(`/tasks/${task.id}/logs`);
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.logs).toHaveLength(1);
-    expect(data.logs[0].message).toBe('hello');
+    db.exec('DELETE FROM flow_versions; DELETE FROM flows; DELETE FROM project_config;');
+    const response = await app.request('/init/complete', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        prefix: 'FLOW',
+        repoName: 'outcome-flow',
+        flowTemplate: 'blank',
+        agent: { cli_cmd: 'codex exec --full-auto', cli_prompt_mode: 'stdin', cli_prompt_flag: '' },
+      }),
+    });
+    expect(response.status).toBe(201);
+    expect(await response.json()).toMatchObject({ projectConfig: { task_prefix: 'FLOW', repo_name: 'outcome-flow' } });
+    expect(db.query<{ cli_cmd: string }, []>('SELECT cli_cmd FROM agent_config WHERE id = 1').get()?.cli_cmd).toBe('codex exec --full-auto');
+    const version = db.query<{ definition_json: string }, []>("SELECT definition_json FROM flow_versions WHERE state = 'published'").get()!;
+    expect(JSON.parse(version.definition_json).nodes.map((node: { type: string }) => node.type)).toEqual(['begin', 'result']);
+    expect((await app.request('/status')).json()).resolves.toMatchObject({ initialized: true });
   });
 
-  test('GET /tasks/:id/logs pagination', async () => {
-    const createRes = await app.request('/tasks', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Task' }),
-    });
-    const { task } = await createRes.json();
-
+  test('does not partially initialize when the final setup request is invalid', async () => {
     const db = getDb();
-    for (let i = 0; i < 5; i++) {
-      db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 1, 'info', ?)").run(task.id, `log-${i}`);
-    }
-
-    const res = await app.request(`/tasks/${task.id}/logs?limit=3`);
-    const data = await res.json();
-    expect(data.logs).toHaveLength(3);
-    expect(data.hasMore).toBe(true);
-  });
-
-  test('GET /tasks/:id/logs filters by run_number', async () => {
-    const createRes = await app.request('/tasks', {
+    db.exec('DELETE FROM flow_versions; DELETE FROM flows; DELETE FROM project_config;');
+    const response = await app.request('/init/complete', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title: 'Task' }),
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ prefix: 'FLOW', flowTemplate: 'minimal', agent: { cli_cmd: '', cli_prompt_mode: 'stdin' } }),
     });
-    const { task } = await createRes.json();
-
-    const db = getDb();
-    db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 1, 'info', 'run1')").run(task.id);
-    db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 2, 'info', 'run2')").run(task.id);
-
-    const res = await app.request(`/tasks/${task.id}/logs?run_number=2`);
-    const data = await res.json();
-    expect(data.logs).toHaveLength(1);
-    expect(data.logs[0].message).toBe('run2');
-  });
-});
-
-describe('Agent config routes (real)', () => {
-  let app: Hono;
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-routes-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
-    app = createApp();
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('GET /agent-config returns defaults', async () => {
-    const res = await app.request('/agent-config');
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.config.type).toBe('cli');
-    expect(data.config.timeout_ms).toBe(1800000);
-  });
-
-  test('PUT /agent-config updates fields', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cli_cmd: 'test-cmd', timeout_ms: 60000 }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.config.cli_cmd).toBe('test-cmd');
-    expect(data.config.timeout_ms).toBe(60000);
-  });
-
-  test('PUT /agent-config rejects low timeout', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ timeout_ms: 100 }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PUT /agent-config rejects invalid cli_prompt_mode', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ cli_prompt_mode: 'invalid' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PUT /agent-config rejects invalid JSON', async () => {
-    const res = await app.request('/agent-config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: 'not json',
-    });
-    expect(res.status).toBe(400);
-  });
-});
-
-describe('Init routes (real)', () => {
-  let app: Hono;
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-routes-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
-    app = createApp();
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('POST /init/save-prefix saves valid prefix', async () => {
-    const res = await app.request('/init/save-prefix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefix: 'PROJ', repoName: 'my-repo' }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.projectConfig.task_prefix).toBe('PROJ');
-  });
-
-  test('POST /init/save-prefix uppercases', async () => {
-    const res = await app.request('/init/save-prefix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefix: 'abc' }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json();
-    expect(data.projectConfig.task_prefix).toBe('ABC');
-  });
-
-  test('POST /init/save-prefix rejects missing prefix', async () => {
-    const res = await app.request('/init/save-prefix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({}),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('POST /init/save-prefix rejects too-long prefix', async () => {
-    const res = await app.request('/init/save-prefix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefix: 'ABCDEF' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('POST /init/save-prefix rejects double init', async () => {
-    await app.request('/init/save-prefix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefix: 'PROJ' }),
-    });
-
-    const res = await app.request('/init/save-prefix', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ prefix: 'REDO' }),
-    });
-    expect(res.status).toBe(400);
-    const data = await res.json();
-    expect(data.error).toContain('already initialized');
-  });
-});
-
-describe('Workflow steps routes (real)', () => {
-  let tmpDir: string;
-  let app: ReturnType<typeof createApp>;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-routes-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
-    db.query("INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order) VALUES ('development', 'Development', 0, '{}', 1.0)").run();
-    app = createApp();
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('GET /workflow-steps returns active steps', async () => {
-    const res = await app.request('/workflow-steps');
-    expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(data.steps).toHaveLength(3);
-    expect(data.steps.map((s: any) => s.slug)).toContain('todo');
-    expect(data.steps.map((s: any) => s.slug)).toContain('development');
-    expect(data.steps.map((s: any) => s.slug)).toContain('done');
-  });
-
-  test('GET /workflow-steps/catalog returns catalog with active flags', async () => {
-    const res = await app.request('/workflow-steps/catalog');
-    expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(data.catalog.length).toBeGreaterThan(0);
-    const dev = data.catalog.find((s: any) => s.slug === 'development');
-    expect(dev.active).toBe(true);
-    const planning = data.catalog.find((s: any) => s.slug === 'planning');
-    expect(planning.active).toBe(false);
-  });
-
-  test('POST /workflow-steps adds a step from the catalog', async () => {
-    const res = await app.request('/workflow-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: 'planning' }),
-    });
-    expect(res.status).toBe(201);
-    const data = await res.json() as any;
-    expect(data.step.slug).toBe('planning');
-    expect(data.step.name).toBe('Planning');
-  });
-
-  test('POST /workflow-steps rejects unknown slug', async () => {
-    const res = await app.request('/workflow-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: 'nonexistent' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('POST /workflow-steps rejects duplicate slug', async () => {
-    const res = await app.request('/workflow-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: 'development' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /workflow-steps/:id updates sort_order', async () => {
-    const db = getDb();
-    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'development'").get() as any;
-
-    const res = await app.request(`/workflow-steps/${step.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ sort_order: 5.0 }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(data.step.sort_order).toBe(5.0);
-  });
-
-  test('PATCH /workflow-steps/:id updates requires_review', async () => {
-    const db = getDb();
-    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'development'").get() as any;
-
-    const res = await app.request(`/workflow-steps/${step.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ requires_review: true }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(data.step.requires_review).toBe(1);
-  });
-
-  test('DELETE /workflow-steps/:id removes a step', async () => {
-    // Add a second step so we can delete one
-    await app.request('/workflow-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: 'planning' }),
-    });
-
-    const db = getDb();
-    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'planning'").get() as any;
-
-    const res = await app.request(`/workflow-steps/${step.id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ move_tasks_to: 'todo' }),
-    });
-    expect(res.status).toBe(204);
-
-    const remaining = db.query("SELECT * FROM workflow_steps").all();
-    expect(remaining).toHaveLength(3);
-  });
-
-  test('DELETE /workflow-steps/:id blocks removing last step', async () => {
-    const db = getDb();
-    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'development'").get() as any;
-
-    const res = await app.request(`/workflow-steps/${step.id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ move_tasks_to: 'todo' }),
-    });
-    expect(res.status).toBe(400);
-    const data = await res.json() as any;
-    expect(data.error).toContain('last workflow step');
-  });
-
-  test('DELETE /workflow-steps/:id moves tasks when step has tasks', async () => {
-    const db = getDb();
-    // Add a second step
-    await app.request('/workflow-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: 'planning' }),
-    });
-
-    // Create a task in the planning step
-    db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'planning', 1)").run();
-
-    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'planning'").get() as any;
-    const res = await app.request(`/workflow-steps/${step.id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ move_tasks_to: 'todo' }),
-    });
-    expect(res.status).toBe(204);
-
-    const task = db.query("SELECT status FROM tasks WHERE task_key = 'TST-1'").get() as any;
-    expect(task.status).toBe('todo');
-  });
-
-  test('POST /workflow-steps inserts new step before Done', async () => {
-    const db = getDb();
-    const doneBefore = db.query("SELECT sort_order FROM workflow_steps WHERE slug = 'done'").get() as any;
-
-    const res = await app.request('/workflow-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: 'planning' }),
-    });
-    expect(res.status).toBe(201);
-    const data = await res.json() as any;
-    expect(data.step.sort_order).toBeLessThan(doneBefore.sort_order);
-  });
-
-  test('POST /workflow-steps rejects fixed step slug', async () => {
-    const res = await app.request('/workflow-steps', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ slug: 'todo' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('DELETE /workflow-steps/:id rejects deleting fixed step', async () => {
-    const db = getDb();
-    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'done'").get() as any;
-
-    const res = await app.request(`/workflow-steps/${step.id}`, {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ move_tasks_to: 'todo' }),
-    });
-    expect(res.status).toBe(400);
-  });
-
-  test('PATCH /workflow-steps/:id updates config on fixed step', async () => {
-    const db = getDb();
-    const step = db.query("SELECT id FROM workflow_steps WHERE slug = 'done'").get() as any;
-
-    const res = await app.request(`/workflow-steps/${step.id}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ config: { deleteBranch: false } }),
-    });
-    expect(res.status).toBe(200);
-    const data = await res.json() as any;
-    expect(JSON.parse(data.step.config).deleteBranch).toBe(false);
+    expect(response.status).toBe(400);
+    expect(db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM project_config').get()?.count).toBe(0);
+    expect(db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM flows').get()?.count).toBe(0);
   });
 });

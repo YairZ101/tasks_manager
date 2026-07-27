@@ -1,7 +1,6 @@
 import { parse } from 'shell-quote';
 import { spawn as nodeSpawn } from 'child_process';
 import type { AgentConfig, Task } from '../types.js';
-import { getDb } from '../db/database.js';
 
 const ANSI_REGEX = /\x1b\[[0-9;]*m/g;
 const MAX_LINE_LENGTH = 10240; // 10KB
@@ -91,18 +90,6 @@ export class CliAdapter {
     // Notify caller of PID
     if (pid && onPid) {
       onPid(pid);
-    }
-
-    // Store PID for crash recovery
-    if (pid) {
-      try {
-        const db = getDb();
-        db.query(
-          `UPDATE tasks SET agent_pid = ?, agent_started_at = ? WHERE id = ?`
-        ).run(pid, new Date().toISOString(), task.id);
-      } catch {
-        // Non-fatal
-      }
     }
 
     // Write prompt to stdin if needed

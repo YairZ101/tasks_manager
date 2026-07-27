@@ -1,319 +1,45 @@
-import { describe, test, expect, beforeEach, afterEach } from 'bun:test';
+import { afterEach, describe, expect, test } from 'bun:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { initDb, getDb, closeDb } from './database.js';
+import { Database } from 'bun:sqlite';
+import { closeDb, getDb, initDb } from './database.js';
 
-describe('Database initialization', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-db-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('initDb creates database and returns it', () => {
-    const db = initDb(tmpDir);
-    expect(db).toBeDefined();
-    expect(fs.existsSync(path.join(tmpDir, '.tasks_manager', 'tasks.db'))).toBe(true);
-  });
-
-  test('getDb returns the initialized database', () => {
-    initDb(tmpDir);
-    const db = getDb();
-    expect(db).toBeDefined();
-  });
-
-  test('getDb throws if not initialized', () => {
-    expect(() => getDb()).toThrow('Database not initialized');
-  });
-
-  test('creates all tables', () => {
-    initDb(tmpDir);
-    const db = getDb();
-    const tables = db
-      .query<{ name: string }, []>(
-        "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
-      )
-      .all()
-      .map((r) => r.name);
-
-    expect(tables).toContain('tasks');
-    expect(tables).toContain('task_logs');
-    expect(tables).toContain('agent_config');
-    expect(tables).toContain('project_config');
-    expect(tables).toContain('workflow_steps');
-  });
-
-  test('workflow_steps table has fixed Todo and Done for fresh DB (no legacy tasks)', () => {
-    initDb(tmpDir);
-    const db = getDb();
-    const steps = db.query('SELECT * FROM workflow_steps').all() as any[];
-    expect(steps).toHaveLength(2);
-    expect(steps.find((s: any) => s.slug === 'todo')?.fixed).toBe(1);
-    expect(steps.find((s: any) => s.slug === 'done')?.fixed).toBe(1);
-  });
-
-  test('workflow_steps table seeds in-progress for DBs with legacy tasks', () => {
-    // Simulate a v2 DB with an in-progress task by creating the DB,
-    // inserting a task with status='in-progress', then re-running migrations
-    initDb(tmpDir);
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test')").run();
-    db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'in-progress', 1)").run();
-    const steps = db.query('SELECT * FROM workflow_steps').all() as any[];
-    // Fresh DB: no in-progress tasks at v3 migration time, but v5 seeds Todo/Done
-    expect(steps).toHaveLength(2);
-  });
-
-  test('agent_config has default row', () => {
-    initDb(tmpDir);
-    const db = getDb();
-    const config = db.query('SELECT * FROM agent_config WHERE id = 1').get() as any;
-    expect(config).not.toBeNull();
-    expect(config.type).toBe('cli');
-    expect(config.timeout_ms).toBe(1800000);
-  });
-
-  test('user_version is set to latest', () => {
-    initDb(tmpDir);
-    const db = getDb();
-    const row = db.query<{ user_version: number }, []>('PRAGMA user_version').get();
-    expect(row?.user_version).toBe(5);
-  });
-
-  test('idempotent — calling initDb twice does not error', () => {
-    closeDb();
-    initDb(tmpDir);
-    closeDb();
-    const db = initDb(tmpDir);
-    expect(db).toBeDefined();
-  });
+let root = '';
+afterEach(() => {
+  closeDb();
+  if (root) fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe('Task CRUD via real DB', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-db-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
+describe('outcome-flow database', () => {
+  test('creates the greenfield schema and singleton config', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-db-'));
+    initDb(root);
     const db = getDb();
-    db.query(
-      "INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')"
-    ).run();
+    const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name);
+    for (const name of ['app_meta', 'tasks', 'flows', 'flow_versions', 'runs', 'attempts', 'workspaces', 'logs', 'events']) expect(tables).toContain(name);
+    expect(db.query<{ value: string }, []>("SELECT value FROM app_meta WHERE key='schema_family'").get()?.value).toBe('outcome-flow');
+    expect(db.query<{ max_concurrent_executions: number }, []>('SELECT max_concurrent_executions FROM agent_config WHERE id=1').get()?.max_concurrent_executions).toBe(3);
   });
 
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
+  test('rejects a legacy database without deleting it', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-legacy-'));
+    fs.mkdirSync(path.join(root, '.tasks_manager'));
+    const legacy = new Database(path.join(root, '.tasks_manager', 'tasks.db'));
+    legacy.exec('CREATE TABLE tasks (id INTEGER PRIMARY KEY, status TEXT)');
+    legacy.close();
+    expect(() => initDb(root)).toThrow('Legacy Tasks Manager database detected');
+    const verify = new Database(path.join(root, '.tasks_manager', 'tasks.db'));
+    expect(verify.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM tasks').get()?.count).toBe(0);
+    verify.close();
   });
 
-  test('insert and retrieve a task', () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, description, acceptance, status, sort_order) VALUES ('TST-1', 'Test Task', 'desc', 'acc', 'backlog', 1)"
-    ).run();
-
-    const task = db.query("SELECT * FROM tasks WHERE task_key = 'TST-1'").get() as any;
-    expect(task).not.toBeNull();
-    expect(task.title).toBe('Test Task');
-    expect(task.status).toBe('backlog');
-  });
-
-  test('accepts any status string (validated at app layer)', () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-2', 'Custom', 'development', 1)"
-    ).run();
-    const task = db.query("SELECT status FROM tasks WHERE task_key = 'TST-2'").get() as any;
-    expect(task.status).toBe('development');
-  });
-
-  test('rejects empty title', () => {
-    const db = getDb();
-    expect(() => {
-      db.query(
-        "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-3', '', 'backlog', 1)"
-      ).run();
-    }).toThrow();
-  });
-
-  test('rejects invalid agent_status', () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-4', 'Valid', 'backlog', 1)"
-    ).run();
-    expect(() => {
-      db.query("UPDATE tasks SET agent_status = 'bogus' WHERE task_key = 'TST-4'").run();
-    }).toThrow();
-  });
-
-  test('allows valid agent_status values', () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-5', 'Valid', 'in-progress', 1)"
-    ).run();
-
-    for (const status of ['running', 'completed', 'failed']) {
-      db.query("UPDATE tasks SET agent_status = ? WHERE task_key = 'TST-5'").run(status);
-      const task = db.query("SELECT agent_status FROM tasks WHERE task_key = 'TST-5'").get() as any;
-      expect(task.agent_status).toBe(status);
-    }
-
-    db.query("UPDATE tasks SET agent_status = NULL WHERE task_key = 'TST-5'").run();
-    const task = db.query("SELECT agent_status FROM tasks WHERE task_key = 'TST-5'").get() as any;
-    expect(task.agent_status).toBeNull();
-  });
-
-  test('updated_at trigger fires on update', () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-6', 'Before', 'backlog', 1)"
-    ).run();
-    db.query("UPDATE tasks SET updated_at = '2000-01-01 00:00:00' WHERE task_key = 'TST-6'").run();
-    db.query("UPDATE tasks SET title = 'After' WHERE task_key = 'TST-6'").run();
-    const after = db.query("SELECT updated_at FROM tasks WHERE task_key = 'TST-6'").get() as any;
-    expect(after.updated_at).not.toBe('2000-01-01 00:00:00');
-  });
-
-  test('task_key must be unique', () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-7', 'First', 'backlog', 1)"
-    ).run();
-    expect(() => {
-      db.query(
-        "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-7', 'Dupe', 'backlog', 2)"
-      ).run();
-    }).toThrow();
-  });
-
-  test('cascading delete removes task_logs', () => {
-    const db = getDb();
-    db.query(
-      "INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-8', 'With logs', 'backlog', 1)"
-    ).run();
-    const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-8'").get() as any;
-
-    db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 1, 'info', 'hello')").run(task.id);
-    db.query('DELETE FROM tasks WHERE id = ?').run(task.id);
-
-    const logsAfter = db.query('SELECT COUNT(*) as cnt FROM task_logs WHERE task_id = ?').get(task.id) as any;
-    expect(logsAfter.cnt).toBe(0);
-  });
-});
-
-describe('Task logs', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-db-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'test-repo')").run();
-    db.query("INSERT INTO tasks (task_key, title, status, sort_order) VALUES ('TST-1', 'Test', 'backlog', 1)").run();
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('insert and query logs', () => {
-    const db = getDb();
-    const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
-
-    db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 1, 'info', 'line 1')").run(task.id);
-    db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 1, 'agent', 'line 2')").run(task.id);
-    db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 2, 'error', 'line 3')").run(task.id);
-
-    const allLogs = db.query('SELECT * FROM task_logs WHERE task_id = ? ORDER BY id').all(task.id) as any[];
-    expect(allLogs).toHaveLength(3);
-
-    const run1Logs = db.query('SELECT * FROM task_logs WHERE task_id = ? AND run_number = 1').all(task.id) as any[];
-    expect(run1Logs).toHaveLength(2);
-  });
-
-  test('rejects invalid log level', () => {
-    const db = getDb();
-    const task = db.query("SELECT id FROM tasks WHERE task_key = 'TST-1'").get() as any;
-    expect(() => {
-      db.query("INSERT INTO task_logs (task_id, run_number, level, message) VALUES (?, 1, 'debug', 'bad')").run(task.id);
-    }).toThrow();
-  });
-});
-
-describe('Project config', () => {
-  let tmpDir: string;
-
-  beforeEach(() => {
-    tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-db-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
-    initDb(tmpDir);
-  });
-
-  afterEach(() => {
-    closeDb();
-    fs.rmSync(tmpDir, { recursive: true, force: true });
-  });
-
-  test('insert and query project config', () => {
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'PROJ', 'my-repo')").run();
-    const config = db.query('SELECT * FROM project_config WHERE id = 1').get() as any;
-    expect(config.task_prefix).toBe('PROJ');
-    expect(config.repo_name).toBe('my-repo');
-    expect(config.next_task_number).toBe(1);
-  });
-
-  test('rejects invalid prefix (lowercase)', () => {
-    const db = getDb();
-    expect(() => {
-      db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'abc', 'repo')").run();
-    }).toThrow();
-  });
-
-  test('rejects prefix longer than 5 chars', () => {
-    const db = getDb();
-    expect(() => {
-      db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'ABCDEF', 'repo')").run();
-    }).toThrow();
-  });
-
-  test('next_task_number increment pattern', () => {
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'repo')").run();
-
-    const row1 = db.query(
-      'UPDATE project_config SET next_task_number = next_task_number + 1 WHERE id = 1 RETURNING next_task_number - 1 AS seq'
-    ).get() as any;
-    expect(row1.seq).toBe(1);
-
-    const row2 = db.query(
-      'UPDATE project_config SET next_task_number = next_task_number + 1 WHERE id = 1 RETURNING next_task_number - 1 AS seq'
-    ).get() as any;
-    expect(row2.seq).toBe(2);
-  });
-
-  test('project_config has delete_branch_on_done column with default', () => {
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'repo')").run();
-    const config = db.query('SELECT delete_branch_on_done FROM project_config WHERE id = 1').get() as any;
-    expect(config.delete_branch_on_done).toBe(1);
-  });
-
-  test('only allows id = 1', () => {
-    const db = getDb();
-    db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, 'TST', 'repo')").run();
-    expect(() => {
-      db.query("INSERT INTO project_config (id, task_prefix, repo_name) VALUES (2, 'FOO', 'repo')").run();
-    }).toThrow();
+  test('enforces one active run per task and one draft per flow', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-constraints-'));
+    const db = initDb(root);
+    db.exec("INSERT INTO project_config (id,task_prefix,repo_name) VALUES (1,'TST','test'); INSERT INTO tasks(task_key,title) VALUES('TST-1','Task'); INSERT INTO flows(name,is_default) VALUES('Flow',1);");
+    const definition = JSON.stringify({ schemaVersion: 1, nodes: [], connections: [] });
+    db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json) VALUES(1,1,'draft',?)").run(definition);
+    expect(() => db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json) VALUES(1,2,'draft',?)").run(definition)).toThrow();
   });
 });

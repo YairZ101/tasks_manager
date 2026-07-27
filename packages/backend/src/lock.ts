@@ -10,30 +10,32 @@ interface LockData {
   startedAt: string;
 }
 
+function isMatchingLiveProcess(lock: LockData): boolean {
+  if (!Number.isInteger(lock.pid) || lock.pid <= 1 || !isProcessAlive(lock.pid)) return false;
+  const actualStartTime = getProcessStartTime(lock.pid);
+  if (actualStartTime === null) return false;
+  return Math.abs(new Date(lock.startedAt).getTime() - new Date(actualStartTime).getTime()) < 2000;
+}
+
 export function acquireLock(repoRoot: string): void {
   const lockPath = path.join(repoRoot, DATA_DIR, LOCK_FILE);
 
-  // Read existing lock
-  try {
-    const content = fs.readFileSync(lockPath, 'utf-8');
-    const lock: LockData = JSON.parse(content);
-
-    if (isProcessAlive(lock.pid)) {
-      const actualStartTime = getProcessStartTime(lock.pid);
-      if (actualStartTime !== null) {
-        const storedTime = new Date(lock.startedAt).getTime();
-        const actualTime = new Date(actualStartTime).getTime();
-        const driftMs = Math.abs(storedTime - actualTime);
-        if (driftMs < 2000) {
-          console.error(
-            `Another instance of tasks-manager is already running in this directory (PID: ${lock.pid}).`
-          );
-          process.exit(1);
-        }
+  // Bun's watch mode can start the replacement process just before the old
+  // process finishes its graceful shutdown. Give that owner a short window to
+  // release the lock, while still rejecting a genuinely concurrent server.
+  for (let attempt = 0; attempt < 10; attempt++) {
+    try {
+      const lock = JSON.parse(fs.readFileSync(lockPath, 'utf-8')) as LockData;
+      if (lock.pid === process.pid || !isMatchingLiveProcess(lock)) break;
+      if (attempt < 9) {
+        Bun.sleepSync(50);
+        continue;
       }
+      console.error(`Another instance of tasks-manager is already running in this directory (PID: ${lock.pid}).`);
+      process.exit(1);
+    } catch {
+      break;
     }
-  } catch {
-    // No lock file or invalid JSON — proceed
   }
 
   // Write our lock
@@ -47,6 +49,8 @@ export function acquireLock(repoRoot: string): void {
 export function releaseLock(repoRoot: string): void {
   const lockPath = path.join(repoRoot, DATA_DIR, LOCK_FILE);
   try {
+    const lock = JSON.parse(fs.readFileSync(lockPath, 'utf-8')) as LockData;
+    if (lock.pid !== process.pid) return;
     fs.unlinkSync(lockPath);
   } catch {
     // Already removed

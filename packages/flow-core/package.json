@@ -1,0 +1,16 @@
+{
+  "name": "@tasks-manager/flow-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.2.0",
+    "typescript": "^5.7.0"
+  }
+}

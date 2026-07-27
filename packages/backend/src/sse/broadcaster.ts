@@ -1,4 +1,5 @@
 import type { Context } from 'hono';
+import { getDb } from '../db/database.js';
 
 const encoder = new TextEncoder();
 
@@ -13,13 +14,10 @@ interface SSEClient {
   closed: boolean;
 }
 
-const BUFFER_SIZE = 1000;
 const HEARTBEAT_INTERVAL = 15_000;
 
 export class SSEBroadcaster {
   private clients = new Set<SSEClient>();
-  private buffer: SSEEvent[] = [];
-  private nextId = 1;
   private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
 
   start(): void {
@@ -46,21 +44,21 @@ export class SSEBroadcaster {
         client = { controller, closed: false };
         this.clients.add(client);
 
-        // Replay missed events
+        // Events are persisted so reconnects survive a server restart.
         if (lastEventId) {
           const id = parseInt(lastEventId, 10);
           if (!isNaN(id)) {
-            const oldest = this.buffer.length > 0 ? this.buffer[0].id : this.nextId;
-            if (id < oldest || (this.buffer.length === 0 && id >= this.nextId)) {
-              // Buffer doesn't cover the requested ID (too old, or server restarted)
-              this.writeToClient(client, { id: this.allocId(), event: 'stale', data: {} });
-            } else {
-              // Replay events after the last received one
-              for (const evt of this.buffer) {
-                if (evt.id > id) {
-                  this.writeToClient(client, evt);
-                }
-              }
+            const db = getDb();
+            const bounds = db.query<{ oldest: number | null; newest: number | null }, []>(
+              'SELECT MIN(id) AS oldest, MAX(id) AS newest FROM events'
+            ).get();
+            if (bounds?.oldest != null && id < bounds.oldest - 1) {
+              this.writeToClient(client, { id: bounds.newest ?? id, event: 'stale', data: {} });
+            } else if (bounds?.newest != null && id < bounds.newest) {
+              const rows = db.query<{ id: number; topic: string; payload: string }, [number]>(
+                'SELECT id, topic, payload FROM events WHERE id > ? ORDER BY id ASC LIMIT 1000'
+              ).all(id);
+              for (const row of rows) this.writeToClient(client, { id: row.id, event: row.topic, data: JSON.parse(row.payload) });
             }
           }
         }
@@ -89,28 +87,11 @@ export class SSEBroadcaster {
     });
   }
 
-  broadcast(event: string, data: unknown): void {
-    const sseEvent: SSEEvent = {
-      id: this.allocId(),
-      event,
-      data,
-    };
-
-    // Add to ring buffer
-    this.buffer.push(sseEvent);
-    if (this.buffer.length > BUFFER_SIZE) {
-      this.buffer.shift();
-    }
-
-    // Send to all clients
+  broadcastPersisted(sseEvent: SSEEvent): void {
     const snapshot = [...this.clients];
     for (const client of snapshot) {
       this.writeToClient(client, sseEvent);
     }
-  }
-
-  private allocId(): number {
-    return this.nextId++;
   }
 
   private writeToClient(client: SSEClient, event: SSEEvent): void {

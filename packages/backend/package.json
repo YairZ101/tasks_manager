@@ -9,6 +9,7 @@
     "test": "bun test"
   },
   "dependencies": {
+    "@tasks-manager/flow-core": "workspace:*",
     "hono": "^4.7.0",
     "shell-quote": "^1.8.2"
   },

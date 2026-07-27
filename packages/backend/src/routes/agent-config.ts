@@ -1,9 +1,45 @@
 import { Hono } from 'hono';
+import { streamSSE } from 'hono/streaming';
 import { getDb } from '../db/database.js';
 import type { AgentConfig } from '../types.js';
 import { CliAdapter } from '../agents/cli-adapter.js';
+import { parseAgentSetup } from '../agents/config.js';
 
 const agentConfig = new Hono();
+
+type AgentTestResult = { success: boolean; durationMs: number; error?: string };
+
+async function runAgentTest(config: AgentConfig, onOutput: (line: string) => void): Promise<AgentTestResult> {
+  const testPrompt = 'Respond with exactly: OK';
+  const startTime = Date.now();
+  const abortController = new AbortController();
+  const timeout = setTimeout(() => abortController.abort(), 30_000);
+  try {
+    const result = await new CliAdapter(config).execute({
+      task: {
+        id: 0,
+        task_key: 'TEST-0',
+        title: testPrompt,
+        description: '',
+        acceptance: '',
+        queue_state: 'ready',
+        resolution: 'open',
+        sort_order: 0,
+        created_at: '',
+        updated_at: '',
+      },
+      prompt: testPrompt,
+      workingDir: process.cwd(),
+      onOutput,
+      signal: abortController.signal,
+    });
+    return { success: result.success, durationMs: Date.now() - startTime, error: result.success ? undefined : result.summary };
+  } catch (err: any) {
+    return { success: false, durationMs: Date.now() - startTime, error: err.message || 'Unknown error' };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
 
 // GET /agent-config
 agentConfig.get('/', (c) => {
@@ -26,7 +62,7 @@ agentConfig.put('/', async (c) => {
     cli_prompt_mode,
     cli_prompt_flag,
     timeout_ms,
-    max_concurrent_agents,
+    max_concurrent_executions,
   } = body;
 
   // Validate cli_cmd
@@ -49,14 +85,13 @@ agentConfig.put('/', async (c) => {
     return c.json({ error: 'Timeout must be at least 1000ms' }, 400);
   }
 
-  // Validate max_concurrent_agents
-  if (max_concurrent_agents !== undefined && (
-    typeof max_concurrent_agents !== 'number' ||
-    !Number.isInteger(max_concurrent_agents) ||
-    max_concurrent_agents < 1 ||
-    max_concurrent_agents > 10
+  if (max_concurrent_executions !== undefined && (
+    typeof max_concurrent_executions !== 'number' ||
+    !Number.isInteger(max_concurrent_executions) ||
+    max_concurrent_executions < 1 ||
+    max_concurrent_executions > 10
   )) {
-    return c.json({ error: 'max_concurrent_agents must be an integer between 1 and 10' }, 400);
+    return c.json({ error: 'max_concurrent_executions must be an integer between 1 and 10' }, 400);
   }
 
   const updates: string[] = [];
@@ -78,9 +113,9 @@ agentConfig.put('/', async (c) => {
     updates.push('timeout_ms = ?');
     params.push(timeout_ms);
   }
-  if (max_concurrent_agents !== undefined) {
-    updates.push('max_concurrent_agents = ?');
-    params.push(max_concurrent_agents);
+  if (max_concurrent_executions !== undefined) {
+    updates.push('max_concurrent_executions = ?');
+    params.push(max_concurrent_executions);
   }
 
   if (updates.length > 0) {
@@ -101,46 +136,41 @@ agentConfig.post('/test', async (c) => {
     return c.json({ error: 'Agent not configured' }, 400);
   }
 
-  const testPrompt = 'Respond with exactly: OK';
-  const startTime = Date.now();
+  const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
+  const stream = body?.stream === true;
+  const setupInput = body ? Object.fromEntries(Object.entries(body).filter(([key]) => key !== 'stream')) : null;
+  const setup = setupInput ? parseAgentSetup(setupInput, config) : null;
+  if (setup && 'error' in setup) return c.json({ error: setup.error }, 400);
+  const candidate = setup?.config ?? config;
+  if (!candidate.cli_cmd?.trim()) return c.json({ error: 'Agent CLI command is required.' }, 400);
 
-  try {
-    const abortController = new AbortController();
-    const timeout = setTimeout(() => abortController.abort(), 30_000);
-
-    const dummyTask: any = {
-      id: 0,
-      task_key: 'TEST-0',
-      title: testPrompt,
-      description: '',
-      acceptance: '',
-      status: 'todo',
-      agent_status: null,
-    };
-
-    const adapter = new CliAdapter(config);
-
-    await adapter.execute({
-      task: dummyTask,
-      prompt: testPrompt,
-      workingDir: process.cwd(),
-      onOutput: () => {},
-      signal: abortController.signal,
-    });
-
-    clearTimeout(timeout);
-
-    return c.json({
-      success: true,
-      durationMs: Date.now() - startTime,
-    });
-  } catch (err: any) {
-    return c.json({
-      success: false,
-      durationMs: Date.now() - startTime,
-      error: err.message || 'Unknown error',
+  if (stream) {
+    return streamSSE(c, async (sse) => {
+      let outputLength = 0;
+      let writes = Promise.resolve();
+      const appendOutput = (line: string) => {
+        if (outputLength >= 12_000) return;
+        const clipped = line.slice(0, 12_000 - outputLength);
+        outputLength += clipped.length + 1;
+        writes = writes.then(() => sse.writeSSE({ event: 'output', data: JSON.stringify({ line: clipped }) }));
+      };
+      const result = await runAgentTest(candidate, appendOutput);
+      await writes;
+      await sse.writeSSE({ event: 'complete', data: JSON.stringify(result) });
     });
   }
+
+  const output: string[] = [];
+  let outputLength = 0;
+  const appendOutput = (line: string) => {
+    if (outputLength >= 12_000) return;
+    const remaining = 12_000 - outputLength;
+    const clipped = line.slice(0, remaining);
+    output.push(clipped);
+    outputLength += clipped.length + 1;
+  };
+  const result = await runAgentTest(candidate, appendOutput);
+  return c.json({ ...result, output: output.join('\n') });
 });
 
 export default agentConfig;

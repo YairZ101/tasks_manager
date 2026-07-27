@@ -1,225 +1,228 @@
 import { Database } from 'bun:sqlite';
+import fs from 'fs';
 import path from 'path';
 
 const DATA_DIR = '.tasks_manager';
+const SCHEMA_FAMILY = 'outcome-flow';
+const SCHEMA_VERSION = '1';
 
 let db: Database;
 
 export function getDb(): Database {
-  if (!db) {
-    throw new Error('Database not initialized. Call initDb() first.');
-  }
+  if (!db) throw new Error('Database not initialized. Call initDb() first.');
   return db;
 }
 
-export function initDb(repoRoot: string): Database {
-  const dbPath = path.join(repoRoot, DATA_DIR, 'tasks.db');
-  db = new Database(dbPath, { create: true });
+function hasUserTables(database: Database): boolean {
+  const row = database.query<{ count: number }, []>(
+    "SELECT COUNT(*) AS count FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+  ).get();
+  return (row?.count ?? 0) > 0;
+}
 
-  // Required pragmas
+function assertSchemaFamily(database: Database, dbPath: string): void {
+  if (!hasUserTables(database)) return;
+  const appMeta = database.query<{ name: string }, []>(
+    "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'app_meta'"
+  ).get();
+  if (!appMeta) {
+    throw new Error(`Legacy Tasks Manager database detected at ${dbPath}. Move or delete it to initialize the outcome-flow schema.`);
+  }
+  const family = database.query<{ value: string }, [string]>('SELECT value FROM app_meta WHERE key = ?').get('schema_family');
+  if (family?.value !== SCHEMA_FAMILY) {
+    throw new Error(`Unsupported database schema family at ${dbPath}. Expected "${SCHEMA_FAMILY}".`);
+  }
+}
+
+export function initDb(repoRoot: string): Database {
+  const dataDir = path.join(repoRoot, DATA_DIR);
+  fs.mkdirSync(dataDir, { recursive: true });
+  const dbPath = path.join(dataDir, 'tasks.db');
+  db = new Database(dbPath, { create: true });
   db.exec('PRAGMA journal_mode = WAL;');
   db.exec('PRAGMA busy_timeout = 5000;');
   db.exec('PRAGMA foreign_keys = ON;');
 
-  runMigrations(db);
+  try {
+    assertSchemaFamily(db, dbPath);
+    createSchema(db);
+  } catch (error) {
+    db.close();
+    db = undefined!;
+    throw error;
+  }
   return db;
 }
 
 export function closeDb(): void {
-  if (db) {
-    db.close();
-    db = undefined!;
-  }
+  if (!db) return;
+  db.close();
+  db = undefined!;
 }
 
-function runMigrations(db: Database): void {
-  const versionRow = db.query<{ user_version: number }, []>('PRAGMA user_version').get();
-  const version = versionRow?.user_version ?? 0;
+function createSchema(database: Database): void {
+  database.exec(`
+    CREATE TABLE IF NOT EXISTS app_meta (
+      key   TEXT PRIMARY KEY,
+      value TEXT NOT NULL
+    );
 
-  if (version < 1) {
-    db.exec(`
-      CREATE TABLE IF NOT EXISTS tasks (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_key      TEXT UNIQUE NOT NULL,
-        title         TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 500),
-        description   TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 50000),
-        acceptance    TEXT NOT NULL DEFAULT '' CHECK (length(acceptance) <= 50000),
-        status        TEXT NOT NULL DEFAULT 'backlog'
-                      CHECK (status IN ('backlog', 'todo', 'in-progress', 'done')),
-        agent_status  TEXT DEFAULT NULL
-                      CHECK (agent_status IS NULL OR agent_status IN ('running', 'completed', 'failed')),
-        agent_pid     INTEGER DEFAULT NULL,
-        agent_started_at TEXT DEFAULT NULL,
-        sort_order    REAL NOT NULL DEFAULT 0,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
-      );
+    INSERT INTO app_meta (key, value) VALUES ('schema_family', '${SCHEMA_FAMILY}')
+      ON CONFLICT(key) DO NOTHING;
+    INSERT INTO app_meta (key, value) VALUES ('schema_version', '${SCHEMA_VERSION}')
+      ON CONFLICT(key) DO NOTHING;
 
-      CREATE TABLE IF NOT EXISTS task_logs (
-        id         INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
-        run_number INTEGER NOT NULL DEFAULT 1,
-        timestamp  TEXT NOT NULL DEFAULT (datetime('now')),
-        level      TEXT NOT NULL DEFAULT 'info'
-                   CHECK (level IN ('info', 'warn', 'error', 'agent')),
-        message    TEXT NOT NULL
-      );
+    CREATE TABLE IF NOT EXISTS tasks (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_key    TEXT UNIQUE NOT NULL,
+      title       TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 500),
+      description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 50000),
+      acceptance  TEXT NOT NULL DEFAULT '' CHECK (length(acceptance) <= 50000),
+      queue_state TEXT NOT NULL DEFAULT 'backlog' CHECK (queue_state IN ('backlog', 'ready')),
+      resolution  TEXT NOT NULL DEFAULT 'open' CHECK (resolution IN ('open', 'completed', 'cancelled')),
+      sort_order  REAL NOT NULL DEFAULT 0,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
-      CREATE INDEX IF NOT EXISTS idx_task_logs_task_id ON task_logs(task_id, run_number, id);
+    CREATE TABLE IF NOT EXISTS agent_config (
+      id                        INTEGER PRIMARY KEY CHECK (id = 1),
+      cli_cmd                   TEXT DEFAULT NULL,
+      cli_prompt_mode           TEXT NOT NULL DEFAULT 'stdin' CHECK (cli_prompt_mode IN ('stdin', 'argument', 'flag')),
+      cli_prompt_flag           TEXT DEFAULT NULL,
+      timeout_ms                INTEGER NOT NULL DEFAULT 1800000,
+      max_concurrent_executions INTEGER NOT NULL DEFAULT 3 CHECK (max_concurrent_executions BETWEEN 1 AND 10),
+      updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
-      CREATE TABLE IF NOT EXISTS agent_config (
-        id                 INTEGER PRIMARY KEY CHECK (id = 1),
-        type               TEXT NOT NULL DEFAULT 'cli',
-        cli_cmd            TEXT DEFAULT NULL,
-        cli_prompt_mode    TEXT NOT NULL DEFAULT 'stdin'
-                           CHECK (cli_prompt_mode IN ('stdin', 'argument', 'flag')),
-        cli_prompt_flag    TEXT DEFAULT NULL,
-        api_url            TEXT DEFAULT NULL,
-        api_headers        TEXT DEFAULT NULL,
-        api_model          TEXT DEFAULT NULL,
-        api_request_format TEXT NOT NULL DEFAULT 'openai'
-                           CHECK (api_request_format IN ('openai', 'ollama')),
-        api_stream_format  TEXT NOT NULL DEFAULT 'sse'
-                           CHECK (api_stream_format IN ('sse', 'ndjson', 'none')),
-        timeout_ms         INTEGER NOT NULL DEFAULT 1800000,
-        updated_at         TEXT NOT NULL DEFAULT (datetime('now'))
-      );
+    CREATE TABLE IF NOT EXISTS project_config (
+      id               INTEGER PRIMARY KEY CHECK (id = 1),
+      task_prefix      TEXT NOT NULL CHECK (length(task_prefix) BETWEEN 1 AND 5 AND task_prefix GLOB '[A-Z0-9]*'),
+      next_task_number INTEGER NOT NULL DEFAULT 1,
+      repo_name        TEXT NOT NULL,
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
-      CREATE TABLE IF NOT EXISTS project_config (
-        id                INTEGER PRIMARY KEY CHECK (id = 1),
-        task_prefix       TEXT NOT NULL
-                          CHECK (length(task_prefix) BETWEEN 1 AND 5 AND task_prefix GLOB '[A-Z0-9]*'),
-        next_task_number  INTEGER NOT NULL DEFAULT 1,
-        repo_name         TEXT NOT NULL,
-        created_at        TEXT NOT NULL DEFAULT (datetime('now'))
-      );
+    CREATE TABLE IF NOT EXISTS flows (
+      id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      name              TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
+      is_default        INTEGER NOT NULL DEFAULT 0 CHECK (is_default IN (0, 1)),
+      active_version_id INTEGER DEFAULT NULL,
+      created_at        TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at        TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
-      CREATE TRIGGER IF NOT EXISTS tasks_updated_at AFTER UPDATE ON tasks
-      BEGIN
-        UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id;
-      END;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_flows_one_default ON flows(is_default) WHERE is_default = 1;
 
-      INSERT INTO agent_config (id) VALUES (1) ON CONFLICT DO NOTHING;
+    CREATE TABLE IF NOT EXISTS flow_versions (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      flow_id         INTEGER NOT NULL REFERENCES flows(id) ON DELETE CASCADE,
+      version         INTEGER NOT NULL,
+      state           TEXT NOT NULL CHECK (state IN ('draft', 'published', 'archived')),
+      draft_revision  INTEGER NOT NULL DEFAULT 1,
+      definition_json TEXT NOT NULL,
+      compiled_json   TEXT DEFAULT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      published_at    TEXT DEFAULT NULL,
+      UNIQUE(flow_id, version, state)
+    );
 
-      PRAGMA user_version = 1;
-    `);
-  }
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_flow_versions_draft ON flow_versions(flow_id) WHERE state = 'draft';
 
-  if (version < 2) {
-    db.exec(`ALTER TABLE agent_config ADD COLUMN max_concurrent_agents INTEGER NOT NULL DEFAULT 3`);
-    db.exec(`ALTER TABLE tasks ADD COLUMN agent_worktree TEXT DEFAULT NULL`);
-    db.exec(`ALTER TABLE tasks ADD COLUMN agent_branch TEXT DEFAULT NULL`);
-    db.exec(`PRAGMA user_version = 2`);
-  }
+    CREATE TABLE IF NOT EXISTS workspaces (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id       INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      repo_root     TEXT NOT NULL,
+      worktree_path TEXT NOT NULL,
+      branch        TEXT DEFAULT NULL,
+      state         TEXT NOT NULL CHECK (state IN ('active', 'retained', 'cleanup_required', 'removed', 'orphaned')),
+      is_dirty      INTEGER DEFAULT NULL CHECK (is_dirty IS NULL OR is_dirty IN (0, 1)),
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
-  if (version < 3) {
-    // Create workflow_steps table
-    db.exec(`
-      CREATE TABLE workflow_steps (
-        id              INTEGER PRIMARY KEY AUTOINCREMENT,
-        slug            TEXT NOT NULL UNIQUE,
-        name            TEXT NOT NULL,
-        requires_review INTEGER NOT NULL DEFAULT 0,
-        config          TEXT NOT NULL DEFAULT '{}',
-        sort_order      REAL NOT NULL,
-        created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-      )
-    `);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_workspace_live_task ON workspaces(task_id)
+      WHERE state IN ('active', 'retained', 'cleanup_required');
 
-    // Seed default step only if existing tasks use 'in-progress' status.
-    // New projects get their workflow steps from the init wizard instead.
-    db.exec(`
-      INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order)
-      SELECT 'in-progress', 'In Progress', 0, '{}', 1.0
-      WHERE EXISTS (SELECT 1 FROM tasks WHERE status = 'in-progress')
-    `);
+    CREATE TABLE IF NOT EXISTS runs (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id         INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      flow_version_id INTEGER NOT NULL REFERENCES flow_versions(id),
+      workspace_id    INTEGER DEFAULT NULL REFERENCES workspaces(id),
+      status          TEXT NOT NULL CHECK (status IN ('queued', 'running', 'waiting', 'attention', 'finished', 'stopped')),
+      result_category TEXT DEFAULT NULL CHECK (result_category IS NULL OR result_category IN ('completed', 'paused', 'cancelled')),
+      reason          TEXT DEFAULT NULL,
+      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at      TEXT DEFAULT NULL,
+      finished_at     TEXT DEFAULT NULL
+    );
 
-    // Recreate tasks table without the status CHECK constraint.
-    // Create new table first, copy data, drop old, rename new.
-    // This avoids FK resolution issues with RENAME on some Bun/SQLite versions.
-    db.exec('PRAGMA foreign_keys = OFF');
-    db.exec(`
-      CREATE TABLE tasks_new (
-        id            INTEGER PRIMARY KEY AUTOINCREMENT,
-        task_key      TEXT UNIQUE NOT NULL,
-        title         TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 500),
-        description   TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 50000),
-        acceptance    TEXT NOT NULL DEFAULT '' CHECK (length(acceptance) <= 50000),
-        status        TEXT NOT NULL DEFAULT 'backlog',
-        agent_status  TEXT DEFAULT NULL
-                      CHECK (agent_status IS NULL OR agent_status IN ('running', 'completed', 'failed')),
-        agent_pid     INTEGER DEFAULT NULL,
-        agent_started_at TEXT DEFAULT NULL,
-        sort_order    REAL NOT NULL DEFAULT 0,
-        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-        updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
-        agent_worktree TEXT DEFAULT NULL,
-        agent_branch  TEXT DEFAULT NULL
-      )
-    `);
-    db.exec(`
-      INSERT INTO tasks_new (id, task_key, title, description, acceptance, status,
-        agent_status, agent_pid, agent_started_at, sort_order, created_at, updated_at,
-        agent_worktree, agent_branch)
-      SELECT id, task_key, title, description, acceptance, status,
-        agent_status, agent_pid, agent_started_at, sort_order, created_at, updated_at,
-        agent_worktree, agent_branch
-      FROM tasks
-    `);
-    db.exec('DROP TABLE tasks');
-    db.exec('ALTER TABLE tasks_new RENAME TO tasks');
-    db.exec(`
-      CREATE TRIGGER tasks_updated_at AFTER UPDATE ON tasks
-      BEGIN
-        UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id;
-      END
-    `);
-    db.exec('PRAGMA foreign_keys = ON');
-    db.exec('PRAGMA user_version = 3');
-  }
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_runs_one_active_task ON runs(task_id)
+      WHERE status IN ('queued', 'running', 'waiting', 'attention');
+    CREATE INDEX IF NOT EXISTS idx_runs_task ON runs(task_id, id DESC);
 
-  if (version < 4) {
-    db.exec(`ALTER TABLE project_config ADD COLUMN delete_branch_on_done INTEGER NOT NULL DEFAULT 1`);
-    db.exec('PRAGMA user_version = 4');
-  }
+    CREATE TABLE IF NOT EXISTS attempts (
+      id                     INTEGER PRIMARY KEY AUTOINCREMENT,
+      run_id                 INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      block_id               TEXT NOT NULL,
+      parent_attempt_id      INTEGER DEFAULT NULL REFERENCES attempts(id),
+      incoming_connection_id TEXT DEFAULT NULL,
+      sequence               INTEGER NOT NULL,
+      block_attempt          INTEGER NOT NULL,
+      status                 TEXT NOT NULL CHECK (status IN ('queued', 'running', 'waiting', 'succeeded', 'failed', 'timed_out', 'interrupted', 'cancelled')),
+      outcome_id             TEXT DEFAULT NULL,
+      result_json            TEXT DEFAULT NULL,
+      decision_comment       TEXT DEFAULT NULL,
+      pid                    INTEGER DEFAULT NULL,
+      process_started_at     TEXT DEFAULT NULL,
+      created_at             TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at             TEXT DEFAULT NULL,
+      finished_at            TEXT DEFAULT NULL,
+      UNIQUE(run_id, sequence)
+    );
 
-  if (version < 5) {
-    // Add fixed column to workflow_steps (0 = user-managed, 1 = fixed/non-removable)
-    db.exec(`ALTER TABLE workflow_steps ADD COLUMN fixed INTEGER NOT NULL DEFAULT 0`);
+    CREATE INDEX IF NOT EXISTS idx_attempts_queue ON attempts(status, id);
+    CREATE INDEX IF NOT EXISTS idx_attempts_run ON attempts(run_id, sequence);
 
-    // Determine sort_order bounds for Todo and Done
-    const minOrder = db.query<{ val: number | null }, []>(
-      'SELECT MIN(sort_order) as val FROM workflow_steps'
-    ).get();
-    const maxOrder = db.query<{ val: number | null }, []>(
-      'SELECT MAX(sort_order) as val FROM workflow_steps'
-    ).get();
+    CREATE TABLE IF NOT EXISTS logs (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      run_id     INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      attempt_id INTEGER NOT NULL REFERENCES attempts(id) ON DELETE CASCADE,
+      timestamp  TEXT NOT NULL DEFAULT (datetime('now')),
+      level      TEXT NOT NULL DEFAULT 'info' CHECK (level IN ('info', 'warn', 'error', 'agent')),
+      message    TEXT NOT NULL
+    );
 
-    const todoOrder = (minOrder?.val ?? 1) - 1.0;
-    const doneOrder = (maxOrder?.val ?? 1) + 1.0;
+    CREATE INDEX IF NOT EXISTS idx_logs_attempt ON logs(attempt_id, id);
 
-    // Read delete_branch_on_done from project_config before dropping it
-    const projConfig = db.query<{ delete_branch_on_done: number }, []>(
-      'SELECT delete_branch_on_done FROM project_config WHERE id = 1'
-    ).get();
-    const deleteBranch = projConfig?.delete_branch_on_done ?? 1;
-    const doneConfig = JSON.stringify({ deleteBranch: !!deleteBranch });
+    CREATE TABLE IF NOT EXISTS events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      topic       TEXT NOT NULL,
+      entity_type TEXT DEFAULT NULL,
+      entity_id   TEXT DEFAULT NULL,
+      payload     TEXT NOT NULL,
+      created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
 
-    // Seed Todo and Done as fixed steps (upsert to ensure fixed=1 and config are set)
-    db.query(
-      `INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order, fixed)
-       VALUES (?, 'Todo', 0, '{}', ?, 1)
-       ON CONFLICT(slug) DO UPDATE SET fixed = 1, sort_order = MIN(excluded.sort_order, sort_order)`
-    ).run('todo', todoOrder);
-    db.query(
-      `INSERT INTO workflow_steps (slug, name, requires_review, config, sort_order, fixed)
-       VALUES (?, 'Done', 0, ?, ?, 1)
-       ON CONFLICT(slug) DO UPDATE SET fixed = 1, config = excluded.config, sort_order = MAX(excluded.sort_order, sort_order)`
-    ).run('done', doneConfig, doneOrder);
+    CREATE INDEX IF NOT EXISTS idx_events_created ON events(id);
 
-    // Migrate tasks from 'todo'/'done' status — these now reference workflow_steps rows
-    // (no actual data migration needed since the slug values stay the same)
+    CREATE TRIGGER IF NOT EXISTS tasks_updated_at AFTER UPDATE ON tasks
+    BEGIN
+      UPDATE tasks SET updated_at = datetime('now') WHERE id = NEW.id;
+    END;
 
-    db.exec('PRAGMA user_version = 5');
-  }
+    CREATE TRIGGER IF NOT EXISTS flows_updated_at AFTER UPDATE ON flows
+    BEGIN
+      UPDATE flows SET updated_at = datetime('now') WHERE id = NEW.id;
+    END;
+
+    CREATE TRIGGER IF NOT EXISTS workspaces_updated_at AFTER UPDATE ON workspaces
+    BEGIN
+      UPDATE workspaces SET updated_at = datetime('now') WHERE id = NEW.id;
+    END;
+
+    INSERT INTO agent_config (id) VALUES (1) ON CONFLICT DO NOTHING;
+    PRAGMA user_version = 1;
+  `);
 }

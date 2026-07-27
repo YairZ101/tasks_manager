@@ -61,4 +61,17 @@ describe('acquireLock / releaseLock', () => {
     const content = JSON.parse(fs.readFileSync(lockPath, 'utf-8'));
     expect(content.pid).toBe(process.pid);
   });
+
+  test('acquireLock tolerates watch-mode re-entry from the same process', () => {
+    acquireLock(tmpDir);
+    expect(() => acquireLock(tmpDir)).not.toThrow();
+    expect(JSON.parse(fs.readFileSync(path.join(tmpDir, DATA_DIR, '.lock'), 'utf-8')).pid).toBe(process.pid);
+  });
+
+  test('releaseLock never removes a lock owned by another process', () => {
+    const lockPath = path.join(tmpDir, DATA_DIR, '.lock');
+    fs.writeFileSync(lockPath, JSON.stringify({ pid: 99999999, startedAt: new Date().toISOString() }));
+    releaseLock(tmpDir);
+    expect(fs.existsSync(lockPath)).toBe(true);
+  });
 });

@@ -1,110 +1,27 @@
-import { useEffect, useRef, useCallback } from 'react';
+import { useEffect } from 'react';
+import { toast } from 'sonner';
 import { useAppStore } from './useTaskStore.js';
-import { api } from '../api/client.js';
 
-export function useEventSource() {
-  const updateTaskInStore = useAppStore((s) => s.updateTaskInStore);
-  const removeTaskFromStore = useAppStore((s) => s.removeTaskFromStore);
-  const fetchTasks = useAppStore((s) => s.fetchTasks);
-  const fetchWorkflowSteps = useAppStore((s) => s.fetchWorkflowSteps);
-  const addActiveRun = useAppStore((s) => s.addActiveRun);
-  const removeActiveRun = useAppStore((s) => s.removeActiveRun);
-  const esRef = useRef<EventSource | null>(null);
-  const logCallbacksRef = useRef<Map<number, (logs: any[]) => void>>(new Map());
-
-  const registerLogCallback = useCallback((taskId: number, cb: (logs: any[]) => void) => {
-    logCallbacksRef.current.set(taskId, cb);
-    return () => {
-      logCallbacksRef.current.delete(taskId);
-    };
-  }, []);
-
+export function useEventSource(): void {
+  const refreshTasks = useAppStore((state) => state.refreshTasks);
+  const refreshFlows = useAppStore((state) => state.refreshFlows);
+  const bootstrap = useAppStore((state) => state.bootstrap);
   useEffect(() => {
-    const es = new EventSource('/events');
-    esRef.current = es;
-
-    es.addEventListener('task:updated', (e) => {
+    const source = new EventSource('/events');
+    const tasks = () => { void refreshTasks(); };
+    const flows = () => { void refreshFlows(); };
+    source.addEventListener('task:changed', tasks);
+    source.addEventListener('task:deleted', tasks);
+    source.addEventListener('run:changed', tasks);
+    source.addEventListener('flow:changed', flows);
+    source.addEventListener('flow:published', flows);
+    source.addEventListener('stale', () => { void bootstrap(); });
+    source.addEventListener('toast', (event) => {
       try {
-        const data = JSON.parse(e.data);
-        if (data.task) {
-          if (data.task._deleted) {
-            removeTaskFromStore(data.task.id);
-          } else {
-            updateTaskInStore(data.task);
-          }
-        }
-      } catch {
-        // Invalid event data
-      }
+        const data = JSON.parse((event as MessageEvent).data);
+        if (data.type === 'success') toast.success(data.message); else toast.info(data.message);
+      } catch {}
     });
-
-    es.addEventListener('agent:status', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        if (data.taskId) {
-          // Update activeRuns based on status
-          if (data.status === 'running' && data.taskKey) {
-            addActiveRun({ taskId: data.taskId, taskKey: data.taskKey });
-          } else if (data.status === 'completed' || data.status === 'failed') {
-            removeActiveRun(data.taskId);
-          }
-
-          // Trigger log run separator
-          if (data.status === 'running' && data.runNumber != null) {
-            const cb = logCallbacksRef.current.get(data.taskId);
-            if (cb) {
-              cb([{ _runStarted: true, run_number: data.runNumber }]);
-            }
-          }
-        }
-      } catch {
-        // Invalid event data
-      }
-    });
-
-    es.addEventListener('toast', (e) => {
-      try {
-        const data = JSON.parse(e.data);
-        window.dispatchEvent(new CustomEvent('app:toast', { detail: data }));
-      } catch {
-        // Invalid event data
-      }
-    });
-
-    es.addEventListener('stale', () => {
-      fetchTasks();
-      fetchWorkflowSteps();
-      // Re-fetch runner state on stale reconnect
-      api.getStatus().then((data) => {
-        useAppStore.setState({
-          activeRuns: data.activeRuns || [],
-          maxConcurrentAgents: data.maxConcurrentAgents ?? 3,
-        });
-      }).catch(() => {});
-    });
-
-    es.addEventListener('workflow:updated', () => {
-      fetchWorkflowSteps();
-    });
-
-    es.onerror = () => {
-      // EventSource auto-reconnects
-    };
-
-    es.addEventListener('task:log', (e: any) => {
-      try {
-        const data = JSON.parse(e.data);
-        const cb = logCallbacksRef.current.get(data.taskId);
-        if (cb) cb([data.log]);
-      } catch {
-        // Invalid event data
-      }
-    });
-
-    return () => {
-      es.close();
-    };
-  }, [updateTaskInStore, removeTaskFromStore, fetchTasks, fetchWorkflowSteps, addActiveRun, removeActiveRun]);
-
-  return { registerLogCallback };
+    return () => source.close();
+  }, [bootstrap, refreshFlows, refreshTasks]);
 }

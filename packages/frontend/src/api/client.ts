@@ -1,123 +1,90 @@
-const BASE = '';
+import type { FlowDefinition, ValidationResult } from '@tasks-manager/flow-core';
+import type { Attempt, Flow, FlowVersion, RunDetail, Runner, Task, TaskLog } from '../domain.js';
+
+export type AgentSetup = {
+  cli_cmd: string;
+  cli_prompt_mode: 'stdin' | 'argument' | 'flag';
+  cli_prompt_flag?: string;
+};
+
+export type FlowTemplate = 'recommended' | 'minimal' | 'blank';
 
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options?.headers,
-    },
+  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } });
+  if (response.status === 204) return undefined as T;
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw Object.assign(new Error(data.error || `Request failed (${response.status})`), { status: response.status, data });
+  return data as T;
+}
+
+async function streamAgentTest(candidate: AgentSetup, onOutput: (line: string) => void): Promise<{ success: boolean; durationMs: number; error?: string }> {
+  const response = await fetch('/agent-config/test', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', Accept: 'text/event-stream' },
+    body: JSON.stringify({ ...candidate, stream: true }),
   });
-
-  if (res.status === 204) return undefined as T;
-
-  let data: any;
-  try {
-    data = await res.json();
-  } catch {
-    if (!res.ok) {
-      const error: any = new Error(`Request failed with status ${res.status}`);
-      error.status = res.status;
-      error.data = {};
-      throw error;
-    }
-    throw new Error('Invalid JSON response');
+  if (!response.ok || !response.body) {
+    const data = await response.json().catch(() => ({}));
+    throw Object.assign(new Error(data.error || `Request failed (${response.status})`), { status: response.status, data });
   }
 
-  if (!res.ok) {
-    const error: any = new Error(data.error || 'Request failed');
-    error.status = res.status;
-    error.data = data;
-    throw error;
-  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let pending = '';
+  let complete: { success: boolean; durationMs: number; error?: string } | null = null;
+  const consumeEvent = (raw: string) => {
+    const event = raw.match(/^event: (.+)$/m)?.[1];
+    const data = raw.match(/^data: (.+)$/m)?.[1];
+    if (!event || !data) return;
+    const payload = JSON.parse(data) as { line?: string; success?: boolean; durationMs?: number; error?: string };
+    if (event === 'output' && payload.line !== undefined) onOutput(payload.line);
+    if (event === 'complete' && typeof payload.success === 'boolean' && typeof payload.durationMs === 'number') complete = { success: payload.success, durationMs: payload.durationMs, error: payload.error };
+  };
 
-  return data;
+  while (true) {
+    const chunk = await reader.read();
+    pending += decoder.decode(chunk.value, { stream: !chunk.done });
+    const events = pending.split('\n\n');
+    pending = events.pop() ?? '';
+    events.forEach(consumeEvent);
+    if (chunk.done) break;
+  }
+  if (!complete) throw new Error('Agent test ended without a result.');
+  return complete;
 }
 
 export const api = {
-  // Status
-  getStatus: () => request<{
-    initialized: boolean;
-    projectConfig?: any;
-    repoName?: string;
-    activeRuns?: Array<{ taskId: number; taskKey: string }>;
-    maxConcurrentAgents?: number;
-    isGitRepo?: boolean;
-  }>('/status'),
-
-  // Tasks
-  getTasks: (params?: { q?: string; status?: string }) => {
-    const searchParams = new URLSearchParams();
-    if (params?.q) searchParams.set('q', params.q);
-    if (params?.status) searchParams.set('status', params.status);
-    const qs = searchParams.toString();
-    return request<{ tasks: any[] }>(`/tasks${qs ? `?${qs}` : ''}`);
+  status: () => request<{ initialized: boolean; projectConfig?: unknown; repoName: string; runner: Runner; isGitRepo: boolean }>('/status'),
+  listTasks: (params?: { q?: string; state?: string }) => {
+    const search = new URLSearchParams();
+    if (params?.q) search.set('q', params.q);
+    if (params?.state) search.set('state', params.state);
+    return request<{ tasks: Task[] }>(`/tasks${search.size ? `?${search}` : ''}`);
   },
-
-  createTask: (data: { title: string; description?: string; acceptance?: string; status?: string; run?: boolean }) =>
-    request<{ task: any }>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
-
-  getTask: (id: number) => request<{ task: any }>(`/tasks/${id}`),
-
-  updateTask: (id: number, data: any) =>
-    request<{ task: any }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
-
-  deleteTask: (id: number) => request<void>(`/tasks/${id}`, { method: 'DELETE' }),
-
-  // Logs
-  getTaskLogs: (id: number, params?: { before_id?: number; limit?: number; run_number?: number }) => {
-    const searchParams = new URLSearchParams();
-    if (params?.before_id) searchParams.set('before_id', String(params.before_id));
-    if (params?.limit) searchParams.set('limit', String(params.limit));
-    if (params?.run_number) searchParams.set('run_number', String(params.run_number));
-    const qs = searchParams.toString();
-    return request<{ logs: any[]; hasMore: boolean }>(`/tasks/${id}/logs${qs ? `?${qs}` : ''}`);
-  },
-
-  // Agent Control
-  startAgent: (id: number) => request<{ task: any }>(`/tasks/${id}/agent/start`, { method: 'POST' }),
-  cancelAgent: (id: number) => request<{ task: any }>(`/tasks/${id}/agent/cancel`, { method: 'POST' }),
-
-  // Agent Config
-  getAgentConfig: () => request<{ config: any }>('/agent-config'),
-  updateAgentConfig: (data: any) =>
-    request<{ config: any }>('/agent-config', { method: 'PUT', body: JSON.stringify(data) }),
-  testAgentConfig: () =>
-    request<{ success: boolean; durationMs: number; error?: string }>('/agent-config/test', { method: 'POST' }),
-
-  // Init
-  generatePrefix: (repoName: string) =>
-    request<{ prefix: string }>('/init/generate-prefix', {
-      method: 'POST',
-      body: JSON.stringify({ repoName }),
-    }),
-  savePrefix: (prefix: string, repoName?: string) =>
-    request<{ projectConfig: any }>('/init/save-prefix', {
-      method: 'POST',
-      body: JSON.stringify({ prefix, repoName }),
-    }),
-
-  // Workflow Steps
-  getWorkflowSteps: () => request<{ steps: any[] }>('/workflow-steps'),
-
-  getWorkflowCatalog: () =>
-    request<{ catalog: any[] }>('/workflow-steps/catalog'),
-
-  addWorkflowStep: (slug: string, position?: number) =>
-    request<{ step: any }>('/workflow-steps', {
-      method: 'POST',
-      body: JSON.stringify({ slug, position }),
-    }),
-
-  updateWorkflowStep: (id: number, data: { sort_order?: number; config?: any; requires_review?: boolean }) =>
-    request<{ step: any }>(`/workflow-steps/${id}`, {
-      method: 'PATCH',
-      body: JSON.stringify(data),
-    }),
-
-  removeWorkflowStep: (id: number, moveTasksTo?: string) =>
-    request<void>(`/workflow-steps/${id}`, {
-      method: 'DELETE',
-      body: JSON.stringify({ move_tasks_to: moveTasksTo }),
-    }),
+  createTask: (data: { title: string; description?: string; acceptance?: string; queue_state?: 'backlog' | 'ready'; run?: boolean; flow_id?: number }) =>
+    request<{ task: Task; run?: { id: number } }>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
+  updateTask: (id: number, data: Partial<Pick<Task, 'title' | 'description' | 'acceptance' | 'queue_state' | 'resolution' | 'sort_order'>>) =>
+    request<{ task: Task }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteTask: (id: number, force = false) => request<void>(`/tasks/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
+  listFlows: () => request<{ flows: Flow[] }>('/flows'),
+  createFlow: (name: string) => request<{ flow: Flow; draft: FlowVersion }>('/flows', { method: 'POST', body: JSON.stringify({ name }) }),
+  getDraft: (flowId: number) => request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`),
+  saveDraft: (flowId: number, definition: FlowDefinition, revision: number) =>
+    request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`, { method: 'PUT', body: JSON.stringify({ definition, revision }) }),
+  publishFlow: (flowId: number) => request<{ version: FlowVersion }>(`/flows/${flowId}/publish`, { method: 'POST' }),
+  makeDefault: (flowId: number) => request<{ flow: Flow }>(`/flows/${flowId}/default`, { method: 'POST' }),
+  startRun: (taskId: number, flowId?: number) => request<{ run: { id: number } }>('/runs', { method: 'POST', body: JSON.stringify({ task_id: taskId, flow_id: flowId }) }),
+  getRun: (id: number) => request<RunDetail>(`/runs/${id}`),
+  listRuns: (taskId: number) => request<{ runs: RunDetail['run'][] }>(`/runs?task_id=${taskId}`),
+  decide: (runId: number, attemptId: number, outcome_id: string, comment?: string) => request<{ run: RunDetail['run'] }>(`/runs/${runId}/decisions/${attemptId}`, { method: 'POST', body: JSON.stringify({ outcome_id, comment }) }),
+  stopRun: (runId: number) => request<{ run: RunDetail['run'] }>(`/runs/${runId}/stop`, { method: 'POST' }),
+  retryRun: (runId: number) => request<{ run: RunDetail['run'] }>(`/runs/${runId}/retry`, { method: 'POST' }),
+  getAttempt: (attemptId: number) => request<{ attempt: Attempt; logs: TaskLog[]; hasMore: boolean }>(`/attempts/${attemptId}`),
+  getAgentConfig: () => request<{ config: Record<string, unknown> }>('/agent-config'),
+  updateAgentConfig: (data: Record<string, unknown>) => request<{ config: Record<string, unknown> }>('/agent-config', { method: 'PUT', body: JSON.stringify(data) }),
+  testAgentConfig: (candidate?: AgentSetup) => request<{ success: boolean; durationMs: number; output?: string; error?: string }>('/agent-config/test', { method: 'POST', body: candidate ? JSON.stringify(candidate) : undefined }),
+  testAgentConfigStream: (candidate: AgentSetup, onOutput: (line: string) => void) => streamAgentTest(candidate, onOutput),
+  savePrefix: (prefix: string, repoName: string) => request('/init/save-prefix', { method: 'POST', body: JSON.stringify({ prefix, repoName }) }),
+  completeInitialization: (data: { prefix: string; repoName: string; flowTemplate: FlowTemplate; agent: AgentSetup }) =>
+    request<{ projectConfig: unknown; flow: { id: number; versionId: number } }>('/init/complete', { method: 'POST', body: JSON.stringify(data) }),
 };

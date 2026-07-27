@@ -35,7 +35,7 @@ export async function detectMainBranch(repoRoot: string): Promise<string> {
 }
 
 export async function createWorktree(taskKey: string, repoRoot: string, mainBranch: string): Promise<string> {
-  const worktreePath = path.join(repoRoot, '.tasks_manager', 'worktrees', taskKey);
+  const worktreePath = path.join(repoRoot, '.flow', 'worktrees', taskKey);
   const branchName = `agent/${taskKey}`;
 
   // Reuse existing worktree if it's still valid
@@ -79,7 +79,7 @@ export async function createWorktree(taskKey: string, repoRoot: string, mainBran
 }
 
 export async function removeWorktree(taskKey: string, repoRoot: string): Promise<void> {
-  const worktreePath = path.join(repoRoot, '.tasks_manager', 'worktrees', taskKey);
+  const worktreePath = path.join(repoRoot, '.flow', 'worktrees', taskKey);
   await git(['worktree', 'remove', worktreePath, '--force'], repoRoot).catch(() => {});
 }
 
@@ -89,7 +89,7 @@ export async function removeBranch(taskKey: string, repoRoot: string): Promise<v
 }
 
 export async function checkUncommittedChanges(taskKey: string, repoRoot: string): Promise<string | null> {
-  const worktreePath = path.join(repoRoot, '.tasks_manager', 'worktrees', taskKey);
+  const worktreePath = path.join(repoRoot, '.flow', 'worktrees', taskKey);
 
   const { stdout } = await git(['status', '--porcelain'], worktreePath).catch(() => ({ stdout: '' }));
   if (!stdout.trim()) return null;

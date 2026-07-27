@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { closeDb, getDb, initDb } from '../db/database.js';
 import { createApp } from '../app.js';
-import { compileFlow, createMinimalFlow, createRecommendedFlow } from '@tasks-manager/flow-core';
+import { compileFlow, createMinimalFlow, createRecommendedFlow } from '@flow/core';
 import { initEngine, shutdownEngine } from '../flow/engine.js';
 
 let root = '';
@@ -27,7 +27,7 @@ beforeEach(() => {
 
 afterEach(async () => { await shutdownEngine(); closeDb(); fs.rmSync(root, { recursive: true, force: true }); });
 
-describe('outcome-flow routes', () => {
+describe('Flow routes', () => {
   test('creates, lists, and edits tasks using queue semantics', async () => {
     const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Ship graph', queue_state: 'ready' }) });
     expect(created.status).toBe(201);
@@ -78,6 +78,10 @@ describe('outcome-flow routes', () => {
     const started = await app.request('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: taskId, flow_id: Number(flow.lastInsertRowid) }) });
     const run = (await started.json() as any).run;
     expect(run.status).toBe('waiting');
+    db.query("UPDATE runs SET status = 'attention', reason = 'Agent needs review' WHERE id = ?").run(run.id);
+    const listedTask = (await (await app.request('/tasks')).json() as any).tasks.find((candidate: any) => candidate.id === taskId);
+    expect(listedTask).toMatchObject({ operational_state: 'attention', active_run_reason: 'Agent needs review' });
+    db.query("UPDATE runs SET status = 'waiting', reason = NULL WHERE id = ?").run(run.id);
     const detail = await app.request(`/runs/${run.id}`);
     const attempt = (await detail.json() as any).attempts.at(-1);
     const decided = await app.request(`/runs/${run.id}/decisions/${attempt.id}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ outcome_id: 'yes' }) });
@@ -116,13 +120,13 @@ describe('outcome-flow routes', () => {
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({
         prefix: 'FLOW',
-        repoName: 'outcome-flow',
+        repoName: 'flow',
         flowTemplate: 'blank',
         agent: { cli_cmd: 'codex exec --full-auto', cli_prompt_mode: 'stdin', cli_prompt_flag: '' },
       }),
     });
     expect(response.status).toBe(201);
-    expect(await response.json()).toMatchObject({ projectConfig: { task_prefix: 'FLOW', repo_name: 'outcome-flow' } });
+    expect(await response.json()).toMatchObject({ projectConfig: { task_prefix: 'FLOW', repo_name: 'flow' } });
     expect(db.query<{ cli_cmd: string }, []>('SELECT cli_cmd FROM agent_config WHERE id = 1').get()?.cli_cmd).toBe('codex exec --full-auto');
     const version = db.query<{ definition_json: string }, []>("SELECT definition_json FROM flow_versions WHERE state = 'published'").get()!;
     expect(JSON.parse(version.definition_json).nodes.map((node: { type: string }) => node.type)).toEqual(['begin', 'result']);

@@ -16,7 +16,7 @@ type OnboardingDraft = {
   flowTemplate: FlowTemplate;
 };
 
-const STORAGE_KEY = 'outcome-flow:onboarding:v1';
+const STORAGE_KEY = 'flow:onboarding:v1';
 const steps = ['Agent', 'Test', 'Project key', 'Starting Flow'];
 const templateOptions: Array<{ key: FlowTemplate; title: string; detail: string; nodes: string[] }> = [
   { key: 'recommended', title: 'Recommended delivery', detail: 'Planning, checks, decisions, and an explicit finish path.', nodes: ['begin', 'agent', 'decision', 'agent', 'check', 'result'] },
@@ -148,7 +148,7 @@ export default function InitScreen() {
   return <main className="init-screen">
     <div className="init-grid" />
     <section className="init-copy">
-      <span className="brand-mark large">OF</span>
+      <span className="brand-mark large">F</span>
       <span className="eyebrow">WORKSPACE SETUP</span>
       <h1>Make work<br/><em>traceable.</em></h1>
       <p>Connect an Agent, prove the command works, then choose the first Flow your tasks will follow.</p>

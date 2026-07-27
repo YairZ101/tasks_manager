@@ -11,25 +11,25 @@ afterEach(() => {
   if (root) fs.rmSync(root, { recursive: true, force: true });
 });
 
-describe('outcome-flow database', () => {
+describe('Flow database', () => {
   test('creates the greenfield schema and singleton config', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-db-'));
     initDb(root);
     const db = getDb();
     const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name);
     for (const name of ['app_meta', 'tasks', 'flows', 'flow_versions', 'runs', 'attempts', 'workspaces', 'logs', 'events']) expect(tables).toContain(name);
-    expect(db.query<{ value: string }, []>("SELECT value FROM app_meta WHERE key='schema_family'").get()?.value).toBe('outcome-flow');
+    expect(db.query<{ value: string }, []>("SELECT value FROM app_meta WHERE key='schema_family'").get()?.value).toBe('flow');
     expect(db.query<{ max_concurrent_executions: number }, []>('SELECT max_concurrent_executions FROM agent_config WHERE id=1').get()?.max_concurrent_executions).toBe(3);
   });
 
   test('rejects a legacy database without deleting it', () => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-legacy-'));
-    fs.mkdirSync(path.join(root, '.tasks_manager'));
-    const legacy = new Database(path.join(root, '.tasks_manager', 'tasks.db'));
+    fs.mkdirSync(path.join(root, '.flow'));
+    const legacy = new Database(path.join(root, '.flow', 'tasks.db'));
     legacy.exec('CREATE TABLE tasks (id INTEGER PRIMARY KEY, status TEXT)');
     legacy.close();
-    expect(() => initDb(root)).toThrow('Legacy Tasks Manager database detected');
-    const verify = new Database(path.join(root, '.tasks_manager', 'tasks.db'));
+    expect(() => initDb(root)).toThrow('Legacy Flow database detected');
+    const verify = new Database(path.join(root, '.flow', 'tasks.db'));
     expect(verify.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM tasks').get()?.count).toBe(0);
     verify.close();
   });

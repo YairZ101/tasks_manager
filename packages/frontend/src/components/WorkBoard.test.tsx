@@ -14,20 +14,34 @@ const task = (id: number, operational_state: Task['operational_state'], title: s
 
 describe('WorkBoard', () => {
   beforeEach(() => useAppStore.setState({ tasks: [task(1, 'backlog', 'Explore graph'), task(2, 'active', 'Build graph')], selectedTaskId: null, workView: 'ready' }));
-  test('renders the five fixed operational views', () => {
+  test('renders the selected operational queue', () => {
     render(<WorkBoard />);
-    for (const label of ['Backlog', 'Ready', 'Active', 'Needs attention', 'Finished']) expect(screen.getAllByText(label).length).toBeGreaterThan(0);
-    expect(screen.getByText('Explore graph')).toBeInTheDocument();
-    expect(screen.getByText('Development')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Ready' })).toBeInTheDocument();
+    expect(screen.queryByText('Explore graph')).not.toBeInTheDocument();
+    expect(screen.getByText('No ready tasks')).toBeInTheDocument();
   });
-  test('keeps every operational view visible while marking the current rail selection', () => {
+  test('shows only one queue at a time', () => {
+    useAppStore.setState({ workView: 'active' });
     render(<WorkBoard />);
-    expect(document.querySelectorAll('.work-column')).toHaveLength(5);
-    expect(document.querySelector('.work-column.focused')?.textContent).toContain('Ready');
+    expect(document.querySelectorAll('.work-column')).toHaveLength(0);
+    expect(screen.getByText('Build graph')).toBeInTheDocument();
   });
   test('selects a task from its card', () => {
+    useAppStore.setState({ workView: 'active' });
     render(<WorkBoard />);
     fireEvent.click(screen.getByText('Build graph'));
     expect(useAppStore.getState().selectedTaskId).toBe(2);
+  });
+  test('explains the intervention needed on attention cards', () => {
+    useAppStore.setState({ tasks: [{ ...task(3, 'attention', 'Approve release'), active_run_id: 9, active_run_status: 'waiting', active_block_name: 'Release approval' }], workView: 'attention' });
+    render(<WorkBoard />);
+    expect(screen.getByText('Decision required in Release approval')).toBeInTheDocument();
+    expect(screen.getByText('Review')).toBeInTheDocument();
+  });
+  test('keeps creation guidance in Backlog when an empty workspace is viewed in Ready', () => {
+    useAppStore.setState({ tasks: [], workView: 'ready' });
+    render(<WorkBoard />);
+    expect(screen.getByText('Nothing is ready yet')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /new task/i })).not.toBeInTheDocument();
   });
 });

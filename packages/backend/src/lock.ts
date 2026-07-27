@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import { getProcessStartTime, isProcessAlive } from './process-utils.js';
 
-const DATA_DIR = '.tasks_manager';
+const DATA_DIR = '.flow';
 const LOCK_FILE = '.lock';
 
 interface LockData {
@@ -31,7 +31,7 @@ export function acquireLock(repoRoot: string): void {
         Bun.sleepSync(50);
         continue;
       }
-      console.error(`Another instance of tasks-manager is already running in this directory (PID: ${lock.pid}).`);
+      console.error(`Another instance of Flow is already running in this directory (PID: ${lock.pid}).`);
       process.exit(1);
     } catch {
       break;

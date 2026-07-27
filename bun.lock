@@ -10,10 +10,10 @@
       },
     },
     "packages/backend": {
-      "name": "@tasks-manager/backend",
+      "name": "@flow/backend",
       "version": "0.1.0",
       "dependencies": {
-        "@tasks-manager/flow-core": "workspace:*",
+        "@flow/core": "workspace:*",
         "hono": "^4.7.0",
         "shell-quote": "^1.8.2",
       },
@@ -23,7 +23,7 @@
       },
     },
     "packages/flow-core": {
-      "name": "@tasks-manager/flow-core",
+      "name": "@flow/core",
       "version": "0.1.0",
       "devDependencies": {
         "@types/bun": "^1.2.0",
@@ -31,16 +31,16 @@
       },
     },
     "packages/frontend": {
-      "name": "@tasks-manager/frontend",
+      "name": "@flow/frontend",
       "version": "0.1.0",
       "dependencies": {
         "@dnd-kit/core": "^6.3.1",
         "@dnd-kit/sortable": "^10.0.0",
         "@dnd-kit/utilities": "^3.2.2",
+        "@flow/core": "workspace:*",
         "@fontsource/jetbrains-mono": "^5.2.8",
         "@fontsource/plus-jakarta-sans": "^5.2.8",
         "@tanstack/react-virtual": "^3.13.0",
-        "@tasks-manager/flow-core": "workspace:*",
         "@xyflow/react": "^12.8.5",
         "react": "^19.0.0",
         "react-dom": "^19.0.0",
@@ -195,6 +195,12 @@
 
     "@exodus/bytes": ["@exodus/bytes@1.15.0", "", { "peerDependencies": { "@noble/hashes": "^1.8.0 || ^2.0.0" }, "optionalPeers": ["@noble/hashes"] }, "sha512-UY0nlA+feH81UGSHv92sLEPLCeZFjXOuHhrIo0HQydScuQc8s0A7kL/UdgwgDq8g8ilksmuoF35YVTNphV2aBQ=="],
 
+    "@flow/backend": ["@flow/backend@workspace:packages/backend"],
+
+    "@flow/core": ["@flow/core@workspace:packages/flow-core"],
+
+    "@flow/frontend": ["@flow/frontend@workspace:packages/frontend"],
+
     "@fontsource/jetbrains-mono": ["@fontsource/jetbrains-mono@5.2.8", "", {}, "sha512-6w8/SG4kqvIMu7xd7wt6x3idn1Qux3p9N62s6G3rfldOUYHpWcc2FKrqf+Vo44jRvqWj2oAtTHrZXEP23oSKwQ=="],
 
     "@fontsource/plus-jakarta-sans": ["@fontsource/plus-jakarta-sans@5.2.8", "", {}, "sha512-P5qE49fqdeD+7DXH1KBxmMPlB17LTz1zvBhFH0tFzfnYTKVJVyb0pR6plh0ZGXxcB+Oayb54FZZw3V42/DawTw=="],
@@ -296,12 +302,6 @@
     "@tanstack/react-virtual": ["@tanstack/react-virtual@3.13.24", "", { "dependencies": { "@tanstack/virtual-core": "3.14.0" }, "peerDependencies": { "react": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0", "react-dom": "^16.8.0 || ^17.0.0 || ^18.0.0 || ^19.0.0" } }, "sha512-aIJvz5OSkhNIhZIpYivrxrPTKYsjW9Uzy+sP/mx0S3sev2HyvPb7xmjbYvokzEpfgYHy/HjzJ2zFAETuUfgCpg=="],
 
     "@tanstack/virtual-core": ["@tanstack/virtual-core@3.14.0", "", {}, "sha512-JLANqGy/D6k4Ujmh8Tr25lGimuOXNiaVyXaCAZS0W+1390sADdGnyUdSWNIfd49gebtIxGMij4IktRVzrdr12Q=="],
-
-    "@tasks-manager/backend": ["@tasks-manager/backend@workspace:packages/backend"],
-
-    "@tasks-manager/flow-core": ["@tasks-manager/flow-core@workspace:packages/flow-core"],
-
-    "@tasks-manager/frontend": ["@tasks-manager/frontend@workspace:packages/frontend"],
 
     "@testing-library/dom": ["@testing-library/dom@10.4.1", "", { "dependencies": { "@babel/code-frame": "^7.10.4", "@babel/runtime": "^7.12.5", "@types/aria-query": "^5.0.1", "aria-query": "5.3.0", "dom-accessibility-api": "^0.5.9", "lz-string": "^1.5.0", "picocolors": "1.1.1", "pretty-format": "^27.0.2" } }, "sha512-o4PXJQidqJl82ckFaXUeoAW+XysPLauYI43Abki5hABd853iMhitooc6znOnczgbTYmEP6U6/y1ZyKAIsvMKGg=="],
 

@@ -15,22 +15,22 @@ describe('initDataDir', () => {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
-  test('creates the .tasks_manager directory', () => {
+  test('creates the .flow directory', () => {
     initDataDir(tmpDir);
-    const dataDir = path.join(tmpDir, '.tasks_manager');
+    const dataDir = path.join(tmpDir, '.flow');
     expect(fs.existsSync(dataDir)).toBe(true);
     expect(fs.statSync(dataDir).isDirectory()).toBe(true);
   });
 
   test('creates a .gitignore inside the data directory', () => {
     initDataDir(tmpDir);
-    const gitignorePath = path.join(tmpDir, '.tasks_manager', '.gitignore');
+    const gitignorePath = path.join(tmpDir, '.flow', '.gitignore');
     expect(fs.existsSync(gitignorePath)).toBe(true);
     expect(fs.readFileSync(gitignorePath, 'utf-8')).toBe('*\n');
   });
 
   test('does not overwrite an existing .gitignore', () => {
-    const dataDir = path.join(tmpDir, '.tasks_manager');
+    const dataDir = path.join(tmpDir, '.flow');
     fs.mkdirSync(dataDir, { recursive: true });
     fs.writeFileSync(path.join(dataDir, '.gitignore'), 'custom\n');
 
@@ -43,13 +43,13 @@ describe('initDataDir', () => {
     initDataDir(tmpDir);
     initDataDir(tmpDir);
 
-    const gitignorePath = path.join(tmpDir, '.tasks_manager', '.gitignore');
+    const gitignorePath = path.join(tmpDir, '.flow', '.gitignore');
     expect(fs.readFileSync(gitignorePath, 'utf-8')).toBe('*\n');
   });
 
   test('returns the data directory path', () => {
     const result = initDataDir(tmpDir);
-    expect(result).toBe(path.join(tmpDir, '.tasks_manager'));
+    expect(result).toBe(path.join(tmpDir, '.flow'));
   });
 
   test('does not modify the root .gitignore', () => {

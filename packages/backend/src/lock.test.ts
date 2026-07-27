@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { acquireLock, releaseLock } from './lock.js';
 
-const DATA_DIR = '.tasks_manager';
+const DATA_DIR = '.flow';
 
 describe('acquireLock / releaseLock', () => {
   let tmpDir: string;

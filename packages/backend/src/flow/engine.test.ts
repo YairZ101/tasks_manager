@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { compileFlow, type FlowDefinition } from '@tasks-manager/flow-core';
+import { compileFlow, type FlowDefinition } from '@flow/core';
 import { closeDb, getDb, initDb } from '../db/database.js';
 import { getRun, getTaskWithState } from './repository.js';
 import { initEngine, shutdownEngine, startRun, stopRun } from './engine.js';

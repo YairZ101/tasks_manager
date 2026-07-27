@@ -2,7 +2,7 @@
 
 ## What This Is
 
-An outcome-driven task manager that delegates work to configurable CLI agents. Users create Tasks, design versioned Flows on a node canvas, and start Runs. A persistent scheduler executes Agent and Check blocks, pauses at Decision blocks, and finishes through explicit Result blocks. SQLite data lives in `.tasks_manager/` in the repository root.
+Flow is a local-first task manager that delegates work to configurable CLI agents. Users create Tasks, design versioned Flows on a node canvas, and start Runs. A persistent scheduler executes Agent and Check blocks, pauses at Decision blocks, and finishes through explicit Result blocks. SQLite data lives in `.flow/` in the repository root.
 
 The supported V1 blocks are **Begin, Agent, Check, Decision, Result, and Note**. Runtime state belongs to Runs and Attempts, never to canvas columns. The work UI uses five fixed operational views: **Backlog, Ready, Active, Needs Attention, and Finished**.
 
@@ -40,7 +40,7 @@ packages/
 │   └── src/
 │       ├── app.ts         Hono app and route mounting (safe to import in tests)
 │       ├── index.ts       Process lifecycle, lock, recovery, scheduler, static UI
-│       ├── db/database.ts Greenfield `outcome-flow` schema; rejects legacy DBs
+│       ├── db/database.ts Greenfield `flow` schema; migrates the previous schema-family label and rejects legacy DBs
 │       ├── flow/
 │       │   ├── engine.ts      Persistent scheduler and block execution
 │       │   ├── repository.ts  Parsed Flow and derived Task queries
@@ -94,8 +94,8 @@ packages/
 - Operational Task state is derived from Task resolution plus its active Run; it is not persisted as a draggable status.
 - Stopping a Run persists `stopped` before aborting its OS process so late completion cannot overwrite user intent.
 - Task deletion is blocked for active Runs. Dirty Workspace deletion needs an explicit force confirmation.
-- A legacy database without `app_meta.schema_family = outcome-flow` is rejected and never modified. Move `.tasks_manager/tasks.db`, `-wal`, and `-shm` aside to initialize this version.
-- `.tasks_manager/` self-ignores via its own `.gitignore`.
+- A legacy database without `app_meta.schema_family = flow` is rejected and never modified. Move `.flow/tasks.db`, `-wal`, and `-shm` aside to initialize this version.
+- `.flow/` self-ignores via its own `.gitignore`.
 
 ## Testing Patterns
 
@@ -153,7 +153,7 @@ All routes return JSON except successful DELETE (`204`). Errors use `{ error, re
 
 ## Dev Server Lifecycle
 
-For Playwright/manual testing, start `bun run dev` in a saved background shell/session. When testing is complete, stop that shell **before doing anything else**. Then verify no `bun`, `vite`, or `concurrently` process survived and remove `.tasks_manager/.lock` only if stale.
+For Playwright/manual testing, start `bun run dev` in a saved background shell/session. When testing is complete, stop that shell **before doing anything else**. Then verify no `bun`, `vite`, or `concurrently` process survived and remove `.flow/.lock` only if stale.
 
 ## Planning Docs
 

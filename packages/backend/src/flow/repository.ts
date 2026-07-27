@@ -1,5 +1,5 @@
 import type { Database } from 'bun:sqlite';
-import type { FlowDefinition } from '@tasks-manager/flow-core';
+import type { FlowDefinition } from '@flow/core';
 import { getDb } from '../db/database.js';
 import type { Flow, FlowVersion, FlowVersionRow, Task, TaskWithState, WorkflowRun } from '../types.js';
 
@@ -37,6 +37,7 @@ const TASK_WITH_STATE_SQL = `
     END AS operational_state,
     r.id AS active_run_id,
     r.status AS active_run_status,
+    r.reason AS active_run_reason,
     a.block_id AS active_block_id,
     (SELECT json_extract(value, '$.config.name')
       FROM json_each(COALESCE(fv.compiled_json, fv.definition_json), '$.nodes')

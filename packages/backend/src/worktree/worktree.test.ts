@@ -27,8 +27,8 @@ function initTestRepo(): string {
   fs.writeFileSync(path.join(tmpDir, 'README.md'), '# test\n');
   gitSync(['add', '.'], tmpDir);
   gitSync(['commit', '-m', 'initial commit'], tmpDir);
-  // Create .tasks_manager directory
-  fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
+  // Create .flow directory
+  fs.mkdirSync(path.join(tmpDir, '.flow'), { recursive: true });
   return tmpDir;
 }
 
@@ -120,7 +120,7 @@ describe('createWorktree', () => {
   test('creates a worktree at the expected path', async () => {
     const wtPath = await createWorktree('TST-1', tmpDir, 'main');
 
-    expect(wtPath).toBe(path.join(tmpDir, '.tasks_manager', 'worktrees', 'TST-1'));
+    expect(wtPath).toBe(path.join(tmpDir, '.flow', 'worktrees', 'TST-1'));
     expect(fs.existsSync(wtPath)).toBe(true);
     // The worktree should have the repo's files
     expect(fs.existsSync(path.join(wtPath, 'README.md'))).toBe(true);

@@ -1,10 +1,10 @@
 {
-  "name": "tasks-manager",
+  "name": "flow",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "bin": {
-    "tasks-manager": "./packages/backend/src/index.ts"
+    "flow": "./packages/backend/src/index.ts"
   },
   "workspaces": [
     "packages/*"

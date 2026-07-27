@@ -1,7 +1,7 @@
 import path from 'path';
 import { spawn } from 'child_process';
 import { parse } from 'shell-quote';
-import type { CompiledFlowDefinition, CompiledFlowNode, DecisionNode, FlowConnection, ResultNode } from '@tasks-manager/flow-core';
+import type { CompiledFlowDefinition, CompiledFlowNode, DecisionNode, FlowConnection, ResultNode } from '@flow/core';
 import { getDb } from '../db/database.js';
 import { CliAdapter, sanitizeLine } from '../agents/cli-adapter.js';
 import { isGitRepo } from '../worktree/worktree.js';

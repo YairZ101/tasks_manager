@@ -17,4 +17,14 @@ describe('application store', () => {
     expect(useAppStore.getState().tasks).toHaveLength(1);
     expect(useAppStore.getState().flows).toHaveLength(1);
   });
+  test('opens Needs attention first when a task requires intervention', async () => {
+    vi.mocked(api.listTasks).mockResolvedValueOnce({ tasks: [{ id: 1, operational_state: 'attention' } as any] });
+    await useAppStore.getState().bootstrap();
+    expect(useAppStore.getState().workView).toBe('attention');
+  });
+  test('opens Backlog first for an empty workspace', async () => {
+    vi.mocked(api.listTasks).mockResolvedValueOnce({ tasks: [] });
+    await useAppStore.getState().bootstrap();
+    expect(useAppStore.getState().workView).toBe('backlog');
+  });
 });

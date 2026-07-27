@@ -5,7 +5,7 @@ import {
   type Connection, type Edge, type Node, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { AGENT_PRESETS, createAgentConfig, getNodeOutcomes, validateFlow, type FlowDefinition, type FlowNode } from '@tasks-manager/flow-core';
+import { AGENT_PRESETS, createAgentConfig, getNodeOutcomes, validateFlow, type FlowDefinition, type FlowNode } from '@flow/core';
 import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
@@ -176,6 +176,7 @@ function EditorCanvas({ flowId }: { flowId: number }) {
 
   return <div className="editor-shell">
     <div className="editor-toolbar"><button className="back-button" onClick={() => back(null)}><span>←</span>Library</button><div className="flow-title"><span className="flow-symbol"><Icon name="nodes" size={17} /></span><div><strong>{flow?.name ?? 'Flow'}</strong><small>{dirty ? 'Unsaved draft' : `Draft r${revision}`}</small></div></div><div className={`validation-chip ${validation.valid ? 'valid' : 'invalid'}`}><span />{validation.valid ? 'Ready to publish' : `${validation.problems.length} issue${validation.problems.length === 1 ? '' : 's'}`}</div><div className="toolbar-spacer"/><button className="button ghost" disabled={!dirty || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button><button className="button primary" disabled={saving || !validation.valid} onClick={() => void publish()}>Publish version</button></div>
+    <div className="editor-narrow-notice" role="status"><Icon name="nodes" size={22} /><div><strong>Flow editing needs a wider screen</strong><p>Use a laptop-width window to arrange blocks and inspect connections. Your saved draft is safe.</p></div></div>
     <div className="editor-main">
       <aside className="palette"><span className="eyebrow">BLOCKS</span>{(Object.keys(typeMeta) as FlowNode['type'][]).map((type) => <button key={type} draggable onDragStart={(event) => { event.dataTransfer.setData('application/flow-block', type); event.dataTransfer.effectAllowed = 'move'; }} disabled={type === 'begin' && nodes.some((node) => node.data.flowNode.type === 'begin')}><span className={type}>{typeMeta[type].glyph}</span><div><strong>{typeMeta[type].label}</strong><small>{typeMeta[type].description}</small></div></button>)}<div className="palette-tip"><strong>Drag to canvas</strong><p>Connect outcome handles, or select a block and use the connection menus.</p></div></aside>
       <div className="canvas-wrap" onDrop={onDrop} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}>

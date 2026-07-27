@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { createRecommendedFlow } from '@tasks-manager/flow-core';
+import { createRecommendedFlow } from '@flow/core';
 import FlowEditor from './FlowEditor.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';

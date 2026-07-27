@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 
-const DATA_DIR = '.tasks_manager';
+const DATA_DIR = '.flow';
 
 /**
  * Create the data directory and write a .gitignore inside it

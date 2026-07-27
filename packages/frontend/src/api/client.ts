@@ -1,4 +1,4 @@
-import type { FlowDefinition, ValidationResult } from '@tasks-manager/flow-core';
+import type { FlowDefinition, ValidationResult } from '@flow/core';
 import type { Attempt, Flow, FlowVersion, RunDetail, Runner, Task, TaskLog } from '../domain.js';
 
 export type AgentSetup = {

@@ -1,5 +1,5 @@
 {
-  "name": "@tasks-manager/frontend",
+  "name": "@flow/frontend",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -11,7 +11,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@tasks-manager/flow-core": "workspace:*",
+    "@flow/core": "workspace:*",
     "@xyflow/react": "^12.8.5",
     "@dnd-kit/core": "^6.3.1",
     "@dnd-kit/sortable": "^10.0.0",

@@ -43,7 +43,7 @@ describe('CliAdapter', () => {
 
   beforeEach(() => {
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'tm-cli-'));
-    fs.mkdirSync(path.join(tmpDir, '.tasks_manager'), { recursive: true });
+    fs.mkdirSync(path.join(tmpDir, '.flow'), { recursive: true });
     initDb(tmpDir);
   });
 

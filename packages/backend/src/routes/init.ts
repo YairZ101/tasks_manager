@@ -3,7 +3,7 @@ import path from 'path';
 import { getDb } from '../db/database.js';
 import type { AgentConfig, ProjectConfig } from '../types.js';
 import { CliAdapter } from '../agents/cli-adapter.js';
-import { compileFlow, createBlankFlow, createMinimalFlow, createRecommendedFlow } from '@tasks-manager/flow-core';
+import { compileFlow, createBlankFlow, createMinimalFlow, createRecommendedFlow } from '@flow/core';
 import { parseAgentSetup } from '../agents/config.js';
 
 const init = new Hono();

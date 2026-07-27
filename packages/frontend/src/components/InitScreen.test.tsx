@@ -10,7 +10,7 @@ describe('InitScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
-    useAppStore.setState({ repoName: 'tasks_manager', bootstrap: vi.fn() });
+    useAppStore.setState({ repoName: 'flow', bootstrap: vi.fn() });
     vi.mocked(api.testAgentConfigStream).mockImplementation(async (_candidate, onOutput) => { onOutput('OK'); return { success: true, durationMs: 42 }; });
     vi.mocked(api.completeInitialization).mockResolvedValue({ projectConfig: {}, flow: { id: 1, versionId: 1 } });
   });
@@ -30,11 +30,11 @@ describe('InitScreen', () => {
     fireEvent.click(screen.getByRole('radio', { name: /Minimal delivery/ }));
     fireEvent.click(screen.getByRole('button', { name: /Finish setup/ }));
     await waitFor(() => expect(api.completeInitialization).toHaveBeenCalledWith(expect.objectContaining({
-      prefix: 'TASK', flowTemplate: 'minimal', agent: expect.objectContaining({ cli_cmd: 'codex exec --full-auto', cli_prompt_mode: 'stdin' }),
+      prefix: 'FLOW', flowTemplate: 'minimal', agent: expect.objectContaining({ cli_cmd: 'codex exec --full-auto', cli_prompt_mode: 'stdin' }),
     })));
     expect(api.testAgentConfigStream).toHaveBeenCalledWith(expect.objectContaining({ cli_cmd: 'codex exec --full-auto' }), expect.any(Function));
     expect(useAppStore.getState().bootstrap).toHaveBeenCalled();
-    expect(window.localStorage.getItem('outcome-flow:onboarding:v1')).toBeNull();
+    expect(window.localStorage.getItem('flow:onboarding:v1')).toBeNull();
   });
 
   test('applies the Claude Code preset before testing the Agent', async () => {
@@ -60,12 +60,13 @@ describe('InitScreen', () => {
   });
 
   test('restores unfinished setup from local storage', () => {
-    window.localStorage.setItem('outcome-flow:onboarding:v1', JSON.stringify({
+    window.localStorage.setItem('flow:onboarding:v1', JSON.stringify({
       version: 1, step: 3, prefix: 'FLOW', agent: { cli_cmd: 'agent run', cli_prompt_mode: 'argument', cli_prompt_flag: '' }, flowTemplate: 'blank',
     }));
     render(<InitScreen />);
     expect(screen.getByRole('heading', { name: 'Name the project' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /Project key/ })).toHaveValue('FLOW');
+    expect(window.localStorage.getItem('flow:onboarding:v1')).not.toBeNull();
   });
 
   test('supports arrow-key selection for Flow templates', async () => {

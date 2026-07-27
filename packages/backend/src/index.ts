@@ -41,7 +41,7 @@ try {
   closeDb();
   throw new Error(`Port ${port} is already in use.`);
 }
-console.log(`\n  Outcome Flow running at http://localhost:${port}\n`);
+console.log(`\n  Flow running at http://localhost:${port}\n`);
 
 let stopping = false;
 const shutdown = async () => {

@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { compileFlow, createRecommendedFlow, validateFlow, type FlowDefinition } from '@tasks-manager/flow-core';
+import { compileFlow, createRecommendedFlow, validateFlow, type FlowDefinition } from '@flow/core';
 import { getDb } from '../db/database.js';
 import { emitEvent } from '../flow/events.js';
 import { getFlowVersion, parseFlowVersion } from '../flow/repository.js';

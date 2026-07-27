@@ -2,8 +2,8 @@ import { Database } from 'bun:sqlite';
 import fs from 'fs';
 import path from 'path';
 
-const DATA_DIR = '.tasks_manager';
-const SCHEMA_FAMILY = 'outcome-flow';
+const DATA_DIR = '.flow';
+const SCHEMA_FAMILY = 'flow';
 const SCHEMA_VERSION = '1';
 
 let db: Database;
@@ -26,7 +26,7 @@ function assertSchemaFamily(database: Database, dbPath: string): void {
     "SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'app_meta'"
   ).get();
   if (!appMeta) {
-    throw new Error(`Legacy Tasks Manager database detected at ${dbPath}. Move or delete it to initialize the outcome-flow schema.`);
+    throw new Error(`Legacy Flow database detected at ${dbPath}. Move or delete it to initialize the Flow schema.`);
   }
   const family = database.query<{ value: string }, [string]>('SELECT value FROM app_meta WHERE key = ?').get('schema_family');
   if (family?.value !== SCHEMA_FAMILY) {

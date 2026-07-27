@@ -38,7 +38,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tasks: [],
   flows: [],
   section: 'work',
-  workView: 'ready',
+  workView: 'backlog',
   selectedTaskId: null,
   editingFlowId: null,
   createOpen: false,
@@ -47,7 +47,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const status = await api.status();
       set({ initialized: status.initialized, repoName: status.repoName, runner: status.runner, isGitRepo: status.isGitRepo });
-      if (status.initialized) await Promise.all([get().refreshTasks(), get().refreshFlows()]);
+      if (status.initialized) {
+        const [{ tasks }, { flows }] = await Promise.all([api.listTasks(), api.listFlows()]);
+        set({
+          tasks,
+          flows,
+          workView: tasks.some((task) => task.operational_state === 'attention') ? 'attention' : tasks.length === 0 ? 'backlog' : 'ready',
+        });
+      }
     } finally { set({ loading: false }); }
   },
   async refreshTasks() { const { tasks } = await api.listTasks(); set({ tasks }); },

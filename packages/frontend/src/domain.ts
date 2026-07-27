@@ -1,4 +1,4 @@
-import type { FlowDefinition, ResultCategory } from '@tasks-manager/flow-core';
+import type { FlowDefinition, ResultCategory } from '@flow/core';
 
 export type OperationalState = 'backlog' | 'ready' | 'active' | 'attention' | 'finished';
 
@@ -6,6 +6,7 @@ export interface Task {
   id: number; task_key: string; title: string; description: string; acceptance: string;
   queue_state: 'backlog' | 'ready'; resolution: 'open' | 'completed' | 'cancelled'; sort_order: number;
   operational_state: OperationalState; active_run_id: number | null; active_run_status: string | null;
+  active_run_reason?: string | null;
   active_block_id: string | null; active_block_name: string | null; workspace_state: string | null;
   created_at: string; updated_at: string;
 }

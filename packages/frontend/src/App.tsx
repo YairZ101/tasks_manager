@@ -17,24 +17,43 @@ const views = [
   ['attention', 'Needs attention', 'alert'], ['finished', 'Finished', 'check'],
 ] as const;
 
+export function queueForShortcutCode(code: string): typeof views[number][0] | null {
+  const index = Number(code.replace('Digit', '')) - 1;
+  return index >= 0 && index < views.length ? views[index][0] : null;
+}
+
 function AppContent() {
   const store = useAppStore();
   useEventSource();
   useEffect(() => { void store.bootstrap(); }, [store.bootstrap]);
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!event.altKey || target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if (event.code === 'KeyN') { event.preventDefault(); useAppStore.getState().setWorkView('backlog'); useAppStore.getState().setCreateOpen(true); return; }
+      const queue = queueForShortcutCode(event.code);
+      if (queue) {
+        event.preventDefault();
+        useAppStore.getState().setWorkView(queue);
+      }
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
-  if (store.loading) return <div className="boot"><span className="boot-mark">OF</span><span>Loading workspace…</span></div>;
+  if (store.loading) return <div className="boot"><span className="boot-mark">F</span><span>Loading workspace…</span></div>;
   if (!store.initialized) return <InitScreen />;
 
   const counts = new Map(views.map(([key]) => [key, store.tasks.filter((task) => task.operational_state === key).length]));
   return (
     <div className="app-shell">
       <aside className="rail">
-        <div className="brand"><span className="brand-mark">OF</span><span><strong>Outcome</strong><small>flow control</small></span></div>
+        <div className="brand"><span className="brand-mark">F</span><span><strong>Flow</strong><small>local agent control</small></span></div>
         <nav aria-label="Primary navigation">
           <button className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => store.setSection('work')}><Icon name="grid" />Work</button>
           <div className="rail-views">
             {views.map(([key, label, icon]) => (
-              <button key={key} className={store.section === 'work' && store.workView === key ? 'active' : ''} onClick={() => store.setWorkView(key)}>
+              <button key={key} className={store.section === 'work' && store.workView === key ? 'active' : ''} onClick={() => store.setWorkView(key)} title={`Option ${views.findIndex(([view]) => view === key) + 1}`} aria-label={`${label}, Option ${views.findIndex(([view]) => view === key) + 1}`}>
                 <Icon name={icon} /><span>{label}</span><em>{counts.get(key)}</em>
               </button>
             ))}
@@ -51,7 +70,7 @@ function AppContent() {
           <div><span className="eyebrow">{store.section === 'work' ? 'OPERATIONAL VIEW' : 'AUTOMATION DESIGN'}</span><h1>{store.section === 'work' ? 'Work control' : store.editingFlowId ? 'Flow editor' : 'Flow library'}</h1></div>
           <div className="topbar-actions">
             <span className="capacity"><i style={{ width: `${Math.min(100, store.runner.activeCount / Math.max(1, store.runner.maxConcurrent) * 100)}%` }} />Capacity {store.runner.activeCount}/{store.runner.maxConcurrent}</span>
-            {store.section === 'work' && <button className="button primary" onClick={() => store.setCreateOpen(true)}><Icon name="plus" />New task</button>}
+            {store.section === 'work' && store.workView === 'backlog' && <button className="button primary" onClick={() => store.setCreateOpen(true)}><Icon name="plus" />New task <kbd>⌥N</kbd></button>}
           </div>
         </header>
         <div className="workspace-body">

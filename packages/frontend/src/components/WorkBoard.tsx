@@ -11,12 +11,21 @@ const columns: Array<{ key: OperationalState; label: string; hint: string }> = [
   { key: 'finished', label: 'Finished', hint: 'Completed or cancelled' },
 ];
 
+function attentionSummary(task: Task): string | null {
+  if (task.workspace_state === 'cleanup_required') return 'Workspace cleanup required';
+  if (task.active_run_status === 'waiting') return task.active_block_name ? `Decision required in ${task.active_block_name}` : 'Decision required';
+  if (task.active_run_status === 'attention') return task.active_run_reason || 'Run needs recovery';
+  return null;
+}
+
 function TaskCard({ task }: { task: Task }) {
   const select = useAppStore((state) => state.selectTask);
-  return <button className={`task-card state-${task.operational_state}`} onClick={() => select(task.id)}>
+  const attention = attentionSummary(task);
+  return <button className={`task-card state-${task.operational_state}`} onClick={() => select(task.id)} aria-label={`${task.task_key}: ${task.title}${attention ? `. ${attention}` : ''}`}>
     <div className="task-card-top"><span>{task.task_key}</span>{task.workspace_state === 'cleanup_required' && <i title="Workspace needs cleanup">DIRTY</i>}</div>
     <h3>{task.title}</h3>
     {task.description && <p>{task.description}</p>}
+    {attention && <span className="attention-callout"><Icon name="alert" size={14} />{attention}<b>Review</b></span>}
     <div className="task-card-foot">
       {task.active_block_name ? <span className="block-chip"><span className="signal" />{task.active_block_name}</span> : <span>{task.resolution === 'open' ? 'No active run' : task.resolution}</span>}
       <Icon name="arrow" size={15} />
@@ -26,17 +35,28 @@ function TaskCard({ task }: { task: Task }) {
 
 export default function WorkBoard() {
   const tasks = useAppStore((state) => state.tasks);
-  const focused = useAppStore((state) => state.workView);
+  const workView = useAppStore((state) => state.workView);
   const setCreate = useAppStore((state) => state.setCreateOpen);
-  const grouped = useMemo(() => new Map(columns.map((column) => [column.key, tasks.filter((task) => task.operational_state === column.key)])), [tasks]);
-  return <div className="board">
-    {columns.map((column) => <section key={column.key} className={`work-column ${focused === column.key ? 'focused' : ''}`}>
-      <header><div><span>{column.label}</span><em>{grouped.get(column.key)?.length}</em></div><p>{column.hint}</p></header>
-      <div className="card-stack">
-        {grouped.get(column.key)?.map((task) => <TaskCard key={task.id} task={task} />)}
-        {!grouped.get(column.key)?.length && <div className="empty-column"><span>{column.key === 'attention' ? '✓' : '·'}</span><p>{column.key === 'attention' ? 'Nothing needs you' : 'No work here'}</p></div>}
-      </div>
-      {(column.key === 'backlog' || column.key === 'ready') && <button className="column-add" onClick={() => setCreate(true)}><Icon name="plus" size={15} />Add task</button>}
-    </section>)}
-  </div>;
+  const current = columns.find((column) => column.key === workView)!;
+  const queue = useMemo(() => tasks.filter((task) => task.operational_state === workView), [tasks, workView]);
+  const firstUse = tasks.length === 0;
+  const emptyCopy = workView === 'attention'
+    ? { title: 'Nothing needs you', detail: 'Decisions, interrupted Runs, and cleanup requests will appear here.' }
+    : firstUse && workView === 'backlog'
+      ? { title: 'Start with one task', detail: 'Every new task starts in Backlog. Move it to Ready when it is prepared to run.' }
+      : firstUse && workView === 'ready'
+        ? { title: 'Nothing is ready yet', detail: 'Create a task in Backlog, then move it here when its outcome is prepared to run.' }
+      : { title: `No ${current.label.toLowerCase()} tasks`, detail: current.hint };
+
+  return <section className="board queue-board" aria-labelledby={`queue-${workView}`}>
+    <header className="queue-header">
+      <div><span className="eyebrow">WORK QUEUE</span><div className="queue-title"><h2 id={`queue-${workView}`}>{current.label}</h2><em>{queue.length}</em></div><p>{current.hint}</p></div>
+      <div className="queue-guide"><strong>How Flow works</strong><span>A Flow is the versioned plan. A Run is one execution of that plan.</span></div>
+    </header>
+    <div className="queue-content">
+      {queue.length ? <div className="card-stack queue-stack">{queue.map((task) => <TaskCard key={task.id} task={task} />)}</div>
+        : <div className={`empty-queue ${firstUse ? 'first-use' : ''}`}><span className="empty-queue-mark">{workView === 'attention' ? '✓' : '+'}</span><h3>{emptyCopy.title}</h3><p>{emptyCopy.detail}</p>{workView === 'backlog' && <button className="button primary" onClick={() => setCreate(true)}><Icon name="plus" size={16} />New task <kbd>⌥N</kbd></button>}</div>}
+    </div>
+    {workView === 'backlog' && queue.length > 0 && <footer className="queue-footer"><button className="button ghost" onClick={() => setCreate(true)}><Icon name="plus" size={16} />Add task <kbd>⌥N</kbd></button></footer>}
+  </section>;
 }

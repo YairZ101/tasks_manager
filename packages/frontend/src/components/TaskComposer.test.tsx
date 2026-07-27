@@ -9,13 +9,13 @@ vi.mock('../api/client.js', () => ({ api: { createTask: vi.fn() } }));
 describe('TaskComposer', () => {
   beforeEach(() => {
     vi.mocked(api.createTask).mockResolvedValue({ task: { id: 7 } as any });
-    useAppStore.setState({ flows: [{ id: 2, name: 'Delivery', is_default: 1, active_version_id: 3 } as any], workView: 'ready', createOpen: true, refreshTasks: vi.fn(), selectTask: vi.fn(), setCreateOpen: vi.fn() });
+    useAppStore.setState({ workView: 'backlog', createOpen: true, refreshTasks: vi.fn(), selectTask: vi.fn(), setCreateOpen: vi.fn() });
   });
-  test('creates and immediately runs a task with the selected Flow', async () => {
+  test('always creates a task in Backlog', async () => {
     render(<TaskComposer />);
     fireEvent.change(screen.getByPlaceholderText('What should be different when this is done?'), { target: { value: 'Ship graph editor' } });
-    fireEvent.click(screen.getByText('Start a Run now'));
-    fireEvent.click(screen.getByRole('button', { name: 'Create & run' }));
-    await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ title: 'Ship graph editor', run: true, flow_id: 2, queue_state: 'ready' })));
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ title: 'Ship graph editor', run: false, queue_state: 'backlog' })));
+    expect(screen.queryByText('Start a Run now')).not.toBeInTheDocument();
   });
 });

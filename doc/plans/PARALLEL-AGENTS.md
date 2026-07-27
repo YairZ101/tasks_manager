@@ -1,5 +1,7 @@
 # Parallel Agent Execution via Git Worktrees
 
+> ⚠️ **Partially superseded by [OUTCOME-FLOW-ENGINE.md](./OUTCOME-FLOW-ENGINE.md)** for run ownership, scheduling, recovery, and worktree cleanup. Per-task worktree isolation remains the chosen execution model. This document is retained as a historical record.
+
 ## Problem
 
 The executor uses a global in-memory mutex that allows only one agent to run at a time. This exists because two agents working in the same directory would overwrite each other's files. But it also means agents sit idle while another finishes — even when the tasks touch completely unrelated code.

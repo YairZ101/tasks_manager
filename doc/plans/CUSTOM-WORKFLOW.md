@@ -1,5 +1,7 @@
 # Custom Workflow Steps
 
+> ⚠️ **Superseded by [OUTCOME-FLOW-ENGINE.md](./OUTCOME-FLOW-ENGINE.md)**, which replaces ordered workflow steps with an outcome-driven graph. This document is retained as a historical record.
+
 ## Problem
 
 The board has three hardcoded columns: Todo, In Progress, Done. Every project gets the same workflow. But real projects vary — some need a "Code Review" step between development and done, others want a "Planning" phase before the agent starts coding. There's no way to customize this without changing source code.

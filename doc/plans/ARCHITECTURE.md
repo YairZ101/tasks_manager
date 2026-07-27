@@ -1,5 +1,7 @@
 # Tasks Manager — Architecture & Implementation Plan
 
+> ⚠️ **Partially superseded by [OUTCOME-FLOW-ENGINE.md](./OUTCOME-FLOW-ENGINE.md)** for task lifecycle, workflow, executor, event, and board semantics. The remaining platform decisions are retained as a historical record.
+
 > **Platform:** macOS and Linux only. Windows is not supported in the MVP.
 
 ## Overview

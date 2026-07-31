@@ -73,6 +73,7 @@ export const api = {
     request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`, { method: 'PUT', body: JSON.stringify({ definition, revision }) }),
   publishFlow: (flowId: number) => request<{ version: FlowVersion }>(`/flows/${flowId}/publish`, { method: 'POST' }),
   makeDefault: (flowId: number) => request<{ flow: Flow }>(`/flows/${flowId}/default`, { method: 'POST' }),
+  deleteFlow: (flowId: number) => request<void>(`/flows/${flowId}`, { method: 'DELETE' }),
   startRun: (taskId: number, flowId?: number) => request<{ run: { id: number } }>('/runs', { method: 'POST', body: JSON.stringify({ task_id: taskId, flow_id: flowId }) }),
   getRun: (id: number) => request<RunDetail>(`/runs/${id}`),
   listRuns: (taskId: number) => request<{ runs: RunDetail['run'][] }>(`/runs?task_id=${taskId}`),

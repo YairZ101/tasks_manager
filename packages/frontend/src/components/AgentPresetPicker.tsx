@@ -1,3 +1,5 @@
+import { Icon } from './Icon.js';
+
 export type AgentCliConfig = {
   cli_cmd: string;
   cli_prompt_mode: 'stdin' | 'argument' | 'flag';
@@ -55,10 +57,10 @@ export function AgentPresetPicker({ value, onSelect }: { value: AgentCliConfig; 
         aria-pressed={active?.key === preset.key}
         onClick={() => onSelect(preset)}
       >
-        <span className={`preset-mark ${preset.key}`}>{preset.key === 'codex' ? 'O' : 'C'}</span>
+        <span className={`preset-mark ${preset.key}`}><Icon name="terminal" size={16} /></span>
         <span className="preset-copy"><strong>{preset.name}</strong><code>{preset.commandLabel}</code><small>{preset.description}</small></span>
       </button>)}
     </div>
-    {active && <p className={`preset-note ${active.key}`}><span>!</span>{active.autonomyNote}</p>}
+    {active && <p className={`preset-note ${active.key}`}><Icon name="alert" size={13} />{active.autonomyNote}</p>}
   </section>;
 }

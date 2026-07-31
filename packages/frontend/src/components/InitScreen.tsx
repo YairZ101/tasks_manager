@@ -3,7 +3,7 @@ import { toast } from 'sonner';
 import { api, type AgentSetup, type FlowTemplate } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { AgentPresetPicker, type AgentCliPreset } from './AgentPresetPicker.js';
-import { Icon } from './Icon.js';
+import { AppMark, BlockIcon, Icon, type BlockIconType } from './Icon.js';
 
 type SetupStep = 1 | 2 | 3 | 4;
 type AgentTestState = 'idle' | 'testing' | 'success' | 'failure';
@@ -18,7 +18,7 @@ type OnboardingDraft = {
 
 const STORAGE_KEY = 'flow:onboarding:v1';
 const steps = ['Agent', 'Test', 'Project key', 'Starting Flow'];
-const templateOptions: Array<{ key: FlowTemplate; title: string; detail: string; nodes: string[] }> = [
+const templateOptions: Array<{ key: FlowTemplate; title: string; detail: string; nodes: BlockIconType[] }> = [
   { key: 'recommended', title: 'Recommended delivery', detail: 'Planning, checks, decisions, and an explicit finish path.', nodes: ['begin', 'agent', 'decision', 'agent', 'check', 'result'] },
   { key: 'minimal', title: 'Minimal delivery', detail: 'One Development Agent between Begin and Completed.', nodes: ['begin', 'agent', 'result'] },
   { key: 'blank', title: 'Blank Flow', detail: 'A valid Begin-to-Completed shell, ready for your own blocks.', nodes: ['begin', 'result'] },
@@ -63,9 +63,9 @@ function readDraft(repoName: string): OnboardingDraft {
   return createDraft(repoName);
 }
 
-function FlowTemplatePreview({ nodes }: { nodes: string[] }) {
+function FlowTemplatePreview({ nodes }: { nodes: BlockIconType[] }) {
   return <span className="template-preview" aria-hidden="true">
-    {nodes.map((node, index) => <span key={`${node}-${index}`} className={node}>{index > 0 && <i />}{node === 'begin' ? '▶' : node === 'agent' ? 'A' : node === 'check' ? '✓' : node === 'decision' ? '?' : '■'}</span>)}
+    {nodes.map((node, index) => <span key={`${node}-${index}`} className={node} data-block-icon={node}>{index > 0 && <i />}<BlockIcon type={node} /></span>)}
   </span>;
 }
 
@@ -148,7 +148,7 @@ export default function InitScreen() {
   return <main className="init-screen">
     <div className="init-grid" />
     <section className="init-copy">
-      <span className="brand-mark large">F</span>
+      <AppMark variant="large" />
       <span className="eyebrow">WORKSPACE SETUP</span>
       <h1>Make work<br/><em>traceable.</em></h1>
       <p>Connect an Agent, prove the command works, then choose the first Flow your tasks will follow.</p>

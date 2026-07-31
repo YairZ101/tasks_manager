@@ -2,7 +2,7 @@ import { lazy, Suspense, useEffect } from 'react';
 import { Toaster } from 'sonner';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
-import { Icon } from './components/Icon.js';
+import { AppMark, Icon } from './components/Icon.js';
 import WorkBoard from './components/WorkBoard.js';
 import TaskPanel from './components/TaskPanel.js';
 import TaskComposer from './components/TaskComposer.js';
@@ -41,14 +41,15 @@ function AppContent() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, []);
 
-  if (store.loading) return <div className="boot"><span className="boot-mark">F</span><span>Loading workspace…</span></div>;
+  if (store.loading) return <div className="boot"><AppMark variant="loading" /><span>Loading workspace…</span></div>;
   if (!store.initialized) return <InitScreen />;
 
   const counts = new Map(views.map(([key]) => [key, store.tasks.filter((task) => task.operational_state === key).length]));
+  const editingFlow = store.section === 'flows' && store.editingFlowId !== null;
   return (
-    <div className="app-shell">
+    <div className={`app-shell ${editingFlow ? 'editor-focused' : ''}`}>
       <aside className="rail">
-        <div className="brand"><span className="brand-mark">F</span><span><strong>Flow</strong><small>local agent control</small></span></div>
+        <div className="brand"><AppMark /><span><strong>Flow</strong><small>local agent control</small></span></div>
         <nav aria-label="Primary navigation">
           <button className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => store.setSection('work')}><Icon name="grid" />Work</button>
           <div className="rail-views">

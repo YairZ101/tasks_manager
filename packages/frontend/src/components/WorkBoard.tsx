@@ -55,7 +55,7 @@ export default function WorkBoard() {
     </header>
     <div className="queue-content">
       {queue.length ? <div className="card-stack queue-stack">{queue.map((task) => <TaskCard key={task.id} task={task} />)}</div>
-        : <div className={`empty-queue ${firstUse ? 'first-use' : ''}`}><span className="empty-queue-mark">{workView === 'attention' ? '✓' : '+'}</span><h3>{emptyCopy.title}</h3><p>{emptyCopy.detail}</p>{workView === 'backlog' && <button className="button primary" onClick={() => setCreate(true)}><Icon name="plus" size={16} />New task <kbd>⌥N</kbd></button>}</div>}
+        : <div className={`empty-queue ${firstUse ? 'first-use' : ''}`}><span className="empty-queue-mark"><Icon name={workView === 'attention' ? 'check' : 'plus'} size={25} /></span><h3>{emptyCopy.title}</h3><p>{emptyCopy.detail}</p>{workView === 'backlog' && <button className="button primary" onClick={() => setCreate(true)}><Icon name="plus" size={16} />New task <kbd>⌥N</kbd></button>}</div>}
     </div>
     {workView === 'backlog' && queue.length > 0 && <footer className="queue-footer"><button className="button ghost" onClick={() => setCreate(true)}><Icon name="plus" size={16} />Add task <kbd>⌥N</kbd></button></footer>}
   </section>;

@@ -3,6 +3,7 @@ interface ConfirmDialogProps {
   message: string;
   confirmLabel: string;
   destructive?: boolean;
+  disabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
   children?: React.ReactNode;
@@ -13,6 +14,7 @@ export default function ConfirmDialog({
   message,
   confirmLabel,
   destructive,
+  disabled,
   onConfirm,
   onCancel,
   children,
@@ -27,13 +29,15 @@ export default function ConfirmDialog({
         <div className="flex justify-end gap-2">
           <button
             onClick={onCancel}
+            disabled={disabled}
             className="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text hover:bg-bg-hover rounded-lg transition-colors"
           >
             Cancel
           </button>
           <button
             onClick={onConfirm}
-            className={`px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors ${
+            disabled={disabled}
+            className={`px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
               destructive
                 ? 'bg-danger hover:bg-danger/80'
                 : 'bg-accent hover:bg-accent-hover'

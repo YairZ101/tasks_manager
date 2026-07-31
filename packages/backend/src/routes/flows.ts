@@ -1,5 +1,5 @@
 import { Hono } from 'hono';
-import { compileFlow, createRecommendedFlow, validateFlow, type FlowDefinition } from '@flow/core';
+import { compileFlow, createBlankFlow, createRecommendedFlow, validateFlow, type FlowDefinition } from '@flow/core';
 import { getDb } from '../db/database.js';
 import { emitEvent } from '../flow/events.js';
 import { getFlowVersion, parseFlowVersion } from '../flow/repository.js';
@@ -18,7 +18,7 @@ flows.post('/', async (c) => {
   const body = await c.req.json().catch(() => ({})) as { name?: string; definition?: FlowDefinition };
   const name = body.name?.trim();
   if (!name || name.length > 200) return c.json({ error: 'Flow name is required and must be at most 200 characters.' }, 400);
-  const definition = body.definition ?? createRecommendedFlow();
+  const definition = body.definition ?? createBlankFlow();
   const result = db.transaction(() => {
     const inserted = db.query('INSERT INTO flows (name, is_default) VALUES (?, ?)').run(name, 0);
     const flowId = Number(inserted.lastInsertRowid);
@@ -97,6 +97,19 @@ flows.post('/:id/default', (c) => {
   })();
   emitEvent('flow:changed', { flowId: id }, 'flow', id);
   return c.json({ flow: db.query<Flow, [number]>('SELECT * FROM flows WHERE id = ?').get(id) });
+});
+
+flows.delete('/:id', (c) => {
+  const db = getDb();
+  const id = Number(c.req.param('id'));
+  const flow = db.query<Flow, [number]>('SELECT * FROM flows WHERE id = ?').get(id);
+  if (!flow) return c.json({ error: 'Flow not found.' }, 404);
+  if (flow.is_default) return c.json({ error: 'Set another published Flow as the default before deleting this one.', reason: 'default_flow' }, 409);
+  const runCount = db.query<{ count: number }, [number]>('SELECT COUNT(*) AS count FROM runs INNER JOIN flow_versions ON flow_versions.id = runs.flow_version_id WHERE flow_versions.flow_id = ?').get(id)!.count;
+  if (runCount) return c.json({ error: 'This Flow has run history and cannot be deleted.', reason: 'flow_has_runs' }, 409);
+  db.query('DELETE FROM flows WHERE id = ?').run(id);
+  emitEvent('flow:changed', { flowId: id, action: 'deleted' }, 'flow', id);
+  return c.body(null, 204);
 });
 
 export default flows;

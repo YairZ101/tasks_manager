@@ -4,7 +4,7 @@ import os from 'os';
 import path from 'path';
 import { closeDb, getDb, initDb } from '../db/database.js';
 import { createApp } from '../app.js';
-import { compileFlow, createMinimalFlow, createRecommendedFlow } from '@flow/core';
+import { compileFlow, createBlankFlow, createMinimalFlow, createRecommendedFlow } from '@flow/core';
 import { initEngine, shutdownEngine } from '../flow/engine.js';
 
 let root = '';
@@ -28,6 +28,38 @@ beforeEach(() => {
 afterEach(async () => { await shutdownEngine(); closeDb(); fs.rmSync(root, { recursive: true, force: true }); });
 
 describe('Flow routes', () => {
+  test('creates new Flows with the blank canvas template', async () => {
+    const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Blank delivery' }) });
+    expect(created.status).toBe(201);
+    const { flow, draft } = await created.json() as any;
+    expect(flow).toMatchObject({ name: 'Blank delivery', active_version_id: null });
+    expect(draft.definition).toEqual(createBlankFlow());
+  });
+
+  test('deletes an unused non-default Flow and protects default or used Flows', async () => {
+    const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Disposable' }) });
+    const disposable = (await created.json() as any).flow;
+    expect((await app.request(`/flows/${disposable.id}`, { method: 'DELETE' })).status).toBe(204);
+    expect((await app.request(`/flows/${disposable.id}`)).status).toBe(404);
+
+    const defaultFlow = getDb().query<{ id: number }, []>('SELECT id FROM flows WHERE is_default = 1').get()!;
+    const defaultResponse = await app.request(`/flows/${defaultFlow.id}`, { method: 'DELETE' });
+    expect(defaultResponse.status).toBe(409);
+    expect(await defaultResponse.json()).toMatchObject({ reason: 'default_flow' });
+
+    const db = getDb();
+    const used = db.query("INSERT INTO flows(name) VALUES('Used')").run();
+    const usedId = Number(used.lastInsertRowid);
+    const definition = createMinimalFlow();
+    const version = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,1,'published',?,?,datetime('now'))").run(usedId, JSON.stringify(definition), JSON.stringify(compileFlow(definition)));
+    db.query('INSERT INTO tasks(task_key,title) VALUES(?,?)').run('TST-99', 'Historical task');
+    const taskId = db.query<{ id: number }, []>("SELECT id FROM tasks WHERE task_key = 'TST-99'").get()!.id;
+    db.query("INSERT INTO runs(task_id,flow_version_id,status) VALUES(?,?,'finished')").run(taskId, Number(version.lastInsertRowid));
+    const usedResponse = await app.request(`/flows/${usedId}`, { method: 'DELETE' });
+    expect(usedResponse.status).toBe(409);
+    expect(await usedResponse.json()).toMatchObject({ reason: 'flow_has_runs' });
+  });
+
   test('creates, lists, and edits tasks using queue semantics', async () => {
     const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Ship graph', queue_state: 'ready' }) });
     expect(created.status).toBe(201);
@@ -42,9 +74,13 @@ describe('Flow routes', () => {
 
   test('uses optimistic revisions and refuses an invalid publish', async () => {
     const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Review flow', definition: createRecommendedFlow() }) });
+    expect(created.status).toBe(201);
     const flow = (await created.json() as any).flow;
+    expect(flow).toMatchObject({ name: 'Review flow', active_version_id: null });
     const draftResponse = await app.request(`/flows/${flow.id}/draft`);
+    expect(draftResponse.status).toBe(200);
     const draft = (await draftResponse.json() as any).draft;
+    expect(draft).toMatchObject({ flow_id: flow.id, state: 'draft', version: 1 });
     const invalid = { ...draft.definition, connections: [] };
     const save = await app.request(`/flows/${flow.id}/draft`, { method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ definition: invalid, revision: draft.draft_revision }) });
     expect(save.status).toBe(200);

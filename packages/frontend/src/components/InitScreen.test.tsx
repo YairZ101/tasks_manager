@@ -27,6 +27,7 @@ describe('InitScreen', () => {
     expect(screen.getByRole('heading', { name: 'Name the project' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     expect(screen.getByRole('heading', { name: 'Choose a starting Flow' })).toBeInTheDocument();
+    expect(document.querySelector('[data-flow-template="recommended"] [data-block-icon="decision"] svg')).toHaveAttribute('data-icon', 'question');
     fireEvent.click(screen.getByRole('radio', { name: /Minimal delivery/ }));
     fireEvent.click(screen.getByRole('button', { name: /Finish setup/ }));
     await waitFor(() => expect(api.completeInitialization).toHaveBeenCalledWith(expect.objectContaining({

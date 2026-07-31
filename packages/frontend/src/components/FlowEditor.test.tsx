@@ -41,6 +41,33 @@ describe('FlowEditor', () => {
     expect(await screen.findByText('Renamed delivery')).toBeVisible();
   });
 
+  test('cancels a Flow rename without sending a request', async () => {
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename flow Standard delivery' }));
+    const input = screen.getByRole('textbox', { name: 'Flow name' });
+    fireEvent.change(input, { target: { value: 'Discarded name' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(await screen.findByRole('button', { name: 'Rename flow Standard delivery' })).toBeVisible();
+    expect(api.updateFlow).not.toHaveBeenCalled();
+  });
+
+  test('saves a Flow rename on blur and keeps editing after a failed request', async () => {
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('Rename failed.')).mockResolvedValueOnce({ flow: { id: 1, name: 'Saved on blur' } as any });
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename flow Standard delivery' }));
+    const retryInput = screen.getByRole('textbox', { name: 'Flow name' });
+    fireEvent.change(retryInput, { target: { value: 'Retry name' } });
+    fireEvent.blur(retryInput);
+    await waitFor(() => expect(api.updateFlow).toHaveBeenCalledWith(1, { name: 'Retry name' }));
+    expect(screen.getByRole('textbox', { name: 'Flow name' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Flow name' }), { target: { value: 'Saved on blur' } });
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Flow name' }));
+    await waitFor(() => expect(api.updateFlow).toHaveBeenLastCalledWith(1, { name: 'Saved on blur' }));
+    expect(await screen.findByText('Saved on blur')).toBeVisible();
+  });
+
   test('reserves stable block geometry before semantic details change', async () => {
     render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
     const decision = (await screen.findByLabelText('Decision block: Plan review')).closest('.react-flow__node-flowBlock');

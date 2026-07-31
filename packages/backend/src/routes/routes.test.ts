@@ -44,6 +44,10 @@ describe('Flow routes', () => {
 
     const invalid = await app.request(`/flows/${flow.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '   ' }) });
     expect(invalid.status).toBe(400);
+
+    const tooLong = await app.request(`/flows/${flow.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'a'.repeat(201) }) });
+    expect(tooLong.status).toBe(400);
+    expect((await app.request('/flows/99999', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Missing Flow' }) })).status).toBe(404);
   });
 
   test('deletes an unused non-default Flow and protects default or used Flows', async () => {

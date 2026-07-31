@@ -68,6 +68,35 @@ describe('FlowLibrary', () => {
     expect(await screen.findByRole('button', { name: 'Rename flow Release train' })).toBeVisible();
   });
 
+  test('cancels a library rename without sending a request', async () => {
+    const flow = { id: 8, name: 'Release delivery', is_default: 0, active_version_id: null } as any;
+    useAppStore.setState({ flows: [flow] });
+    render(<FlowLibrary />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename flow Release delivery' }));
+    const input = screen.getByRole('textbox', { name: 'Flow name for Release delivery' });
+    fireEvent.change(input, { target: { value: 'Discarded name' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(await screen.findByRole('button', { name: 'Rename flow Release delivery' })).toBeVisible();
+    expect(api.updateFlow).not.toHaveBeenCalled();
+  });
+
+  test('keeps the library rename input open when saving fails', async () => {
+    const flow = { id: 8, name: 'Release delivery', is_default: 0, active_version_id: null } as any;
+    useAppStore.setState({ flows: [flow] });
+    vi.mocked(api.updateFlow).mockRejectedValue(new Error('Rename failed.'));
+    render(<FlowLibrary />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename flow Release delivery' }));
+    const input = screen.getByRole('textbox', { name: 'Flow name for Release delivery' });
+    fireEvent.change(input, { target: { value: 'Retry name' } });
+    fireEvent.blur(input);
+
+    await waitFor(() => expect(api.updateFlow).toHaveBeenCalledWith(8, { name: 'Retry name' }));
+    expect(screen.getByRole('textbox', { name: 'Flow name for Release delivery' })).toBeInTheDocument();
+  });
+
   test('uses the shared block icon registry in Flow previews', () => {
     useAppStore.setState({ flows: [{ id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 1, activeVersion: { version: 1, definition: createRecommendedFlow() } } as any] });
     render(<FlowLibrary />);

@@ -1,5 +1,42 @@
-import { describe, expect, test } from 'vitest';
-import { queueForShortcutCode, sidebarCollapsedForContext, shouldAutoCollapseSidebar, shouldCollapseSidebarOnResize, shouldExpandSidebarOnResize } from './App.js';
+import { beforeEach, describe, expect, test, vi } from 'vitest';
+import { createElement } from 'react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import App, { queueForShortcutCode, sidebarCollapsedForContext, shouldAutoCollapseSidebar, shouldCollapseSidebarOnResize, shouldExpandSidebarOnResize } from './App.js';
+import { useAppStore } from './hooks/useTaskStore.js';
+
+vi.mock('./hooks/useEventSource.js', () => ({ useEventSource: vi.fn() }));
+vi.mock('./components/WorkBoard.js', () => ({ default: () => null }));
+vi.mock('./components/TaskPanel.js', () => ({ default: () => null }));
+vi.mock('./components/TaskComposer.js', () => ({ default: () => null }));
+vi.mock('./components/FlowLibrary.js', () => ({ default: () => null }));
+vi.mock('./components/SettingsPanel.js', () => ({ default: () => null }));
+vi.mock('./components/InitScreen.js', () => ({ default: () => null }));
+vi.mock('./components/FlowEditor.js', () => ({ default: () => null }));
+
+function setViewportWidth(width: number) {
+  Object.defineProperty(window, 'innerWidth', { configurable: true, value: width });
+  window.dispatchEvent(new Event('resize'));
+}
+
+beforeEach(() => {
+  setViewportWidth(1280);
+  useAppStore.setState({
+    initialized: true,
+    loading: false,
+    repoName: 'tasks_manager',
+    isGitRepo: true,
+    runner: { activeCount: 0, queuedCount: 0, maxConcurrent: 3, executions: [] },
+    tasks: [],
+    flows: [],
+    section: 'work',
+    workView: 'backlog',
+    editingFlowId: null,
+    selectedTaskId: null,
+    createOpen: false,
+    settingsOpen: false,
+    bootstrap: vi.fn(),
+  });
+});
 
 describe('queueForShortcutCode', () => {
   test('uses physical digit keys so Option shortcuts work with macOS keyboard layouts', () => {
@@ -41,5 +78,40 @@ describe('sidebarCollapsedForContext', () => {
     expect(sidebarCollapsedForContext(true, 1440)).toBe(true);
     expect(sidebarCollapsedForContext(false, 900)).toBe(true);
     expect(sidebarCollapsedForContext(false, 1440)).toBe(false);
+  });
+});
+
+describe('App sidebar behavior', () => {
+  test('toggles the left sidebar from its visible control', () => {
+    render(createElement(App));
+    const shell = document.querySelector('.app-shell');
+    expect(shell).not.toHaveClass('sidebar-collapsed');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse sidebar' }));
+    expect(shell).toHaveClass('sidebar-collapsed');
+    expect(screen.getByRole('button', { name: 'Expand sidebar' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Expand sidebar' }));
+    expect(shell).not.toHaveClass('sidebar-collapsed');
+  });
+
+  test('collapses and expands the sidebar as the viewport crosses the breakpoint', async () => {
+    render(createElement(App));
+    const shell = document.querySelector('.app-shell');
+
+    setViewportWidth(1159);
+    await waitFor(() => expect(shell).toHaveClass('sidebar-collapsed'));
+    setViewportWidth(1160);
+    await waitFor(() => expect(shell).not.toHaveClass('sidebar-collapsed'));
+  });
+
+  test('keeps the sidebar collapsed while the flow editor is open and restores it afterward', async () => {
+    render(createElement(App));
+    const shell = document.querySelector('.app-shell');
+
+    useAppStore.setState({ section: 'flows', editingFlowId: 1 });
+    await waitFor(() => expect(shell).toHaveClass('sidebar-collapsed'));
+    useAppStore.setState({ editingFlowId: null });
+    await waitFor(() => expect(shell).not.toHaveClass('sidebar-collapsed'));
   });
 });

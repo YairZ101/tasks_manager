@@ -36,6 +36,20 @@ describe('Flow routes', () => {
     expect(draft.definition).toEqual(createBlankFlow());
   });
 
+  test('renames a Flow and validates its name', async () => {
+    const flow = getDb().query<{ id: number }, []>("SELECT id FROM flows WHERE name = 'Default'").get()!;
+    const renamed = await app.request(`/flows/${flow.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '  Release train  ' }) });
+    expect(renamed.status).toBe(200);
+    expect(await renamed.json()).toMatchObject({ flow: { id: flow.id, name: 'Release train' } });
+
+    const invalid = await app.request(`/flows/${flow.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '   ' }) });
+    expect(invalid.status).toBe(400);
+
+    const tooLong = await app.request(`/flows/${flow.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'a'.repeat(201) }) });
+    expect(tooLong.status).toBe(400);
+    expect((await app.request('/flows/99999', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Missing Flow' }) })).status).toBe(404);
+  });
+
   test('deletes an unused non-default Flow and protects default or used Flows', async () => {
     const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Disposable' }) });
     const disposable = (await created.json() as any).flow;

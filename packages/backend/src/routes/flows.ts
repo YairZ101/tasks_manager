@@ -29,6 +29,19 @@ flows.post('/', async (c) => {
   return c.json({ flow: db.query<Flow, [number]>('SELECT * FROM flows WHERE id = ?').get(result.flowId), draft: getFlowVersion(result.draftId) }, 201);
 });
 
+flows.patch('/:id', async (c) => {
+  const db = getDb();
+  const id = Number(c.req.param('id'));
+  const body = await c.req.json().catch(() => ({})) as { name?: string };
+  const name = body.name?.trim();
+  if (!name || name.length > 200) return c.json({ error: 'Flow name is required and must be at most 200 characters.' }, 400);
+  const updated = db.query("UPDATE flows SET name = ?, updated_at = datetime('now') WHERE id = ?").run(name, id);
+  if (!updated.changes) return c.json({ error: 'Flow not found.' }, 404);
+  const flow = db.query<Flow, [number]>('SELECT * FROM flows WHERE id = ?').get(id)!;
+  emitEvent('flow:changed', { flowId: id, action: 'renamed' }, 'flow', id);
+  return c.json({ flow });
+});
+
 flows.get('/:id', (c) => {
   const db = getDb();
   const id = Number(c.req.param('id'));

@@ -115,9 +115,9 @@ function PanelCloseButton({ label, onClick }: { label: string; onClick: () => vo
   return <button type="button" className="icon-button editor-panel-close" aria-label={label} onClick={onClick}><Icon name="close" size={17} /></button>;
 }
 
-function BlockPalette({ nodes, open, add, close }: { nodes: CanvasNode[]; open: boolean; add: (type: FlowNode['type']) => void; close: () => void }) {
+function BlockPalette({ nodes, open, add }: { nodes: CanvasNode[]; open: boolean; add: (type: FlowNode['type']) => void }) {
   return <aside id="flow-block-library" className={`palette editor-panel ${open ? 'panel-open' : ''}`} aria-label="Block library">
-    <header className="editor-panel-head"><div><span className="eyebrow">BLOCK LIBRARY</span><strong>Add to canvas</strong></div><PanelCloseButton label="Close block library" onClick={close} /></header>
+    <header className="editor-panel-head"><div><span className="eyebrow">BLOCK LIBRARY</span><strong>Add to canvas</strong></div></header>
     {(Object.keys(typeMeta) as FlowNode['type'][]).map((type) => <button type="button" key={type} draggable onClick={() => add(type)} onDragStart={(event) => { event.dataTransfer.setData('application/flow-block', type); event.dataTransfer.effectAllowed = 'move'; }} disabled={type === 'begin' && nodes.some((node) => node.data.flowNode.type === 'begin')} aria-label={`Add ${typeMeta[type].label} block`}><span className={type}><BlockIcon type={type} /></span><div><strong>{typeMeta[type].label}</strong><small>{typeMeta[type].description}</small></div></button>)}
     <div className="palette-tip"><strong>Click or drag</strong><p>Click to place a block in view, or drag it to an exact canvas position.</p></div>
   </aside>;
@@ -154,10 +154,6 @@ function Inspector({ node, nodes, edges, open, update, connectOutcome, remove, c
   </aside>;
 }
 
-function EmptyInspector({ open, close }: { open: boolean; close: () => void }) {
-  return <aside id="flow-block-inspector" className={`inspector editor-panel empty ${open ? 'panel-open' : ''}`} aria-label="Block inspector"><PanelCloseButton label="Close block inspector" onClick={close} /><span className="empty-glyph"><Icon name="nodes" size={25} /></span><h3>Select a block</h3><p>Its configuration and outcome connections will appear here.</p></aside>;
-}
-
 function EditorCanvas({ flowId }: { flowId: number }) {
   const flow = useAppStore((state) => state.flows.find((candidate) => candidate.id === flowId));
   const back = useAppStore((state) => state.editFlow);
@@ -168,12 +164,17 @@ function EditorCanvas({ flowId }: { flowId: number }) {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [flowName, setFlowName] = useState(flow?.name ?? 'Flow');
+  const [nameDraft, setNameDraft] = useState(flow?.name ?? 'Flow');
+  const [renaming, setRenaming] = useState(false);
+  const [renamingSaving, setRenamingSaving] = useState(false);
   const [openPanel, setOpenPanel] = useState<EditorPanel>(null);
   const [editorViewport, setEditorViewport] = useState<EditorViewport>(defaultViewport);
   const [viewportReady, setViewportReady] = useState(false);
   const savedViewport = useRef<EditorViewport | null>(null);
   const viewportChangedByUser = useRef(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
+  const nameInputRef = useRef<HTMLInputElement | null>(null);
   const { fitView, getViewport, screenToFlowPosition } = useReactFlow();
   const definition = useMemo(() => definitionFrom(nodes, edges, editorViewport), [nodes, edges, editorViewport]);
   const validation = useMemo(() => validateFlow(definition), [definition]);
@@ -206,6 +207,22 @@ function EditorCanvas({ flowId }: { flowId: number }) {
   }, [fitView, flowId, getViewport, setEdges, setNodes]);
 
   useEffect(() => {
+    if (renaming) return;
+    const nextName = flow?.name ?? 'Flow';
+    setFlowName(nextName);
+    setNameDraft(nextName);
+  }, [flow?.name, renaming]);
+
+  useEffect(() => {
+    if (!renaming) return;
+    const frame = requestAnimationFrame(() => {
+      nameInputRef.current?.focus();
+      nameInputRef.current?.select();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [renaming]);
+
+  useEffect(() => {
     if (!openPanel) return;
     const closePanel = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setOpenPanel(null);
@@ -231,7 +248,7 @@ function EditorCanvas({ flowId }: { flowId: number }) {
     const flowNode = makeNode(type, position.x, position.y);
     setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), { id: flowNode.id, type: 'flowBlock', position, data: { flowNode }, style: flowNode.type === 'note' ? { width: flowNode.config.width ?? 220, height: flowNode.config.height ?? 120 } : { height: FLOW_NODE_HEIGHTS[flowNode.type] }, selected: true }]);
     setSelectedId(flowNode.id);
-    setOpenPanel('inspector');
+    setOpenPanel(null);
     setDirty(true);
   }, [nodes, setNodes]);
   const addFromPalette = useCallback((type: FlowNode['type']) => {
@@ -249,6 +266,7 @@ function EditorCanvas({ flowId }: { flowId: number }) {
   };
   const updateSelected = (next: FlowNode) => { setNodes((current) => current.map((node) => node.id === next.id ? { ...node, data: { flowNode: next } } : node)); setDirty(true); };
   const selected = nodes.find((node) => node.id === selectedId);
+  const inspectorVisible = selected !== undefined && openPanel === 'inspector';
   const connectOutcome = (outcome: string, target: string) => {
     if (!selected) return;
     setEdges((current) => {
@@ -267,19 +285,35 @@ function EditorCanvas({ flowId }: { flowId: number }) {
     catch (error: any) { toast.error(error.data?.reason === 'revision_conflict' ? 'Draft changed elsewhere. Reload the editor.' : error.message); return false; } finally { setSaving(false); }
   };
   const publish = async () => { if (!validation.valid) { toast.error('Resolve validation problems before publishing.'); return; } if (!(await save())) return; await api.publishFlow(flowId); await refreshFlows(); toast.success('A new immutable Flow version is live.'); };
+  const commitName = async () => {
+    if (renamingSaving) return;
+    const name = nameDraft.trim();
+    if (!name) { toast.error('Flow name is required.'); setNameDraft(flowName); return; }
+    if (name === flowName) { setRenaming(false); return; }
+    setRenamingSaving(true);
+    try {
+      const result = await api.updateFlow(flowId, { name });
+      setFlowName(result.flow.name);
+      setNameDraft(result.flow.name);
+      setRenaming(false);
+      await refreshFlows();
+      toast.success('Flow name updated.');
+    } catch (error: any) { toast.error(error.message); }
+    finally { setRenamingSaving(false); }
+  };
 
   return <div className={`editor-shell zoom-${zoomMode}`} data-zoom-mode={zoomMode} style={{ '--zoom-compensation': Math.min(1 / editorViewport.zoom, 1 / MIN_FLOW_ZOOM) } as CSSProperties}>
-    <div className="editor-toolbar"><div className="editor-toolbar-context"><button className="back-button" onClick={() => back(null)}><Icon name="back" size={15} />Library</button><div className="flow-title"><span className="flow-symbol"><Icon name="nodes" size={17} /></span><div><strong>{flow?.name ?? 'Flow'}</strong><small>{dirty ? 'Unsaved draft' : `Draft r${revision}`}</small></div></div><div className={`validation-chip ${validation.valid ? 'valid' : 'invalid'}`}><span />{validation.valid ? 'Ready to publish' : `${validation.problems.length} issue${validation.problems.length === 1 ? '' : 's'}`}</div></div><div className="editor-toolbar-actions"><button type="button" className={`button ghost editor-panel-toggle ${openPanel === 'palette' ? 'active' : ''}`} aria-expanded={openPanel === 'palette'} aria-controls="flow-block-library" onClick={() => setOpenPanel((current) => current === 'palette' ? null : 'palette')}><Icon name="plus" size={15} />Blocks</button><button className="button ghost" disabled={!dirty || saving} onClick={() => void save()}>{saving ? 'Saving…' : 'Save draft'}</button><button className="button primary" disabled={saving || !validation.valid} onClick={() => void publish()}>Publish version</button></div></div>
+    <div className="editor-toolbar"><div className="editor-toolbar-context"><button className="back-button" aria-label="Flow library" onClick={() => back(null)}><Icon name="back" size={15} /><span className="toolbar-nav-label">Library</span></button><div className={`flow-title ${renaming ? 'is-editing' : ''}`}><span className="flow-symbol"><Icon name="nodes" size={17} /></span><div>{renaming ? <input ref={nameInputRef} className="flow-name-input" aria-label="Flow name" value={nameDraft} disabled={renamingSaving} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => void commitName()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); setNameDraft(flowName); setRenaming(false); } }} /> : <button type="button" className="flow-name-button" aria-label={`Rename flow ${flowName}`} title="Rename flow" onClick={() => { setNameDraft(flowName); setRenaming(true); }}><strong>{flowName}</strong><Icon name="edit" size={13} /></button>}<small>{dirty ? 'Unsaved draft' : `Draft r${revision}`}</small></div></div><div className={`validation-chip ${validation.valid ? 'valid' : 'invalid'}`}><span />{validation.valid ? 'Ready to publish' : `${validation.problems.length} issue${validation.problems.length === 1 ? '' : 's'}`}</div></div><div className="editor-toolbar-actions"><button className="button ghost editor-toolbar-action" aria-label={saving ? 'Saving draft' : 'Save draft'} disabled={!dirty || saving} onClick={() => void save()}><Icon name="save" size={15} /><span className="toolbar-action-label">{saving ? 'Saving…' : 'Save draft'}</span></button><button className="button primary editor-toolbar-action" aria-label="Publish version" disabled={saving || !validation.valid} onClick={() => void publish()}><Icon name="publish" size={15} /><span className="toolbar-action-label">Publish version</span></button></div></div>
     <div className="editor-main">
-      <BlockPalette nodes={nodes} open={openPanel === 'palette'} add={addFromPalette} close={() => setOpenPanel(null)} />
+      <button type="button" className={`button ghost editor-palette-toggle ${openPanel === 'palette' ? 'active' : ''}`} aria-expanded={openPanel === 'palette'} aria-controls="flow-block-library" onClick={() => setOpenPanel((current) => current === 'palette' ? null : 'palette')}><Icon name="plus" size={15} />Blocks</button>
+      <BlockPalette nodes={nodes} open={openPanel === 'palette'} add={addFromPalette} />
       <div ref={canvasRef} className="canvas-wrap" onDrop={onDrop} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}>
         <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={onConnect} onPaneClick={clearSelection} onNodeClick={(_, node) => { setSelectedId(node.id); setOpenPanel('inspector'); }} onSelectionChange={({ nodes: selection }) => { setSelectedId(selection[0]?.id ?? null); }} onMoveStart={(event) => { if (event) viewportChangedByUser.current = true; }} onMoveEnd={(_, viewport) => { setEditorViewport(viewport); if (viewportChangedByUser.current && savedViewport.current && !sameViewport(savedViewport.current, viewport)) setDirty(true); viewportChangedByUser.current = false; }} minZoom={MIN_FLOW_ZOOM} maxZoom={1.6} deleteKeyCode={['Backspace', 'Delete']} proOptions={{ hideAttribution: true }}>
           <Background color="#26332f" gap={24} size={1} />{viewportReady && <Controls showInteractive={false} onZoomIn={() => { viewportChangedByUser.current = true; }} onZoomOut={() => { viewportChangedByUser.current = true; }} onFitView={() => { viewportChangedByUser.current = true; }}><output className="flow-zoom-indicator" aria-label="Current canvas zoom" aria-live="polite">{Math.round(editorViewport.zoom * 100)}%</output></Controls>}<MiniMap pannable zoomable maskColor="rgba(5, 9, 8, 0.82)" nodeColor={(node) => ({ begin: '#69e0b1', agent: '#6ba5ff', check: '#d4e052', decision: '#ffb454', result: '#dc7eff', note: '#7e8a86' } as Record<string, string>)[(node.data as any).flowNode.type] ?? '#fff'} />
         </ReactFlow>
         {!validation.valid && <div className="validation-popover"><strong>Flow needs attention</strong>{validation.problems.slice(0, 4).map((problem) => <button key={`${problem.code}-${problem.nodeId}-${problem.connectionId}`} onClick={() => { if (problem.nodeId) { setSelectedId(problem.nodeId); setOpenPanel('inspector'); } }}><Icon name="alert" size={14} />{problem.message}</button>)}</div>}
       </div>
-      <button type="button" className={`editor-panel-backdrop ${openPanel ? 'visible' : ''}`} aria-label={`Close ${openPanel === 'palette' ? 'block library' : 'block inspector'}`} onClick={clearSelection} />
-      {selected ? <Inspector node={selected} nodes={nodes} edges={edges} open={openPanel === 'inspector'} update={updateSelected} connectOutcome={connectOutcome} remove={removeSelected} close={() => setOpenPanel(null)} /> : <EmptyInspector open={openPanel === 'inspector'} close={() => setOpenPanel(null)} />}
+      {inspectorVisible && <Inspector node={selected} nodes={nodes} edges={edges} open update={updateSelected} connectOutcome={connectOutcome} remove={removeSelected} close={() => setOpenPanel(null)} />}
     </div>
   </div>;
 }

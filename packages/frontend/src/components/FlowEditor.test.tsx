@@ -5,7 +5,7 @@ import FlowEditor, { COMPACT_ZOOM_THRESHOLD, DETAIL_ZOOM_THRESHOLD, FLOW_NODE_HE
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
-vi.mock('../api/client.js', () => ({ api: { getDraft: vi.fn(), saveDraft: vi.fn(), publishFlow: vi.fn() } }));
+vi.mock('../api/client.js', () => ({ api: { getDraft: vi.fn(), saveDraft: vi.fn(), publishFlow: vi.fn(), updateFlow: vi.fn() } }));
 
 describe('FlowEditor', () => {
   beforeEach(() => {
@@ -15,6 +15,7 @@ describe('FlowEditor', () => {
     vi.mocked(api.getDraft).mockResolvedValue({ draft: { id: 3, flow_id: 1, version: 2, state: 'draft', draft_revision: 4, definition, compiled: null, published_at: null }, validation: { valid: true, problems: [] } });
     vi.mocked(api.saveDraft).mockResolvedValue({ draft: { id: 3, flow_id: 1, version: 2, state: 'draft', draft_revision: 5, definition, compiled: null, published_at: null }, validation: { valid: true, problems: [] } });
     vi.mocked(api.publishFlow).mockResolvedValue({ version: {} as any });
+    vi.mocked(api.updateFlow).mockResolvedValue({ flow: { id: 1, name: 'Renamed delivery' } as any });
     useAppStore.setState({ flows: [{ id: 1, name: 'Standard delivery', is_default: 1 } as any], editingFlowId: 1, refreshFlows: vi.fn(), editFlow: vi.fn() });
   });
 
@@ -27,6 +28,44 @@ describe('FlowEditor', () => {
     expect(getFlowZoomMode(1.6)).toBe('detail');
     expect(COMPACT_ZOOM_THRESHOLD).toBe(0.35);
     expect(DETAIL_ZOOM_THRESHOLD).toBe(0.55);
+  });
+
+  test('renames the Flow from its toolbar title', async () => {
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename flow Standard delivery' }));
+    const input = screen.getByRole('textbox', { name: 'Flow name' });
+    await waitFor(() => expect(input).toHaveFocus());
+    fireEvent.change(input, { target: { value: 'Renamed delivery' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    await waitFor(() => expect(api.updateFlow).toHaveBeenCalledWith(1, { name: 'Renamed delivery' }));
+    expect(await screen.findByText('Renamed delivery')).toBeVisible();
+  });
+
+  test('cancels a Flow rename without sending a request', async () => {
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename flow Standard delivery' }));
+    const input = screen.getByRole('textbox', { name: 'Flow name' });
+    fireEvent.change(input, { target: { value: 'Discarded name' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+
+    expect(await screen.findByRole('button', { name: 'Rename flow Standard delivery' })).toBeVisible();
+    expect(api.updateFlow).not.toHaveBeenCalled();
+  });
+
+  test('saves a Flow rename on blur and keeps editing after a failed request', async () => {
+    vi.mocked(api.updateFlow).mockRejectedValueOnce(new Error('Rename failed.')).mockResolvedValueOnce({ flow: { id: 1, name: 'Saved on blur' } as any });
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Rename flow Standard delivery' }));
+    const retryInput = screen.getByRole('textbox', { name: 'Flow name' });
+    fireEvent.change(retryInput, { target: { value: 'Retry name' } });
+    fireEvent.blur(retryInput);
+    await waitFor(() => expect(api.updateFlow).toHaveBeenCalledWith(1, { name: 'Retry name' }));
+    expect(screen.getByRole('textbox', { name: 'Flow name' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Flow name' }), { target: { value: 'Saved on blur' } });
+    fireEvent.blur(screen.getByRole('textbox', { name: 'Flow name' }));
+    await waitFor(() => expect(api.updateFlow).toHaveBeenLastCalledWith(1, { name: 'Saved on blur' }));
+    expect(await screen.findByText('Saved on blur')).toBeVisible();
   });
 
   test('reserves stable block geometry before semantic details change', async () => {
@@ -65,34 +104,41 @@ describe('FlowEditor', () => {
     fireEvent.mouseUp(window, { button: 0, clientX: 300, clientY: 260, view: window });
 
     expect(block.closest('.react-flow__node')).toHaveClass('selected');
-    expect(screen.getByRole('complementary', { name: 'Block inspector' })).not.toHaveClass('panel-open');
+    expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
   });
 
   test('loads the typed graph and exposes the accessible connection editor', async () => {
     render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
     const planReview = await screen.findByLabelText('Decision block: Plan review');
+    expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
     fireEvent.click(planReview);
     expect(await screen.findByLabelText('Connect approved')).toBeInTheDocument();
     expect(screen.getByRole('complementary', { name: 'Block inspector' })).toHaveClass('panel-open');
+    expect(document.querySelector('.editor-main')).not.toHaveClass('has-inspector');
+    expect(screen.getByText('Standard delivery')).toBeVisible();
     expect(screen.getByText('Ready to publish')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Save draft' })).toHaveTextContent('Save draft');
+    expect(screen.getByRole('button', { name: 'Publish version' })).toHaveTextContent('Publish version');
+    expect(screen.getByRole('button', { name: 'Save draft' }).querySelector('[data-icon="save"]')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Publish version' }).querySelector('[data-icon="publish"]')).toBeInTheDocument();
     expect(document.querySelector('.editor-shell')).toHaveAttribute('data-zoom-mode');
     expect(screen.getByLabelText('Decision block: Plan review')).toHaveAttribute('title', 'Decision: Plan review');
     const miniMap = screen.getByTestId('rf__minimap');
     expect(miniMap.style.getPropertyValue('--xy-minimap-mask-background-color-props')).toBe('rgba(5, 9, 8, 0.82)');
     expect(miniMap.querySelector('.react-flow__minimap-svg')).toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole('button', { name: 'Close block inspector' }));
+    expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
+
+    fireEvent.click(planReview);
+    expect(screen.getByRole('complementary', { name: 'Block inspector' })).toHaveClass('panel-open');
+    expect(screen.queryByRole('button', { name: 'Dismiss block inspector overlay' })).not.toBeInTheDocument();
+
     const pane = document.querySelector('.react-flow__pane');
     expect(pane).not.toBeNull();
     fireEvent.click(pane!);
-    expect(screen.getByRole('complementary', { name: 'Block inspector' })).not.toHaveClass('panel-open');
-    expect(screen.queryByRole('button', { name: 'Inspector' })).not.toBeInTheDocument();
-
-    fireEvent.click(planReview);
-    const backdrop = document.querySelector('.editor-panel-backdrop');
-    expect(backdrop).not.toBeNull();
-    fireEvent.click(backdrop!);
-    expect(screen.getByRole('complementary', { name: 'Block inspector' })).not.toHaveClass('panel-open');
+    expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Inspector' })).not.toBeInTheDocument();
   });
 
@@ -106,21 +152,19 @@ describe('FlowEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Blocks' }));
     const library = screen.getByRole('complementary', { name: 'Block library' });
     expect(library).toHaveClass('panel-open');
+    expect(screen.getByRole('button', { name: 'Blocks' }).parentElement).toHaveClass('editor-main');
     fireEvent.click(within(library).getByRole('button', { name: 'Add Agent block' }));
 
-    const inspector = screen.getByRole('complementary', { name: 'Block inspector' });
-    expect(inspector).toHaveClass('panel-open');
-    expect(within(inspector).getByLabelText('Name')).toHaveValue('Development');
+    expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeEnabled();
   });
 
-  test('keeps the compact canvas and empty inspector in the responsive panel structure', async () => {
+  test('keeps the compact canvas clear until a block is selected', async () => {
     Object.defineProperty(window, 'innerWidth', { configurable: true, value: 520 });
     render(<div style={{ width: 520, height: 800 }}><FlowEditor flowId={1} /></div>);
     const canvas = await screen.findByRole('application');
-    const inspector = screen.getByRole('complementary', { name: 'Block inspector' });
-    expect(canvas.parentElement?.parentElement).toBe(inspector.parentElement);
-    expect(inspector).toHaveClass('inspector', 'editor-panel', 'empty');
+    expect(canvas.parentElement?.parentElement).toHaveClass('editor-main');
+    expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
   });
   test('publishes only after saving the current draft', async () => {
     render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);

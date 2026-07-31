@@ -5,7 +5,7 @@ import FlowLibrary from './FlowLibrary.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
-vi.mock('../api/client.js', () => ({ api: { createFlow: vi.fn(), deleteFlow: vi.fn() } }));
+vi.mock('../api/client.js', () => ({ api: { createFlow: vi.fn(), deleteFlow: vi.fn(), updateFlow: vi.fn() } }));
 
 describe('FlowLibrary', () => {
   beforeEach(() => {
@@ -50,6 +50,22 @@ describe('FlowLibrary', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit Release delivery' }));
 
     expect(useAppStore.getState()).toMatchObject({ editingFlowId: 8, section: 'flows' });
+  });
+
+  test('renames a Flow directly from its library card', async () => {
+    const flow = { id: 8, name: 'Release delivery', is_default: 0, active_version_id: null } as any;
+    useAppStore.setState({ flows: [flow] });
+    vi.mocked(api.updateFlow).mockResolvedValue({ flow: { ...flow, name: 'Release train' } });
+    render(<FlowLibrary />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Rename flow Release delivery' }));
+    const input = screen.getByRole('textbox', { name: 'Flow name for Release delivery' });
+    await waitFor(() => expect(input).toHaveFocus());
+    fireEvent.change(input, { target: { value: 'Release train' } });
+    fireEvent.keyDown(input, { key: 'Enter' });
+
+    await waitFor(() => expect(api.updateFlow).toHaveBeenCalledWith(8, { name: 'Release train' }));
+    expect(await screen.findByRole('button', { name: 'Rename flow Release train' })).toBeVisible();
   });
 
   test('uses the shared block icon registry in Flow previews', () => {

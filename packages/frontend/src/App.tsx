@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect } from 'react';
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Toaster } from 'sonner';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
@@ -17,6 +17,24 @@ const views = [
   ['attention', 'Needs attention', 'alert'], ['finished', 'Finished', 'check'],
 ] as const;
 
+export const SIDEBAR_AUTO_COLLAPSE_WIDTH = 1160;
+
+export function shouldAutoCollapseSidebar(width: number) {
+  return width < SIDEBAR_AUTO_COLLAPSE_WIDTH;
+}
+
+export function shouldCollapseSidebarOnResize(previousWidth: number, nextWidth: number) {
+  return previousWidth >= SIDEBAR_AUTO_COLLAPSE_WIDTH && shouldAutoCollapseSidebar(nextWidth);
+}
+
+export function shouldExpandSidebarOnResize(previousWidth: number, nextWidth: number) {
+  return shouldAutoCollapseSidebar(previousWidth) && nextWidth >= SIDEBAR_AUTO_COLLAPSE_WIDTH;
+}
+
+export function sidebarCollapsedForContext(editingFlow: boolean, width: number) {
+  return editingFlow || shouldAutoCollapseSidebar(width);
+}
+
 export function queueForShortcutCode(code: string): typeof views[number][0] | null {
   const index = Number(code.replace('Digit', '')) - 1;
   return index >= 0 && index < views.length ? views[index][0] : null;
@@ -24,8 +42,24 @@ export function queueForShortcutCode(code: string): typeof views[number][0] | nu
 
 function AppContent() {
   const store = useAppStore();
+  const editingFlow = store.section === 'flows' && store.editingFlowId !== null;
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarCollapsedForContext(editingFlow, window.innerWidth));
+  const previousViewportWidth = useRef(window.innerWidth);
   useEventSource();
   useEffect(() => { void store.bootstrap(); }, [store.bootstrap]);
+  useLayoutEffect(() => {
+    setSidebarCollapsed(sidebarCollapsedForContext(editingFlow, window.innerWidth));
+  }, [editingFlow]);
+  useEffect(() => {
+    const collapseForViewport = () => {
+      const nextWidth = window.innerWidth;
+      if (editingFlow || shouldCollapseSidebarOnResize(previousViewportWidth.current, nextWidth)) setSidebarCollapsed(true);
+      if (!editingFlow && shouldExpandSidebarOnResize(previousViewportWidth.current, nextWidth)) setSidebarCollapsed(false);
+      previousViewportWidth.current = nextWidth;
+    };
+    window.addEventListener('resize', collapseForViewport);
+    return () => window.removeEventListener('resize', collapseForViewport);
+  }, [editingFlow]);
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
@@ -45,13 +79,22 @@ function AppContent() {
   if (!store.initialized) return <InitScreen />;
 
   const counts = new Map(views.map(([key]) => [key, store.tasks.filter((task) => task.operational_state === key).length]));
-  const editingFlow = store.section === 'flows' && store.editingFlowId !== null;
   return (
-    <div className={`app-shell ${editingFlow ? 'editor-focused' : ''}`}>
+    <div className={`app-shell ${editingFlow ? 'editor-focused' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <aside className="rail">
+        <button
+          className="rail-collapse"
+          type="button"
+          onClick={() => setSidebarCollapsed((collapsed) => !collapsed)}
+          aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+          aria-expanded={!sidebarCollapsed}
+          title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          <Icon name="arrow" />
+        </button>
         <div className="brand"><AppMark /><span><strong>Flow</strong><small>local agent control</small></span></div>
         <nav aria-label="Primary navigation">
-          <button className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => store.setSection('work')}><Icon name="grid" />Work</button>
+          <button className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => store.setSection('work')}><Icon name="grid" /><span>Work</span></button>
           <div className="rail-views">
             {views.map(([key, label, icon]) => (
               <button key={key} className={store.section === 'work' && store.workView === key ? 'active' : ''} onClick={() => store.setWorkView(key)} title={`Option ${views.findIndex(([view]) => view === key) + 1}`} aria-label={`${label}, Option ${views.findIndex(([view]) => view === key) + 1}`}>
@@ -59,10 +102,10 @@ function AppContent() {
               </button>
             ))}
           </div>
-          <button className={`rail-primary ${store.section === 'flows' ? 'active' : ''}`} onClick={() => store.setSection('flows')}><Icon name="nodes" />Flows</button>
+          <button className={`rail-primary ${store.section === 'flows' ? 'active' : ''}`} onClick={() => store.setSection('flows')}><Icon name="nodes" /><span>Flows</span></button>
         </nav>
         <div className="rail-bottom">
-          <button onClick={() => store.setSettingsOpen(true)}><Icon name="settings" />Settings</button>
+          <button onClick={() => store.setSettingsOpen(true)}><Icon name="settings" /><span>Settings</span></button>
           <div className="repo-chip"><span className={store.isGitRepo ? 'online' : ''} /><div><strong>{store.repoName}</strong><small>{store.runner.activeCount} running · {store.runner.queuedCount} queued</small></div></div>
         </div>
       </aside>

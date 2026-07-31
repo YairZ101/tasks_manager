@@ -68,6 +68,7 @@ export const api = {
   deleteTask: (id: number, force = false) => request<void>(`/tasks/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
   listFlows: () => request<{ flows: Flow[] }>('/flows'),
   createFlow: (name: string) => request<{ flow: Flow; draft: FlowVersion }>('/flows', { method: 'POST', body: JSON.stringify({ name }) }),
+  updateFlow: (id: number, data: Pick<Flow, 'name'>) => request<{ flow: Flow }>(`/flows/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getDraft: (flowId: number) => request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`),
   saveDraft: (flowId: number, definition: FlowDefinition, revision: number) =>
     request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`, { method: 'PUT', body: JSON.stringify({ definition, revision }) }),

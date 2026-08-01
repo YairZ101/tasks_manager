@@ -4,11 +4,19 @@ export type OperationalState = 'backlog' | 'ready' | 'active' | 'attention' | 'f
 
 export interface Task {
   id: number; task_key: string; title: string; description: string; acceptance: string;
+  preferred_flow_id: number | null;
   queue_state: 'backlog' | 'ready'; resolution: 'open' | 'completed' | 'cancelled'; sort_order: number;
   operational_state: OperationalState; active_run_id: number | null; active_run_status: string | null;
   active_run_reason?: string | null;
   active_block_id: string | null; active_block_name: string | null; workspace_state: string | null;
   created_at: string; updated_at: string;
+}
+
+export type TaskLinkRelationship = 'blocks' | 'is_blocked_by' | 'relates_to';
+
+export interface TaskLink {
+  id: number; link_type: 'blocks' | 'relates_to'; relationship: TaskLinkRelationship; linked_task_id: number; created_at: string;
+  task_key: string; title: string; resolution: Task['resolution'];
 }
 
 export interface FlowVersion {

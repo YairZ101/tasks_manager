@@ -117,6 +117,12 @@ Every behavior change must include tests in the same change.
 - Seed Zustand with `useAppStore.setState()`.
 - Flow canvas tests have `ResizeObserver`/`DOMMatrixReadOnly` shims in `src/test/setup.ts`.
 
+### Visual verification
+
+- Every visual change must be verified in the running app with the in-app browser before handoff.
+- Exercise the affected state with content that exposes the change. For example, verify a scroll fix with overflowing content, not a panel that already fits.
+- Report only what was actually checked. Do not claim browser verification from CSS inspection alone.
+
 ## Styling
 
 - Tailwind CSS v4 is available, but the product shell and canvas styling live in `index.css`.

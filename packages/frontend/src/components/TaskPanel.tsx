@@ -2,11 +2,14 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import type { DecisionNode, FlowNode } from '@flow/core';
 import { api } from '../api/client.js';
-import type { Attempt, Flow, RunDetail, TaskLog } from '../domain.js';
+import type { Attempt, Flow, RunDetail, TaskLink, TaskLog } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { Icon } from './Icon.js';
+import { KeyboardShortcut } from './KeyboardShortcut.js';
+import TaskDetailsFields, { type TaskDetailLink } from './TaskDetailsFields.js';
 
 const statusLabel: Record<string, string> = { queued: 'Queued', running: 'Running', waiting: 'Waiting for you', attention: 'Needs attention', finished: 'Finished', stopped: 'Stopped' };
+const relationshipLabels = { is_blocked_by: 'Is blocked by', blocks: 'Blocks', relates_to: 'Relates to' } as const;
 
 export function buildRunPreflight(flow: Flow | undefined) {
   if (!flow?.activeVersion) return null;
@@ -40,10 +43,14 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ title: '', description: '', acceptance: '' });
+  const [links, setLinks] = useState<TaskLink[]>([]);
 
   useEffect(() => {
     if (!task) return;
     setDraft({ title: task.title, description: task.description, acceptance: task.acceptance });
+    void api.getTask(task.id).then(({ links }) => {
+      setLinks(links);
+    }).catch(() => setLinks([]));
     const load = async () => {
       const runId = task.active_run_id ?? (await api.listRuns(task.id)).runs[0]?.id;
       setDetail(runId ? await api.getRun(runId) : null);
@@ -60,17 +67,29 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
 
   const nodeMap = useMemo(() => new Map((detail?.flowVersion.definition.nodes ?? []).map((node) => [node.id, node])), [detail]);
   const defaultFlow = flows.find((flow) => flow.is_default);
-  const preflight = useMemo(() => buildRunPreflight(defaultFlow), [defaultFlow]);
+  const selectedFlow = useMemo(() => task?.preferred_flow_id ? flows.find((flow) => flow.id === task.preferred_flow_id) : defaultFlow, [defaultFlow, flows, task?.preferred_flow_id]);
+  const customFlows = useMemo(() => flows.filter((flow) => flow.activeVersion && flow.id !== defaultFlow?.id), [defaultFlow?.id, flows]);
+  const preflight = useMemo(() => buildRunPreflight(selectedFlow), [selectedFlow]);
   const latest = detail?.attempts.at(-1);
   const decision = latest?.status === 'waiting' ? nodeMap.get(latest.block_id) as DecisionNode | undefined : undefined;
+  const currentLinks = useMemo(() => links.map((link) => {
+    const current = tasks.find((candidate) => candidate.id === link.linked_task_id);
+    return current ? { ...link, task_key: current.task_key, title: current.title, resolution: current.resolution } : link;
+  }), [links, tasks]);
+  const incompleteDependencies = useMemo(() => currentLinks.filter((link) => link.relationship === 'is_blocked_by' && link.resolution !== 'completed'), [currentLinks]);
+  const editableLinks = useMemo<TaskDetailLink[]>(() => links.map((link) => ({ task_id: link.linked_task_id, relationship: link.relationship, task_key: link.task_key, title: link.title })), [links]);
   if (!task) return null;
 
   const refresh = async (runId?: number) => { await refreshTasks(); if (runId) setDetail(await api.getRun(runId)); };
   const start = useCallback(async () => {
     if (!defaultFlow) { toast.error('Publish and set a default Flow before starting a Run.'); return; }
-    setBusy(true); try { const { run } = await api.startRun(task.id, flows.find((flow) => flow.is_default)?.id); await refresh(run.id); toast.success('Run queued.'); }
+    if (incompleteDependencies.length) {
+      const names = incompleteDependencies.map((dependency) => `${dependency.task_key} · ${dependency.title}`).join('\n');
+      if (!window.confirm(`This task depends on work that is not completed:\n\n${names}\n\nStart this run anyway?`)) return;
+    }
+    setBusy(true); try { const { run } = await api.startRun(task.id); await refresh(run.id); toast.success('Run queued.'); }
     catch (error) { toast.error(error instanceof Error ? error.message : 'Could not start Run.'); } finally { setBusy(false); }
-  }, [defaultFlow, flows, task.id]);
+  }, [defaultFlow, flows, incompleteDependencies, task.id]);
   const decide = async (outcome: string) => {
     if (!detail || !latest) return;
     setBusy(true); try { await api.decide(detail.run.id, latest.id, outcome, comment); setComment(''); await refresh(detail.run.id); }
@@ -78,7 +97,23 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   };
   const stop = async () => { if (!detail) return; setBusy(true); try { await api.stopRun(detail.run.id); await refresh(detail.run.id); } finally { setBusy(false); } };
   const retry = async () => { if (!detail) return; setBusy(true); try { await api.retryRun(detail.run.id); await refresh(detail.run.id); } finally { setBusy(false); } };
-  const save = async () => { setBusy(true); try { await api.updateTask(task.id, draft); await refreshTasks(); setEditing(false); } finally { setBusy(false); } };
+  const selectRunFlow = async (value: string) => {
+    const preferredFlowId = value ? Number(value) : null;
+    setBusy(true);
+    try {
+      await api.updateTask(task.id, { preferred_flow_id: preferredFlowId });
+      await refreshTasks();
+      toast.success(preferredFlowId ? 'Flow saved for this task.' : 'Task will use the project default Flow.');
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not save the Flow.'); }
+    finally { setBusy(false); }
+  };
+  const save = async () => { setBusy(true); try { const result = await api.updateTask(task.id, { ...draft, task_links: links.map((link) => ({ task_id: link.linked_task_id, relationship: link.relationship })) }); setLinks(result.links); await refreshTasks(); setEditing(false); } finally { setBusy(false); } };
+  const updateEditableLinks = (nextLinks: TaskDetailLink[]) => setLinks(nextLinks.flatMap((link) => {
+    const existing = links.find((candidate) => candidate.linked_task_id === link.task_id);
+    if (existing) return [{ ...existing, relationship: link.relationship, link_type: link.relationship === 'relates_to' ? 'relates_to' : 'blocks' }];
+    const linkedTask = tasks.find((candidate) => candidate.id === link.task_id);
+    return linkedTask ? [{ id: -link.task_id, link_type: link.relationship === 'relates_to' ? 'relates_to' : 'blocks', relationship: link.relationship, linked_task_id: link.task_id, created_at: '', task_key: linkedTask.task_key, title: linkedTask.title, resolution: linkedTask.resolution }] : [];
+  }));
   const remove = async () => {
     if (!window.confirm(`Delete ${task.task_key}? This keeps dirty workspaces unless you explicitly force cleanup.`)) return;
     try { await api.deleteTask(task.id); selectTask(null); await refreshTasks(); }
@@ -92,42 +127,32 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (!event.altKey || target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-      if (event.code === 'Enter' && !detail && task.resolution === 'open') { event.preventDefault(); void start(); }
+      if (event.code === 'Enter' && !editing && !detail && task.resolution === 'open') { event.preventDefault(); void start(); }
       if (event.code === 'Period' && detail && ['queued', 'running', 'waiting', 'attention'].includes(detail.run.status)) { event.preventDefault(); void stop(); }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [detail, start, task.resolution]);
+  }, [detail, editing, start, task.resolution]);
 
   return <div className="panel-layer" onMouseDown={(e) => e.target === e.currentTarget && selectTask(null)}>
     <aside className="task-panel" aria-label={`Task ${task.task_key}`}>
-      <header className="panel-head"><div><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div><button className="icon-button" aria-label="Close task" onClick={() => selectTask(null)}><Icon name="close" /></button></header>
+      <header className="panel-head"><div><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div><div className="panel-head-actions">
+        {!editing && <><button className="icon-button" aria-label="Edit task" onClick={() => setEditing(true)}><Icon name="edit" size={16} /></button><button className="icon-button danger" aria-label="Delete task" onClick={remove}><Icon name="trash" size={16} /></button></>}
+        <button className="icon-button" aria-label="Close task" onClick={() => selectTask(null)}><Icon name="close" /></button>
+      </div></header>
       <div className="panel-scroll">
         <section className="task-summary">
           {editing ? <>
-            <input className="title-input" value={draft.title} onChange={(e) => setDraft({ ...draft, title: e.target.value })} />
-            <label>Context<textarea value={draft.description} onChange={(e) => setDraft({ ...draft, description: e.target.value })} /></label>
-            <label>Acceptance criteria<textarea value={draft.acceptance} onChange={(e) => setDraft({ ...draft, acceptance: e.target.value })} /></label>
-            <div className="inline-actions"><button className="button ghost" onClick={() => setEditing(false)}>Cancel</button><button className="button primary" onClick={save} disabled={busy}>Save</button></div>
+            <TaskDetailsFields key={task.id} value={draft} onChange={setDraft} links={editableLinks} onLinksChange={updateEditableLinks} tasks={tasks} excludeTaskId={task.id} />
           </> : <>
-            <div className="title-row"><h2>{task.title}</h2><button className="icon-button" aria-label="Edit task" onClick={() => setEditing(true)}><Icon name="edit" size={16} /></button></div>
-            {task.description ? <p>{task.description}</p> : <p className="muted">No context provided.</p>}
-            {task.acceptance && <div className="acceptance"><span>DONE WHEN</span><p>{task.acceptance}</p></div>}
+            <div className="title-row"><h2>{task.title}</h2></div>
+            {task.description && <div className="task-copy"><span>Context</span><p>{task.description}</p></div>}
+            {task.acceptance && <div className="acceptance"><span>Done when</span><p>{task.acceptance}</p></div>}
+            {currentLinks.length > 0 && <div className="task-dependencies"><span>Linked tasks</span>{currentLinks.map((link) => <div key={link.id}><Icon name="branch" size={14} /><strong>{relationshipLabels[link.relationship]} · {link.task_key}</strong><p>{link.title}</p><em className={link.resolution}>{link.resolution}</em></div>)}</div>}
           </>}
         </section>
 
-        {!detail && task.resolution === 'open' && <section className="start-run">
-          <div className="start-glyph"><Icon name="play" size={23} /></div>
-          {preflight ? <>
-            <span className="eyebrow">RUN PREFLIGHT</span><h3>{preflight.name} <small>v{preflight.version}</small></h3>
-            <p>One execution of this published Flow will begin for this task.</p>
-            <dl className="preflight-list"><div><dt>Key blocks</dt><dd>{preflight.blockNames.join(' → ')}{preflight.remainingBlocks ? ` +${preflight.remainingBlocks}` : ''}</dd></div><div><dt>Workspace</dt><dd>{preflight.workspace}</dd></div><div><dt>Effects</dt><dd>{preflight.effectCopy}</dd></div></dl>
-            <button className="button primary wide" onClick={start} disabled={busy}>Start this Flow <kbd>⌥↵</kbd></button>
-          </> : <>
-            <h3>No default Flow yet</h3><p>Publish a Flow and make it the default before this task can run.</p>
-            <button className="button primary wide" onClick={() => useAppStore.getState().setSection('flows')}>Open Flows</button>
-          </>}
-        </section>}
+        {!editing && !detail && task.resolution === 'open' && incompleteDependencies.length > 0 && <div className="task-run-warning"><div className="dependency-warning"><Icon name="alert" size={16} /><div><strong>Dependency not completed</strong><span>{incompleteDependencies.map((dependency) => dependency.task_key).join(', ')}. You can still start this Flow.</span></div></div></div>}
 
         {detail && <section className="run-card">
           <div className="run-head"><div><span className="eyebrow">RUN #{detail.run.id}</span><h3>{statusLabel[detail.run.status]}</h3></div><span className={`run-light ${detail.run.status}`} /></div>
@@ -146,17 +171,20 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
           </div>
           {logs.length > 0 && <div className="log-view" aria-label="Attempt output">{logs.map((log) => <div key={log.id} className={log.level}><span>{log.level.slice(0, 3)}</span><code>{log.message}</code></div>)}</div>}
           <div className="run-actions">
-            {['queued', 'running', 'waiting', 'attention'].includes(detail.run.status) && <button className="button danger ghost" onClick={stop} disabled={busy}><Icon name="stop" size={15} />Stop Run <kbd>⌥.</kbd></button>}
+            {['queued', 'running', 'waiting', 'attention'].includes(detail.run.status) && <button className="button danger ghost" onClick={stop} disabled={busy} title="Option + ." aria-keyshortcuts="Alt+."><Icon name="stop" size={15} />Stop Run <KeyboardShortcut keys={['⌥', '.']} /></button>}
             {detail.run.status === 'attention' && <button className="button primary" onClick={retry} disabled={busy}>Retry block</button>}
             {detail.workspace && <span title={detail.workspace.worktree_path}><Icon name="branch" size={14} />{detail.workspace.branch ?? 'project workspace'} · {detail.workspace.state}</span>}
           </div>
         </section>}
       </div>
-      <footer className="panel-footer">
-        {task.resolution !== 'open' ? <button className="button ghost" onClick={async () => { await api.updateTask(task.id, { resolution: 'open', queue_state: 'ready' }); await refreshTasks(); }}>Reopen task</button>
-          : !task.active_run_id ? <button className="button ghost" onClick={async () => { await api.updateTask(task.id, { queue_state: task.queue_state === 'ready' ? 'backlog' : 'ready' }); await refreshTasks(); }}>{task.queue_state === 'ready' ? 'Move to backlog' : 'Move to ready'}</button> : <span />}
-        <button className="text-danger" onClick={remove}><Icon name="trash" size={15} />Delete task</button>
-      </footer>
+      {(editing || (!detail && task.resolution === 'open')) && <footer className={`panel-footer${editing ? '' : ' run-controls'}`}>
+        {editing ? <><button className="button ghost" onClick={() => setEditing(false)}>Cancel</button><button className="button primary" onClick={save} disabled={busy}>Save</button></>
+          : preflight ? <><label className="run-footer-flow"><span className="sr-only">Flow to run</span><select aria-label="Flow to run" value={task.preferred_flow_id && task.preferred_flow_id !== defaultFlow?.id ? String(task.preferred_flow_id) : ''} onChange={(event) => void selectRunFlow(event.target.value)} disabled={busy || (!defaultFlow && !customFlows.length)}>
+            {defaultFlow ? <option value="">Project default · {defaultFlow.name} · v{defaultFlow.activeVersion?.version ?? '—'}</option> : <option value="" disabled>Choose a published Flow</option>}
+            {customFlows.map((flow) => <option key={flow.id} value={flow.id}>{flow.name} · v{flow.activeVersion!.version}</option>)}
+          </select></label><button className="button primary start-run-action" onClick={start} disabled={busy} title="Option + Enter" aria-keyshortcuts="Alt+Enter">Start run <KeyboardShortcut keys={['⌥', '↩']} /></button></>
+            : <button className="button primary" onClick={() => useAppStore.getState().setSection('flows')}>Open Flows</button>}
+      </footer>}
     </aside>
   </div>;
 }

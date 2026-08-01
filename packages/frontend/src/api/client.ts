@@ -1,5 +1,5 @@
 import type { FlowDefinition, ValidationResult } from '@flow/core';
-import type { Attempt, Flow, FlowVersion, RunDetail, Runner, Task, TaskLog } from '../domain.js';
+import type { Attempt, Flow, FlowVersion, RunDetail, Runner, Task, TaskLink, TaskLinkRelationship, TaskLog } from '../domain.js';
 
 export type AgentSetup = {
   cli_cmd: string;
@@ -61,10 +61,11 @@ export const api = {
     if (params?.state) search.set('state', params.state);
     return request<{ tasks: Task[] }>(`/tasks${search.size ? `?${search}` : ''}`);
   },
-  createTask: (data: { title: string; description?: string; acceptance?: string; queue_state?: 'backlog' | 'ready'; run?: boolean; flow_id?: number }) =>
-    request<{ task: Task; run?: { id: number } }>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
-  updateTask: (id: number, data: Partial<Pick<Task, 'title' | 'description' | 'acceptance' | 'queue_state' | 'resolution' | 'sort_order'>>) =>
-    request<{ task: Task }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  createTask: (data: { title: string; description?: string; acceptance?: string; task_links?: Array<{ task_id: number; relationship: TaskLinkRelationship }>; queue_state?: 'backlog' | 'ready'; run?: boolean; flow_id?: number }) =>
+    request<{ task: Task; links: TaskLink[]; run?: { id: number } }>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
+  getTask: (id: number) => request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}`),
+  updateTask: (id: number, data: Partial<Pick<Task, 'title' | 'description' | 'acceptance' | 'preferred_flow_id' | 'queue_state' | 'resolution' | 'sort_order'>> & { task_links?: Array<{ task_id: number; relationship: TaskLinkRelationship }> }) =>
+    request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteTask: (id: number, force = false) => request<void>(`/tasks/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
   listFlows: () => request<{ flows: Flow[] }>('/flows'),
   createFlow: (name: string) => request<{ flow: Flow; draft: FlowVersion }>('/flows', { method: 'POST', body: JSON.stringify({ name }) }),

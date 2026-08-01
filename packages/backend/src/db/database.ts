@@ -78,12 +78,26 @@ function createSchema(database: Database): void {
       title       TEXT NOT NULL CHECK (length(title) BETWEEN 1 AND 500),
       description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 50000),
       acceptance  TEXT NOT NULL DEFAULT '' CHECK (length(acceptance) <= 50000),
+      preferred_flow_id INTEGER DEFAULT NULL REFERENCES flows(id) ON DELETE SET NULL,
       queue_state TEXT NOT NULL DEFAULT 'backlog' CHECK (queue_state IN ('backlog', 'ready')),
       resolution  TEXT NOT NULL DEFAULT 'open' CHECK (resolution IN ('open', 'completed', 'cancelled')),
       sort_order  REAL NOT NULL DEFAULT 0,
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS task_links (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      source_task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      target_task_id     INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+      link_type          TEXT NOT NULL CHECK (link_type IN ('blocks', 'relates_to')),
+      created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+      CHECK (source_task_id != target_task_id),
+      UNIQUE(source_task_id, target_task_id, link_type)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_task_links_source ON task_links(source_task_id);
+    CREATE INDEX IF NOT EXISTS idx_task_links_target ON task_links(target_task_id);
 
     CREATE TABLE IF NOT EXISTS agent_config (
       id                        INTEGER PRIMARY KEY CHECK (id = 1),
@@ -224,5 +238,22 @@ function createSchema(database: Database): void {
 
     INSERT INTO agent_config (id) VALUES (1) ON CONFLICT DO NOTHING;
     PRAGMA user_version = 1;
+  `);
+  ensureTaskFlowPreference(database);
+  migrateTaskDependencies(database);
+}
+
+function ensureTaskFlowPreference(database: Database): void {
+  const columns = database.query<{ name: string }, []>('PRAGMA table_info(tasks)').all();
+  if (columns.some((column) => column.name === 'preferred_flow_id')) return;
+  database.exec('ALTER TABLE tasks ADD COLUMN preferred_flow_id INTEGER DEFAULT NULL REFERENCES flows(id) ON DELETE SET NULL');
+}
+
+function migrateTaskDependencies(database: Database): void {
+  const legacy = database.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_dependencies'").get();
+  if (!legacy) return;
+  database.exec(`
+    INSERT OR IGNORE INTO task_links (source_task_id, target_task_id, link_type)
+    SELECT depends_on_task_id, task_id, 'blocks' FROM task_dependencies;
   `);
 }

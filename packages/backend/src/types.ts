@@ -12,6 +12,7 @@ export interface Task {
   title: string;
   description: string;
   acceptance: string;
+  preferred_flow_id: number | null;
   queue_state: TaskQueueState;
   resolution: TaskResolution;
   sort_order: number;
@@ -27,6 +28,19 @@ export interface TaskWithState extends Task {
   active_block_id: string | null;
   active_block_name: string | null;
   workspace_state: WorkspaceState | null;
+}
+
+export type TaskLinkRelationship = 'blocks' | 'is_blocked_by' | 'relates_to';
+
+export interface TaskLink {
+  id: number;
+  link_type: 'blocks' | 'relates_to';
+  relationship: TaskLinkRelationship;
+  linked_task_id: number;
+  created_at: string;
+  task_key: string;
+  title: string;
+  resolution: TaskResolution;
 }
 
 export interface AgentConfig {

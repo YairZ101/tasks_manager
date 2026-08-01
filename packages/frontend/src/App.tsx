@@ -3,6 +3,7 @@ import { Toaster } from 'sonner';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
 import { AppMark, Icon } from './components/Icon.js';
+import { KeyboardShortcut } from './components/KeyboardShortcut.js';
 import WorkBoard from './components/WorkBoard.js';
 import TaskPanel from './components/TaskPanel.js';
 import TaskComposer from './components/TaskComposer.js';
@@ -114,7 +115,7 @@ function AppContent() {
           <div><span className="eyebrow">{store.section === 'work' ? 'OPERATIONAL VIEW' : 'AUTOMATION DESIGN'}</span><h1>{store.section === 'work' ? 'Work control' : store.editingFlowId ? 'Flow editor' : 'Flow library'}</h1></div>
           <div className="topbar-actions">
             <span className="capacity"><i style={{ width: `${Math.min(100, store.runner.activeCount / Math.max(1, store.runner.maxConcurrent) * 100)}%` }} />Capacity {store.runner.activeCount}/{store.runner.maxConcurrent}</span>
-            {store.section === 'work' && store.workView === 'backlog' && <button className="button primary" onClick={() => store.setCreateOpen(true)}><Icon name="plus" />New task <kbd>⌥N</kbd></button>}
+            {store.section === 'work' && store.workView === 'backlog' && <button className="button primary" onClick={() => store.setCreateOpen(true)} title="Option + N" aria-keyshortcuts="Alt+N"><Icon name="plus" />New task <KeyboardShortcut keys={['⌥', 'N']} /></button>}
           </div>
         </header>
         <div className="workspace-body">

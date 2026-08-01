@@ -5,7 +5,7 @@ import { useAppStore } from '../hooks/useTaskStore.js';
 import type { Task } from '../domain.js';
 
 const task = (id: number, operational_state: Task['operational_state'], title: string): Task => ({
-  id, task_key: `TST-${id}`, title, description: '', acceptance: '', queue_state: operational_state === 'backlog' ? 'backlog' : 'ready',
+  id, task_key: `TST-${id}`, title, description: '', acceptance: '', preferred_flow_id: null, queue_state: operational_state === 'backlog' ? 'backlog' : 'ready',
   resolution: operational_state === 'finished' ? 'completed' : 'open', sort_order: id, operational_state,
   active_run_id: operational_state === 'active' ? id : null, active_run_status: operational_state === 'active' ? 'running' : null,
   active_block_id: null, active_block_name: operational_state === 'active' ? 'Development' : null, workspace_state: null,
@@ -31,6 +31,23 @@ describe('WorkBoard', () => {
     render(<WorkBoard />);
     fireEvent.click(screen.getByText('Build graph'));
     expect(useAppStore.getState().selectedTaskId).toBe(2);
+  });
+  test('keeps a long unbroken title in the task card name', () => {
+    const longTitle = 'implementation'.repeat(40);
+    useAppStore.setState({ tasks: [task(3, 'backlog', longTitle)], workView: 'backlog' });
+    render(<WorkBoard />);
+    expect(screen.getByRole('button', { name: `TST-3: ${longTitle}` })).toBeInTheDocument();
+  });
+  test('uses the same footer structure with and without task context', () => {
+    useAppStore.setState({ tasks: [{ ...task(3, 'backlog', 'Documented task'), description: 'Useful background' }, task(4, 'backlog', 'Lean task')], workView: 'backlog' });
+    render(<WorkBoard />);
+    expect(document.querySelectorAll('.queue-stack .task-card')).toHaveLength(2);
+    expect(document.querySelectorAll('.queue-stack .task-card-foot')).toHaveLength(2);
+  });
+  test('does not repeat the task creation action below a populated backlog', () => {
+    useAppStore.setState({ workView: 'backlog' });
+    render(<WorkBoard />);
+    expect(screen.queryByRole('button', { name: /Add task/ })).not.toBeInTheDocument();
   });
   test('explains the intervention needed on attention cards', () => {
     useAppStore.setState({ tasks: [{ ...task(3, 'attention', 'Approve release'), active_run_id: 9, active_run_status: 'waiting', active_block_name: 'Release approval' }], workView: 'attention' });

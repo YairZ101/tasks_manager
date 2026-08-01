@@ -2,6 +2,7 @@ import { useMemo } from 'react';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import type { OperationalState, Task } from '../domain.js';
 import { Icon } from './Icon.js';
+import { KeyboardShortcut } from './KeyboardShortcut.js';
 
 const columns: Array<{ key: OperationalState; label: string; hint: string }> = [
   { key: 'backlog', label: 'Backlog', hint: 'Ideas, not yet committed' },
@@ -55,8 +56,7 @@ export default function WorkBoard() {
     </header>
     <div className="queue-content">
       {queue.length ? <div className="card-stack queue-stack">{queue.map((task) => <TaskCard key={task.id} task={task} />)}</div>
-        : <div className={`empty-queue ${firstUse ? 'first-use' : ''}`}><span className="empty-queue-mark"><Icon name={workView === 'attention' ? 'check' : 'plus'} size={25} /></span><h3>{emptyCopy.title}</h3><p>{emptyCopy.detail}</p>{workView === 'backlog' && <button className="button primary" onClick={() => setCreate(true)}><Icon name="plus" size={16} />New task <kbd>⌥N</kbd></button>}</div>}
+        : <div className={`empty-queue ${firstUse ? 'first-use' : ''}`}><span className="empty-queue-mark"><Icon name={workView === 'attention' ? 'check' : 'plus'} size={25} /></span><h3>{emptyCopy.title}</h3><p>{emptyCopy.detail}</p>{workView === 'backlog' && <button className="button primary" onClick={() => setCreate(true)} title="Option + N" aria-keyshortcuts="Alt+N"><Icon name="plus" size={16} />New task <KeyboardShortcut keys={['⌥', 'N']} /></button>}</div>}
     </div>
-    {workView === 'backlog' && queue.length > 0 && <footer className="queue-footer"><button className="button ghost" onClick={() => setCreate(true)}><Icon name="plus" size={16} />Add task <kbd>⌥N</kbd></button></footer>}
   </section>;
 }

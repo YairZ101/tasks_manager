@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
 import { emitEvent, emitTask } from '../flow/events.js';
-import { getTask, getTaskWithState, listTasks } from '../flow/repository.js';
+import { getTask, getTaskWithState, listTaskLinks, listTasks } from '../flow/repository.js';
 import { startRun } from '../flow/engine.js';
 import { cleanupWorkspace, inspectWorkspace } from '../flow/workspaces.js';
 import type { ProjectConfig, WorkflowRun, Workspace } from '../types.js';
@@ -11,6 +11,54 @@ const tasks = new Hono();
 function idFrom(value: string): number | null {
   const id = Number.parseInt(value, 10);
   return Number.isInteger(id) && id > 0 ? id : null;
+}
+
+type TaskLinkInput = { task_id: number; relationship: 'blocks' | 'is_blocked_by' | 'relates_to' };
+
+function parseTaskLinks(value: unknown): TaskLinkInput[] | null {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) return null;
+  const links = value.map((candidate) => {
+    if (!candidate || typeof candidate !== 'object') return null;
+    const item = candidate as Record<string, unknown>;
+    const taskId = item.task_id;
+    const relationship = item.relationship;
+    return typeof taskId === 'number' && Number.isInteger(taskId) && taskId > 0
+      && (relationship === 'blocks' || relationship === 'is_blocked_by' || relationship === 'relates_to')
+      ? { task_id: taskId, relationship }
+      : null;
+  });
+  if (links.some((link) => link === null)) return null;
+  const unique = new Map<string, TaskLinkInput>();
+  for (const link of links as TaskLinkInput[]) unique.set(`${link.task_id}:${link.relationship}`, link);
+  return [...unique.values()];
+}
+
+function linkTargetsExist(links: TaskLinkInput[], database = getDb()): boolean {
+  const ids = [...new Set(links.map((link) => link.task_id))];
+  if (!ids.length) return true;
+  const placeholders = ids.map(() => '?').join(', ');
+  const rows = database.query<{ id: number }, number[]>(`SELECT id FROM tasks WHERE id IN (${placeholders})`).all(...ids);
+  return rows.length === ids.length;
+}
+
+function parsePreferredFlowId(value: unknown): number | null | 'invalid' {
+  if (value === undefined || value === null) return null;
+  return typeof value === 'number' && Number.isInteger(value) && value > 0 ? value : 'invalid';
+}
+
+function hasPublishedFlow(flowId: number, database = getDb()): boolean {
+  return Boolean(database.query<{ active_version_id: number | null }, [number]>('SELECT active_version_id FROM flows WHERE id = ?').get(flowId)?.active_version_id);
+}
+
+function replaceTaskLinks(taskId: number, links: TaskLinkInput[], database = getDb()): void {
+  database.query('DELETE FROM task_links WHERE source_task_id = ? OR target_task_id = ?').run(taskId, taskId);
+  const insert = database.query('INSERT OR IGNORE INTO task_links (source_task_id, target_task_id, link_type) VALUES (?, ?, ?)');
+  for (const link of links) {
+    if (link.relationship === 'blocks') insert.run(taskId, link.task_id, 'blocks');
+    else if (link.relationship === 'is_blocked_by') insert.run(link.task_id, taskId, 'blocks');
+    else insert.run(Math.min(taskId, link.task_id), Math.max(taskId, link.task_id), 'relates_to');
+  }
 }
 
 tasks.get('/', (c) => {
@@ -28,6 +76,12 @@ tasks.post('/', async (c) => {
   const description = typeof body.description === 'string' ? body.description : '';
   const acceptance = typeof body.acceptance === 'string' ? body.acceptance : '';
   if (description.length > 50_000 || acceptance.length > 50_000) return c.json({ error: 'Description and acceptance criteria must be at most 50,000 characters.' }, 400);
+  const taskLinks = parseTaskLinks(body.task_links);
+  if (!taskLinks) return c.json({ error: 'task_links must be an array of typed task links.' }, 400);
+  if (!linkTargetsExist(taskLinks, db)) return c.json({ error: 'One or more linked tasks do not exist.' }, 400);
+  const preferredFlowId = parsePreferredFlowId(body.preferred_flow_id);
+  if (preferredFlowId === 'invalid') return c.json({ error: 'preferred_flow_id must be a published Flow ID or null.' }, 400);
+  if (preferredFlowId && !hasPublishedFlow(preferredFlowId, db)) return c.json({ error: 'Choose a Flow with a published version.' }, 400);
   const queueState = body.queue_state === 'ready' || body.run === true ? 'ready' : 'backlog';
   const config = db.query<ProjectConfig, []>('SELECT * FROM project_config WHERE id = 1').get();
   if (!config) return c.json({ error: 'Project not initialized.' }, 409);
@@ -38,21 +92,23 @@ tasks.post('/', async (c) => {
     ).get()!.value;
     const order = db.query<{ value: number }, [string]>('SELECT COALESCE(MAX(sort_order), 0) + 1 AS value FROM tasks WHERE queue_state = ? AND resolution = \'open\'').get(queueState)!.value;
     const result = db.query(
-      'INSERT INTO tasks (task_key, title, description, acceptance, queue_state, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
-    ).run(`${config.task_prefix}-${sequence}`, title, description, acceptance, queueState, order);
-    return Number(result.lastInsertRowid);
+      'INSERT INTO tasks (task_key, title, description, acceptance, preferred_flow_id, queue_state, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
+    ).run(`${config.task_prefix}-${sequence}`, title, description, acceptance, preferredFlowId, queueState, order);
+    const id = Number(result.lastInsertRowid);
+    replaceTaskLinks(id, taskLinks, db);
+    return id;
   })();
   emitTask(taskId);
   let run: WorkflowRun | undefined;
   if (body.run === true) run = await startRun(taskId, typeof body.flow_id === 'number' ? body.flow_id : undefined);
-  return c.json({ task: getTaskWithState(taskId), run }, 201);
+  return c.json({ task: getTaskWithState(taskId), links: listTaskLinks(taskId), run }, 201);
 });
 
 tasks.get('/:id', (c) => {
   const id = idFrom(c.req.param('id'));
   if (!id) return c.json({ error: 'Invalid task ID.' }, 400);
   const task = getTaskWithState(id);
-  return task ? c.json({ task }) : c.json({ error: 'Task not found.' }, 404);
+  return task ? c.json({ task, links: listTaskLinks(id) }) : c.json({ error: 'Task not found.' }, 404);
 });
 
 tasks.patch('/:id', async (c) => {
@@ -63,6 +119,13 @@ tasks.patch('/:id', async (c) => {
   if (!current) return c.json({ error: 'Task not found.' }, 404);
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   if (!body) return c.json({ error: 'Invalid JSON.' }, 400);
+  const taskLinks = body.task_links === undefined ? null : parseTaskLinks(body.task_links);
+  if (body.task_links !== undefined && !taskLinks) return c.json({ error: 'task_links must be an array of typed task links.' }, 400);
+  if (taskLinks?.some((link) => link.task_id === id)) return c.json({ error: 'A task cannot link to itself.' }, 400);
+  if (taskLinks && !linkTargetsExist(taskLinks, db)) return c.json({ error: 'One or more linked tasks do not exist.' }, 400);
+  const preferredFlowId = body.preferred_flow_id === undefined ? undefined : parsePreferredFlowId(body.preferred_flow_id);
+  if (preferredFlowId === 'invalid') return c.json({ error: 'preferred_flow_id must be a published Flow ID or null.' }, 400);
+  if (typeof preferredFlowId === 'number' && !hasPublishedFlow(preferredFlowId, db)) return c.json({ error: 'Choose a Flow with a published version.' }, 400);
   const active = db.query<{ id: number }, [number]>("SELECT id FROM runs WHERE task_id = ? AND status IN ('queued','running','waiting','attention')").get(id);
   if (active && (body.queue_state !== undefined || body.resolution !== undefined)) return c.json({ error: 'Stop the active Run before changing task state.' }, 409);
   const updates: string[] = [];
@@ -87,9 +150,15 @@ tasks.patch('/:id', async (c) => {
     if (typeof body.sort_order !== 'number' || !Number.isFinite(body.sort_order)) return c.json({ error: 'sort_order must be a finite number.' }, 400);
     updates.push('sort_order = ?'); params.push(body.sort_order);
   }
-  if (updates.length) db.query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params, id);
+  if (preferredFlowId !== undefined) {
+    updates.push('preferred_flow_id = ?'); params.push(preferredFlowId);
+  }
+  db.transaction(() => {
+    if (updates.length) db.query(`UPDATE tasks SET ${updates.join(', ')} WHERE id = ?`).run(...params, id);
+    if (taskLinks) replaceTaskLinks(id, taskLinks, db);
+  })();
   emitTask(id);
-  return c.json({ task: getTaskWithState(id) });
+  return c.json({ task: getTaskWithState(id), links: listTaskLinks(id) });
 });
 
 tasks.delete('/:id', async (c) => {

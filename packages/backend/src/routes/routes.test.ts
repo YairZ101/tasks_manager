@@ -117,6 +117,12 @@ describe('Flow routes', () => {
     expect(await detail.json()).toMatchObject({ links: [expect.objectContaining({ linked_task_id: prerequisiteTask.id, relationship: 'is_blocked_by' })] });
     const inverse = await app.request(`/tasks/${prerequisiteTask.id}`);
     expect(await inverse.json()).toMatchObject({ links: [expect.objectContaining({ linked_task_id: body.task.id, relationship: 'blocks' })] });
+    const replaced = await app.request(`/tasks/${body.task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_links: [{ task_id: prerequisiteTask.id, relationship: 'relates_to' }] }) });
+    expect(replaced.status).toBe(200);
+    expect(await replaced.json()).toMatchObject({ links: [expect.objectContaining({ linked_task_id: prerequisiteTask.id, relationship: 'relates_to' })] });
+    const cleared = await app.request(`/tasks/${body.task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_links: [] }) });
+    expect(cleared.status).toBe(200);
+    expect((await cleared.json() as any).links).toEqual([]);
     const self = await app.request(`/tasks/${body.task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_links: [{ task_id: body.task.id, relationship: 'blocks' }] }) });
     expect(self.status).toBe(400);
     const missing = await app.request(`/tasks/${body.task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_links: [{ task_id: 99999, relationship: 'relates_to' }] }) });

@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { FlowDefinition } from '@flow/core';
 import { getDb } from '../db/database.js';
-import type { Flow, FlowVersion, FlowVersionRow, Task, TaskWithState, WorkflowRun } from '../types.js';
+import type { Flow, FlowVersion, FlowVersionRow, Task, TaskLink, TaskWithState, WorkflowRun } from '../types.js';
 
 export function parseFlowVersion(row: FlowVersionRow): FlowVersion {
   return {
@@ -57,6 +57,23 @@ const TASK_WITH_STATE_SQL = `
 
 export function getTaskWithState(id: number, database: Database = getDb()): TaskWithState | null {
   return database.query<TaskWithState, [number]>(`${TASK_WITH_STATE_SQL} WHERE t.id = ?`).get(id);
+}
+
+export function listTaskLinks(taskId: number, database: Database = getDb()): TaskLink[] {
+  return database.query<TaskLink, [number, number, number, number, number]>(`
+    SELECT tl.id, tl.link_type, tl.created_at,
+      CASE WHEN tl.source_task_id = ? THEN tl.target_task_id ELSE tl.source_task_id END AS linked_task_id,
+      CASE
+        WHEN tl.link_type = 'relates_to' THEN 'relates_to'
+        WHEN tl.source_task_id = ? THEN 'blocks'
+        ELSE 'is_blocked_by'
+      END AS relationship,
+      t.task_key, t.title, t.resolution
+    FROM task_links tl
+    JOIN tasks t ON t.id = CASE WHEN tl.source_task_id = ? THEN tl.target_task_id ELSE tl.source_task_id END
+    WHERE tl.source_task_id = ? OR tl.target_task_id = ?
+    ORDER BY tl.id ASC
+  `).all(taskId, taskId, taskId, taskId, taskId);
 }
 
 export function listTasks(options: { q?: string; state?: string } = {}, database: Database = getDb()): TaskWithState[] {

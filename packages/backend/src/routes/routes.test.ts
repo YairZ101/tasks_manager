@@ -86,6 +86,43 @@ describe('Flow routes', () => {
     expect((await listed.json() as any).tasks).toHaveLength(1);
   });
 
+  test('persists a task Flow preference and uses it when starting a Run', async () => {
+    const db = getDb();
+    const definition = createMinimalFlow();
+    const alternate = db.query("INSERT INTO flows(name) VALUES('Focused delivery')").run();
+    const alternateId = Number(alternate.lastInsertRowid);
+    const version = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,1,'published',?,?,datetime('now'))")
+      .run(alternateId, JSON.stringify(definition), JSON.stringify(compileFlow(definition)));
+    const versionId = Number(version.lastInsertRowid);
+    db.query('UPDATE flows SET active_version_id = ? WHERE id = ?').run(versionId, alternateId);
+    const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Use the focused delivery Flow' }) });
+    const taskId = (await created.json() as any).task.id;
+    const updated = await app.request(`/tasks/${taskId}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ preferred_flow_id: alternateId }) });
+    expect(updated.status).toBe(200);
+    expect((await updated.json() as any).task).toMatchObject({ preferred_flow_id: alternateId });
+    const started = await app.request('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: taskId }) });
+    expect(started.status).toBe(201);
+    expect((await started.json() as any).run).toMatchObject({ flow_version_id: versionId });
+  });
+
+  test('stores typed task links once and presents each task perspective', async () => {
+    const prerequisite = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Create the API contract' }) });
+    const prerequisiteTask = (await prerequisite.json() as any).task;
+    const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Build the client', task_links: [{ task_id: prerequisiteTask.id, relationship: 'is_blocked_by' }] }) });
+    expect(created.status).toBe(201);
+    const body = await created.json() as any;
+    expect(body.links).toEqual([expect.objectContaining({ linked_task_id: prerequisiteTask.id, relationship: 'is_blocked_by', task_key: prerequisiteTask.task_key, title: 'Create the API contract' })]);
+
+    const detail = await app.request(`/tasks/${body.task.id}`);
+    expect(await detail.json()).toMatchObject({ links: [expect.objectContaining({ linked_task_id: prerequisiteTask.id, relationship: 'is_blocked_by' })] });
+    const inverse = await app.request(`/tasks/${prerequisiteTask.id}`);
+    expect(await inverse.json()).toMatchObject({ links: [expect.objectContaining({ linked_task_id: body.task.id, relationship: 'blocks' })] });
+    const self = await app.request(`/tasks/${body.task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_links: [{ task_id: body.task.id, relationship: 'blocks' }] }) });
+    expect(self.status).toBe(400);
+    const missing = await app.request(`/tasks/${body.task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_links: [{ task_id: 99999, relationship: 'relates_to' }] }) });
+    expect(missing.status).toBe(400);
+  });
+
   test('uses optimistic revisions and refuses an invalid publish', async () => {
     const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Review flow', definition: createRecommendedFlow() }) });
     expect(created.status).toBe(201);

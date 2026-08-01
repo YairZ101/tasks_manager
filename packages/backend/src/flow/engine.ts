@@ -7,7 +7,7 @@ import { CliAdapter, sanitizeLine } from '../agents/cli-adapter.js';
 import { isGitRepo } from '../worktree/worktree.js';
 import type { AgentConfig, Attempt, RunnerState, Task, WorkflowRun } from '../types.js';
 import { emitEvent, emitRun } from './events.js';
-import { getDefaultFlow, getFlowVersion, getRun, getTask } from './repository.js';
+import { getDefaultFlow, getFlowVersion, getRun, getTask, listTaskLinks } from './repository.js';
 import { ensureWorkspace, finalizeWorkspace } from './workspaces.js';
 
 type Execution = {
@@ -160,12 +160,17 @@ function buildPrompt(task: Task, node: Extract<CompiledFlowNode, { type: 'agent'
     'SELECT block_id, outcome_id, decision_comment FROM attempts WHERE run_id = ? AND status != \'queued\' ORDER BY sequence ASC'
   ).all(run.id);
   const history = previous.map((item) => `- ${item.block_id}: ${item.outcome_id ?? 'pending'}${item.decision_comment ? ` — ${item.decision_comment}` : ''}`).join('\n');
+  const links = listTaskLinks(task.id, db);
+  const linkContext = links.length
+    ? `\nLinked tasks:\n${links.map((link) => `- ${link.relationship.replaceAll('_', ' ')} ${link.task_key}: ${link.title} (${link.resolution})`).join('\n')}`
+    : '';
   return [
     node.config.compiledInstructions,
     '',
     `Task ${task.task_key}: ${task.title}`,
     task.description ? `\nDescription:\n${task.description}` : '',
     task.acceptance ? `\nAcceptance criteria:\n${task.acceptance}` : '',
+    linkContext,
     history ? `\nRun path so far:\n${history}` : '',
   ].join('\n');
 }
@@ -337,8 +342,9 @@ export async function startRun(taskId: number, flowId?: number): Promise<Workflo
   if (task.resolution !== 'open') throw Object.assign(new Error('Finished tasks cannot start a Run. Reopen the task first.'), { status: 409 });
   const active = db.query<WorkflowRun, [number]>("SELECT * FROM runs WHERE task_id = ? AND status IN ('queued','running','waiting','attention')").get(taskId);
   if (active) throw Object.assign(new Error('Task already has an active Run.'), { status: 409, runId: active.id });
-  const flow = flowId
-    ? db.query<{ active_version_id: number | null }, [number]>('SELECT active_version_id FROM flows WHERE id = ?').get(flowId)
+  const selectedFlowId = flowId ?? task.preferred_flow_id;
+  const flow = selectedFlowId
+    ? db.query<{ active_version_id: number | null }, [number]>('SELECT active_version_id FROM flows WHERE id = ?').get(selectedFlowId)
     : getDefaultFlow();
   const versionId = flow?.active_version_id;
   if (!versionId) throw Object.assign(new Error('Choose a Flow with a published version before starting.'), { status: 409 });

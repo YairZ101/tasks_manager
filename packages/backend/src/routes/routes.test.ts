@@ -85,6 +85,28 @@ describe('Flow routes', () => {
     expect((await app.request('/tasks?state=ready')).status).toBe(400);
   });
 
+  test('creates a task and starts the selected Flow in one request', async () => {
+    const db = getDb();
+    const definition = createMinimalFlow();
+    const alternate = db.query("INSERT INTO flows(name) VALUES('Focused delivery')").run();
+    const alternateId = Number(alternate.lastInsertRowid);
+    const version = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,1,'published',?,?,datetime('now'))")
+      .run(alternateId, JSON.stringify(definition), JSON.stringify(compileFlow(definition)));
+    const versionId = Number(version.lastInsertRowid);
+    db.query('UPDATE flows SET active_version_id = ? WHERE id = ?').run(versionId, alternateId);
+
+    const response = await app.request('/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Ship the focused delivery', run: true, flow_id: alternateId }),
+    });
+
+    expect(response.status).toBe(201);
+    const { task, run } = await response.json() as any;
+    expect(run).toMatchObject({ task_id: task.id, flow_version_id: versionId });
+    expect(task).toMatchObject({ active_run_id: run.id, resolution: 'open' });
+  });
+
   test('persists a task Flow preference and uses it when starting a Run', async () => {
     const db = getDb();
     const definition = createMinimalFlow();

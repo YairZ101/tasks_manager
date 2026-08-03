@@ -9,7 +9,7 @@ describe('application store', () => {
     vi.mocked(api.status).mockResolvedValue({ initialized: true, repoName: 'demo', isGitRepo: true, runner: { activeCount: 1, queuedCount: 2, maxConcurrent: 3, executions: [] } });
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [{ id: 1, title: 'Task' } as any] });
     vi.mocked(api.listFlows).mockResolvedValue({ flows: [{ id: 1, name: 'Flow' } as any] });
-    useAppStore.setState({ loading: true, initialized: false, tasks: [], flows: [] });
+    useAppStore.setState({ loading: true, bootError: null, initialized: false, tasks: [], flows: [] });
   });
   test('bootstraps status, tasks, and flows together', async () => {
     await useAppStore.getState().bootstrap();
@@ -31,5 +31,10 @@ describe('application store', () => {
     vi.mocked(api.listTasks).mockResolvedValueOnce({ tasks: [{ id: 1, operational_state: 'backlog' } as any] });
     await useAppStore.getState().bootstrap();
     expect(useAppStore.getState().workView).toBe('backlog');
+  });
+  test('surfaces a startup failure instead of leaving the workspace loading', async () => {
+    vi.mocked(api.status).mockRejectedValueOnce(new Error('The server did not respond.'));
+    await useAppStore.getState().bootstrap();
+    expect(useAppStore.getState()).toMatchObject({ loading: false, bootError: 'The server did not respond.' });
   });
 });

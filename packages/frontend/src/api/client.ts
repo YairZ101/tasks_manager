@@ -9,8 +9,20 @@ export type AgentSetup = {
 
 export type FlowTemplate = 'recommended' | 'minimal' | 'blank';
 
+const requestTimeoutMs = 10_000;
+
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...options?.headers } });
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), requestTimeoutMs);
+  let response: Response;
+  try {
+    response = await fetch(path, { ...options, signal: options?.signal ?? controller.signal, headers: { 'Content-Type': 'application/json', ...options?.headers } });
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error('The server did not respond. Check that Flow is running and try again.');
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
   if (response.status === 204) return undefined as T;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) throw Object.assign(new Error(data.error || `Request failed (${response.status})`), { status: response.status, data });

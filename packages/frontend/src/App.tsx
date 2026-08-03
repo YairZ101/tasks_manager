@@ -46,7 +46,7 @@ function AppContent() {
   const editingFlow = store.section === 'flows' && store.editingFlowId !== null;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarCollapsedForContext(editingFlow, window.innerWidth));
   const previousViewportWidth = useRef(window.innerWidth);
-  useEventSource();
+  useEventSource(!store.loading && !store.bootError);
   useEffect(() => { void store.bootstrap(); }, [store.bootstrap]);
   useLayoutEffect(() => {
     setSidebarCollapsed(sidebarCollapsedForContext(editingFlow, window.innerWidth));
@@ -77,6 +77,7 @@ function AppContent() {
   }, []);
 
   if (store.loading) return <div className="boot"><AppMark variant="loading" /><span>Loading workspace…</span></div>;
+  if (store.bootError) return <div className="boot boot-error" role="alert"><AppMark /><div><strong>Workspace unavailable</strong><span>{store.bootError}</span><button className="button ghost" onClick={() => { void store.bootstrap(); }}>Retry</button></div></div>;
   if (!store.initialized) return <InitScreen />;
 
   const counts = new Map(views.map(([key]) => [key, store.tasks.filter((task) => task.operational_state === key).length]));

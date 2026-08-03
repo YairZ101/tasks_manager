@@ -5,8 +5,7 @@ import { Icon } from './Icon.js';
 import { KeyboardShortcut } from './KeyboardShortcut.js';
 
 const columns: Array<{ key: OperationalState; label: string; hint: string }> = [
-  { key: 'backlog', label: 'Backlog', hint: 'Ideas, not yet committed' },
-  { key: 'ready', label: 'Ready', hint: 'Prepared to run' },
+  { key: 'backlog', label: 'Backlog', hint: 'Open tasks, available to run' },
   { key: 'active', label: 'Active', hint: 'Agents and checks in motion' },
   { key: 'attention', label: 'Needs attention', hint: 'A decision or recovery needed' },
   { key: 'finished', label: 'Finished', hint: 'Completed or cancelled' },
@@ -44,9 +43,7 @@ export default function WorkBoard() {
   const emptyCopy = workView === 'attention'
     ? { title: 'Nothing needs you', detail: 'Decisions, interrupted Runs, and cleanup requests will appear here.' }
     : firstUse && workView === 'backlog'
-      ? { title: 'Start with one task', detail: 'Every new task starts in Backlog. Move it to Ready when it is prepared to run.' }
-      : firstUse && workView === 'ready'
-        ? { title: 'Nothing is ready yet', detail: 'Create a task in Backlog, then move it here when its outcome is prepared to run.' }
+      ? { title: 'Start with one task', detail: 'Every new task starts in Backlog. Add context when it will help the Run.' }
       : { title: `No ${current.label.toLowerCase()} tasks`, detail: current.hint };
 
   return <section className="board queue-board" aria-labelledby={`queue-${workView}`}>

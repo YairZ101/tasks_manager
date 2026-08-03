@@ -41,13 +41,19 @@ beforeEach(() => {
 describe('queueForShortcutCode', () => {
   test('uses physical digit keys so Option shortcuts work with macOS keyboard layouts', () => {
     expect(queueForShortcutCode('Digit1')).toBe('backlog');
-    expect(queueForShortcutCode('Digit4')).toBe('attention');
-    expect(queueForShortcutCode('Digit5')).toBe('finished');
+    expect(queueForShortcutCode('Digit3')).toBe('attention');
+    expect(queueForShortcutCode('Digit4')).toBe('finished');
   });
   test('ignores unrelated keys', () => {
     expect(queueForShortcutCode('KeyN')).toBeNull();
-    expect(queueForShortcutCode('Digit8')).toBeNull();
+    expect(queueForShortcutCode('Digit5')).toBeNull();
   });
+});
+
+test('does not expose a Ready operational view', () => {
+  render(createElement(App));
+  expect(screen.queryByRole('button', { name: 'Ready, Option 2' })).not.toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Active, Option 2' })).toBeInTheDocument();
 });
 
 describe('shouldAutoCollapseSidebar', () => {

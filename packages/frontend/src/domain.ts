@@ -1,11 +1,11 @@
 import type { FlowDefinition, ResultCategory } from '@flow/core';
 
-export type OperationalState = 'backlog' | 'ready' | 'active' | 'attention' | 'finished';
+export type OperationalState = 'backlog' | 'active' | 'attention' | 'finished';
 
 export interface Task {
   id: number; task_key: string; title: string; description: string; acceptance: string;
   preferred_flow_id: number | null;
-  queue_state: 'backlog' | 'ready'; resolution: 'open' | 'completed' | 'cancelled'; sort_order: number;
+  resolution: 'open' | 'completed' | 'cancelled'; sort_order: number;
   operational_state: OperationalState; active_run_id: number | null; active_run_status: string | null;
   active_run_reason?: string | null;
   active_block_id: string | null; active_block_name: string | null; workspace_state: string | null;

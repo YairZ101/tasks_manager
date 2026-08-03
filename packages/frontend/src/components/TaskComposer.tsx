@@ -1,20 +1,54 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import type { TaskLinkRelationship } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { Icon } from './Icon.js';
 import TaskDetailsFields from './TaskDetailsFields.js';
+import { buildRunPreflight } from './runPreflight.js';
 
 export default function TaskComposer() {
-  const { tasks, setCreateOpen, refreshTasks, selectTask } = useAppStore();
+  const { tasks, flows, setCreateOpen, refreshTasks, selectTask } = useAppStore();
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
   const [links, setLinks] = useState<Array<{ task_id: number; relationship: TaskLinkRelationship }>>([]);
+  const publishedFlows = flows.filter((flow) => flow.activeVersion);
+  const defaultFlow = publishedFlows.find((flow) => flow.is_default);
+  const [action, setAction] = useState<'create' | 'run'>('create');
+  const [selectedFlowId, setSelectedFlowId] = useState<number | null>(() => defaultFlow?.id ?? publishedFlows[0]?.id ?? null);
+  const [actionsOpen, setActionsOpen] = useState(false);
   const [saving, setSaving] = useState(false);
-  const submit = async (event: React.FormEvent) => {
-    event.preventDefault();
+  const actionsRef = useRef<HTMLDivElement>(null);
+  const selectedFlow = publishedFlows.find((flow) => flow.id === selectedFlowId) ?? defaultFlow ?? publishedFlows[0];
+  const preflight = buildRunPreflight(selectedFlow);
+  const incompleteDependencies = links.flatMap((link) => {
+    if (link.relationship !== 'is_blocked_by') return [];
+    const task = tasks.find((candidate) => candidate.id === link.task_id);
+    return task && task.resolution !== 'completed' ? [task] : [];
+  });
+  useEffect(() => {
+    if (!actionsOpen) return;
+    const closeOnOutsidePress = (event: MouseEvent) => {
+      if (!actionsRef.current?.contains(event.target as Node)) setActionsOpen(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setActionsOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsidePress);
+    document.addEventListener('keydown', closeOnEscape);
+    return () => {
+      document.removeEventListener('mousedown', closeOnOutsidePress);
+      document.removeEventListener('keydown', closeOnEscape);
+    };
+  }, [actionsOpen]);
+
+  const createTask = async (run: boolean) => {
+    if (run && incompleteDependencies.length) {
+      const names = incompleteDependencies.map((dependency) => `${dependency.task_key} · ${dependency.title}`).join('\n');
+      if (!window.confirm(`This task depends on work that is not completed:\n\n${names}\n\nStart this run anyway?`)) return;
+    }
+    setActionsOpen(false);
     setSaving(true);
     try {
       const result = await api.createTask({
@@ -22,20 +56,21 @@ export default function TaskComposer() {
         description,
         acceptance,
         task_links: links,
-        queue_state: 'backlog',
-        run: false,
+        run,
+        flow_id: run ? selectedFlow?.id : undefined,
       });
       await refreshTasks(); setCreateOpen(false); selectTask(result.task.id);
-      toast.success('Task created in Backlog.');
+      toast.success(run ? 'Task created and Run queued.' : 'Task created in Backlog.');
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not create task.'); }
     finally { setSaving(false); }
   };
+  const selectAction = (nextAction: 'create' | 'run') => { setAction(nextAction); setActionsOpen(false); };
+  const submit = (event: React.FormEvent) => { event.preventDefault(); void createTask(action === 'run'); };
   return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setCreateOpen(false)}>
-    <form className="composer" onSubmit={submit}>
-      <header><div><span className="eyebrow">NEW WORK</span><h2>Frame the outcome</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={() => setCreateOpen(false)}><Icon name="close" /></button></header>
+    <form className="composer" role="dialog" aria-modal="true" aria-labelledby="new-task-title" onSubmit={submit}>
+      <header><div><span className="eyebrow">NEW WORK</span><h2 id="new-task-title">Frame the outcome</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={() => setCreateOpen(false)}><Icon name="close" /></button></header>
       <TaskDetailsFields value={{ title, description, acceptance }} onChange={(next) => { setTitle(next.title); setDescription(next.description); setAcceptance(next.acceptance); }} links={links} onLinksChange={setLinks} tasks={tasks} candidateTasks={tasks.filter((task) => task.resolution === 'open')} autoFocus />
-      <div className="composer-queue-note"><strong>Backlog</strong><span>Tasks can stay lean. Add detail before a Run when it reduces uncertainty.</span></div>
-      <footer><button type="button" className="button ghost" onClick={() => setCreateOpen(false)}>Cancel</button><button className="button primary" disabled={saving || !title.trim()}>{saving ? 'Creating…' : 'Create task'}</button></footer>
+      <footer className={action === 'run' ? 'composer-run-footer' : ''}>{action === 'run' && preflight ? <div className="composer-flow-control"><label htmlFor="task-flow">Flow</label><select id="task-flow" aria-label="Flow to run" value={String(selectedFlow?.id ?? '')} onChange={(event) => setSelectedFlowId(Number(event.target.value))}>{publishedFlows.map((flow) => <option key={flow.id} value={flow.id}>{flow.is_default ? 'Project default · ' : ''}{flow.name} · v{flow.activeVersion!.version}</option>)}</select></div> : null}<button type="button" className="button ghost" onClick={() => setCreateOpen(false)}>Cancel</button><div className="composer-create-actions" ref={actionsRef}><button className="button primary" disabled={saving || !title.trim()}>{saving ? 'Creating…' : action === 'run' ? 'Create & start run' : 'Create task'}</button>{preflight ? <><button type="button" className="button primary composer-more-actions" aria-label="More create actions" aria-haspopup="menu" aria-expanded={actionsOpen} onClick={() => setActionsOpen((open) => !open)} disabled={saving || !title.trim()}><Icon name="arrow" size={15} /></button>{actionsOpen ? <div className="composer-action-menu" role="menu" aria-label="Create task actions"><button type="button" role="menuitem" aria-current={action === 'create' ? 'true' : undefined} onClick={() => selectAction('create')}><Icon name="plus" size={16} /><span><strong>Create task</strong><small>Add it to Backlog.</small></span></button><button type="button" role="menuitem" aria-current={action === 'run' ? 'true' : undefined} onClick={() => selectAction('run')}><Icon name="play" size={16} /><span><strong>Create & start run</strong><small>Choose a Flow before starting.</small></span></button></div> : null}</> : null}</div></footer>
     </form>
   </div>;
 }

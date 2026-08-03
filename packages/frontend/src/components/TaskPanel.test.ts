@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { createElement } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import type { Flow, Task } from '../domain.js';
-import { buildRunPreflight } from './TaskPanel.js';
 import TaskPanel from './TaskPanel.js';
+import { buildRunPreflight } from './runPreflight.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
@@ -35,8 +35,8 @@ describe('buildRunPreflight', () => {
 
 describe('TaskPanel task links', () => {
   const task: Task = {
-    id: 7, task_key: 'TST-7', title: 'Build the client', description: '', acceptance: '', preferred_flow_id: null, queue_state: 'ready', resolution: 'open', sort_order: 1,
-    operational_state: 'ready', active_run_id: null, active_run_status: null, active_block_id: null, active_block_name: null, workspace_state: null, created_at: '', updated_at: '',
+    id: 7, task_key: 'TST-7', title: 'Build the client', description: '', acceptance: '', preferred_flow_id: null, resolution: 'open', sort_order: 1,
+    operational_state: 'backlog', active_run_id: null, active_run_status: null, active_block_id: null, active_block_name: null, workspace_state: null, created_at: '', updated_at: '',
   };
 
   beforeEach(() => {
@@ -59,9 +59,9 @@ describe('TaskPanel task links', () => {
 
   test('keeps edit and delete actions in the header', async () => {
     render(createElement(TaskPanel, { taskId: 7 }));
+    expect(await screen.findByRole('dialog', { name: 'Task TST-7' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Edit task' }).closest('.panel-head')).not.toBeNull();
     expect(screen.getByRole('button', { name: 'Delete task' }).closest('.panel-head')).not.toBeNull();
-    expect(screen.queryByRole('button', { name: /Move to ready|Move to backlog/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Task actions' })).not.toBeInTheDocument();
   });
 
@@ -71,7 +71,6 @@ describe('TaskPanel task links', () => {
     expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveValue('Build the client');
     expect(screen.getByRole('combobox', { name: 'Search tasks by title or key' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Start run/ })).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Move to ready/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete task/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();

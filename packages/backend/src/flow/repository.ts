@@ -32,8 +32,7 @@ const TASK_WITH_STATE_SQL = `
       WHEN t.resolution != 'open' THEN 'finished'
       WHEN r.status IN ('waiting', 'attention') THEN 'attention'
       WHEN r.status IN ('queued', 'running') THEN 'active'
-      WHEN t.queue_state = 'backlog' THEN 'backlog'
-      ELSE 'ready'
+      ELSE 'backlog'
     END AS operational_state,
     r.id AS active_run_id,
     r.status AS active_run_status,

@@ -4,7 +4,7 @@ import path from 'path';
 
 const DATA_DIR = '.flow';
 const SCHEMA_FAMILY = 'flow';
-const SCHEMA_VERSION = '1';
+const SCHEMA_VERSION = '2';
 
 let db: Database;
 
@@ -79,7 +79,6 @@ function createSchema(database: Database): void {
       description TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 50000),
       acceptance  TEXT NOT NULL DEFAULT '' CHECK (length(acceptance) <= 50000),
       preferred_flow_id INTEGER DEFAULT NULL REFERENCES flows(id) ON DELETE SET NULL,
-      queue_state TEXT NOT NULL DEFAULT 'backlog' CHECK (queue_state IN ('backlog', 'ready')),
       resolution  TEXT NOT NULL DEFAULT 'open' CHECK (resolution IN ('open', 'completed', 'cancelled')),
       sort_order  REAL NOT NULL DEFAULT 0,
       created_at  TEXT NOT NULL DEFAULT (datetime('now')),

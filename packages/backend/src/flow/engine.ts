@@ -118,11 +118,11 @@ async function finishRun(run: WorkflowRun, resultNode: ResultNode): Promise<void
     db.query("UPDATE runs SET status = 'finished', result_category = ?, reason = ?, finished_at = datetime('now') WHERE id = ?")
       .run(category, resultNode.config.message ?? null, run.id);
     if (category === 'completed') {
-      db.query("UPDATE tasks SET resolution = 'completed', queue_state = 'ready' WHERE id = ?").run(run.task_id);
+      db.query("UPDATE tasks SET resolution = 'completed' WHERE id = ?").run(run.task_id);
     } else if (category === 'cancelled') {
-      db.query("UPDATE tasks SET resolution = 'cancelled', queue_state = 'ready' WHERE id = ?").run(run.task_id);
+      db.query("UPDATE tasks SET resolution = 'cancelled' WHERE id = ?").run(run.task_id);
     } else {
-      db.query("UPDATE tasks SET resolution = 'open', queue_state = 'ready' WHERE id = ?").run(run.task_id);
+      db.query("UPDATE tasks SET resolution = 'open' WHERE id = ?").run(run.task_id);
     }
   })();
   if (run.workspace_id) await finalizeWorkspace(run.workspace_id, category === 'completed');
@@ -388,7 +388,7 @@ export async function stopRun(runId: number): Promise<WorkflowRun> {
   db.transaction(() => {
     db.query("UPDATE runs SET status = 'stopped', reason = 'Stopped by user', finished_at = datetime('now') WHERE id = ?").run(run.id);
     db.query("UPDATE attempts SET status = 'cancelled', outcome_id = 'cancelled', pid = NULL, finished_at = datetime('now') WHERE run_id = ? AND status IN ('queued','running','waiting')").run(run.id);
-    db.query("UPDATE tasks SET queue_state = 'ready', resolution = 'open' WHERE id = ?").run(run.task_id);
+    db.query("UPDATE tasks SET resolution = 'open' WHERE id = ?").run(run.task_id);
   })();
   for (const execution of executions.values()) if (execution.runId === run.id) execution.controller.abort();
   if (run.workspace_id) await finalizeWorkspace(run.workspace_id, false);

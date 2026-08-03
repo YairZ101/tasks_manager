@@ -58,6 +58,26 @@ describe('TaskComposer', () => {
     await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ run: true, flow_id: 6 })));
   });
 
+  test('keeps the action controls in one shared footer when switching modes', () => {
+    useAppStore.setState({ flows: [defaultFlow] });
+    render(<TaskComposer />);
+    fireEvent.change(screen.getByPlaceholderText('What should be different when this is done?'), { target: { value: 'Ship graph editor' } });
+    const footer = document.querySelector('.composer footer')!;
+    const actions = footer.querySelector('.composer-create-actions');
+    const cancel = footer.querySelector('.button.ghost');
+    expect(actions).not.toBeNull();
+    expect(cancel).not.toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'More create actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Create & start run/ }));
+
+    expect(document.querySelector('.composer footer')).toBe(footer);
+    expect(footer).toHaveClass('composer-run-footer');
+    expect(footer.querySelector('.composer-flow-control')).not.toBeNull();
+    expect(footer.querySelector('.composer-create-actions')).toBe(actions);
+    expect(footer.querySelector('.button.ghost')).toBe(cancel);
+  });
+
   test('warns before immediately starting work blocked by an open task', async () => {
     const confirm = vi.fn(() => false);
     vi.stubGlobal('confirm', confirm);

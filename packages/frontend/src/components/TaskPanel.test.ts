@@ -31,6 +31,11 @@ describe('buildRunPreflight', () => {
     expect(buildRunPreflight(undefined)).toBeNull();
     expect(buildRunPreflight({ ...flow('read_only'), activeVersion: null })).toBeNull();
   });
+
+  test('describes read-only and external-write Flows accurately', () => {
+    expect(buildRunPreflight(flow('read_only'))?.effectCopy).toBe('Read-only analysis and checks');
+    expect(buildRunPreflight(flow('external_write'))?.effectCopy).toBe('May change the workspace and external services');
+  });
 });
 
 describe('TaskPanel task links', () => {

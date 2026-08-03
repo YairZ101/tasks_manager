@@ -4,7 +4,11 @@
 
 Flow is a local-first task manager that delegates work to configurable CLI agents. Users create Tasks, design versioned Flows on a node canvas, and start Runs. A persistent scheduler executes Agent and Check blocks, pauses at Decision blocks, and finishes through explicit Result blocks. SQLite data lives in `.flow/` in the repository root.
 
-The supported V1 blocks are **Begin, Agent, Check, Decision, Result, and Note**. Runtime state belongs to Runs and Attempts, never to canvas columns. The work UI uses five fixed operational views: **Backlog, Ready, Active, Needs Attention, and Finished**.
+The supported V1 blocks are **Begin, Agent, Check, Decision, Result, and Note**. Runtime state belongs to Runs and Attempts, never to canvas columns. The work UI uses four fixed operational views: **Backlog, Active, Needs Attention, and Finished**.
+
+## Database Compatibility Policy
+
+Existing local application state is disposable. Do not add database migrations, compatibility columns, data backfills, or preservation work unless the user explicitly asks for them. Schema and state-model changes may be greenfield-only; tell the user that an existing `.flow/` database must be reinitialized when that matters.
 
 ## Commands
 
@@ -56,7 +60,7 @@ packages/
         ├── hooks/useTaskStore.ts   App state and parallel bootstrap
         ├── hooks/useEventSource.ts Persisted event refresh handling
         └── components/
-            ├── WorkBoard.tsx       Five fixed operational views
+            ├── WorkBoard.tsx       Four fixed operational views
             ├── TaskPanel.tsx       Run timeline, Decisions, logs, cleanup actions
             ├── FlowLibrary.tsx     Version/default overview
             └── FlowEditor.tsx      Typed drag/drop graph, inspector, validation
@@ -64,7 +68,7 @@ packages/
 
 ## Core Semantics
 
-- **Task**: desired outcome and queue placement. `queue_state` is `backlog` or `ready`; `resolution` is `open`, `completed`, or `cancelled`.
+- **Task**: desired outcome. `resolution` is `open`, `completed`, or `cancelled`.
 - **Flow**: stable identity with one default Flow and an active immutable published version.
 - **Flow version**: a mutable draft guarded by `draft_revision`, or a compiled immutable published snapshot.
 - **Run**: one traversal of one published Flow version for one Task. Only one active Run may exist per Task.
@@ -94,7 +98,7 @@ packages/
 - Operational Task state is derived from Task resolution plus its active Run; it is not persisted as a draggable status.
 - Stopping a Run persists `stopped` before aborting its OS process so late completion cannot overwrite user intent.
 - Task deletion is blocked for active Runs. Dirty Workspace deletion needs an explicit force confirmation.
-- A legacy database without `app_meta.schema_family = flow` is rejected and never modified. Move `.flow/tasks.db`, `-wal`, and `-shm` aside to initialize this version.
+- Existing `.flow/` databases are disposable. Reinitialize them rather than adding migrations when a schema change requires it.
 - `.flow/` self-ignores via its own `.gitignore`.
 
 ## Testing Patterns

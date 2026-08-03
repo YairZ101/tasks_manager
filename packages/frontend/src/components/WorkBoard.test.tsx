@@ -5,7 +5,7 @@ import { useAppStore } from '../hooks/useTaskStore.js';
 import type { Task } from '../domain.js';
 
 const task = (id: number, operational_state: Task['operational_state'], title: string): Task => ({
-  id, task_key: `TST-${id}`, title, description: '', acceptance: '', preferred_flow_id: null, queue_state: operational_state === 'backlog' ? 'backlog' : 'ready',
+  id, task_key: `TST-${id}`, title, description: '', acceptance: '', preferred_flow_id: null,
   resolution: operational_state === 'finished' ? 'completed' : 'open', sort_order: id, operational_state,
   active_run_id: operational_state === 'active' ? id : null, active_run_status: operational_state === 'active' ? 'running' : null,
   active_block_id: null, active_block_name: operational_state === 'active' ? 'Development' : null, workspace_state: null,
@@ -13,12 +13,12 @@ const task = (id: number, operational_state: Task['operational_state'], title: s
 });
 
 describe('WorkBoard', () => {
-  beforeEach(() => useAppStore.setState({ tasks: [task(1, 'backlog', 'Explore graph'), task(2, 'active', 'Build graph')], selectedTaskId: null, workView: 'ready' }));
+  beforeEach(() => useAppStore.setState({ tasks: [task(1, 'backlog', 'Explore graph'), task(2, 'active', 'Build graph')], selectedTaskId: null, workView: 'backlog' }));
   test('renders the selected operational queue', () => {
     render(<WorkBoard />);
-    expect(screen.getByRole('heading', { name: 'Ready' })).toBeInTheDocument();
-    expect(screen.queryByText('Explore graph')).not.toBeInTheDocument();
-    expect(screen.getByText('No ready tasks')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Backlog' })).toBeInTheDocument();
+    expect(screen.getByText('Explore graph')).toBeInTheDocument();
+    expect(screen.queryByText('Build graph')).not.toBeInTheDocument();
   });
   test('shows only one queue at a time', () => {
     useAppStore.setState({ workView: 'active' });
@@ -55,10 +55,10 @@ describe('WorkBoard', () => {
     expect(screen.getByText('Decision required in Release approval')).toBeInTheDocument();
     expect(screen.getByText('Review')).toBeInTheDocument();
   });
-  test('keeps creation guidance in Backlog when an empty workspace is viewed in Ready', () => {
-    useAppStore.setState({ tasks: [], workView: 'ready' });
+  test('offers task creation from an empty Backlog', () => {
+    useAppStore.setState({ tasks: [], workView: 'backlog' });
     render(<WorkBoard />);
-    expect(screen.getByText('Nothing is ready yet')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /new task/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Start with one task')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /new task/i })).toBeInTheDocument();
   });
 });

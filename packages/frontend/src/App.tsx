@@ -14,7 +14,7 @@ import InitScreen from './components/InitScreen.js';
 const FlowEditor = lazy(() => import('./components/FlowEditor.js'));
 
 const views = [
-  ['backlog', 'Backlog', 'inbox'], ['ready', 'Ready', 'play'], ['active', 'Active', 'pulse'],
+  ['backlog', 'Backlog', 'inbox'], ['active', 'Active', 'pulse'],
   ['attention', 'Needs attention', 'alert'], ['finished', 'Finished', 'check'],
 ] as const;
 

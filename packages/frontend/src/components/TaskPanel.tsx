@@ -7,31 +7,10 @@ import { useAppStore } from '../hooks/useTaskStore.js';
 import { Icon } from './Icon.js';
 import { KeyboardShortcut } from './KeyboardShortcut.js';
 import TaskDetailsFields, { type TaskDetailLink } from './TaskDetailsFields.js';
+import { buildRunPreflight } from './runPreflight.js';
 
 const statusLabel: Record<string, string> = { queued: 'Queued', running: 'Running', waiting: 'Waiting for you', attention: 'Needs attention', finished: 'Finished', stopped: 'Stopped' };
 const relationshipLabels = { is_blocked_by: 'Is blocked by', blocks: 'Blocks', relates_to: 'Relates to' } as const;
-
-export function buildRunPreflight(flow: Flow | undefined) {
-  if (!flow?.activeVersion) return null;
-  const blocks = flow.activeVersion.definition.nodes.filter((node) => node.type !== 'note');
-  const agentBlocks = blocks.filter((node) => node.type === 'agent');
-  const effectLevel = agentBlocks.some((node) => node.config.effectLevel === 'external_write') ? 'external_write'
-    : agentBlocks.some((node) => node.config.effectLevel === 'workspace_write') ? 'workspace_write'
-      : 'read_only';
-  const effectCopy = {
-    read_only: 'Read-only analysis and checks',
-    workspace_write: 'May change this task’s workspace',
-    external_write: 'May change the workspace and external services',
-  }[effectLevel];
-  return {
-    name: flow.name,
-    version: flow.activeVersion.version,
-    blockNames: blocks.slice(0, 4).map((node) => 'name' in node.config ? node.config.name : node.type),
-    remainingBlocks: Math.max(0, blocks.length - 4),
-    workspace: 'Task-scoped workspace · reused by future Runs',
-    effectCopy,
-  };
-}
 
 export default function TaskPanel({ taskId }: { taskId: number }) {
   const { tasks, flows, selectTask, refreshTasks } = useAppStore();
@@ -135,7 +114,7 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   }, [detail, editing, start, task.resolution]);
 
   return <div className="panel-layer" onMouseDown={(e) => e.target === e.currentTarget && selectTask(null)}>
-    <aside className="task-panel" aria-label={`Task ${task.task_key}`}>
+    <aside className="task-panel" role="dialog" aria-modal="true" aria-label={`Task ${task.task_key}`}>
       <header className="panel-head"><div><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div><div className="panel-head-actions">
         {!editing && <><button className="icon-button" aria-label="Edit task" onClick={() => setEditing(true)}><Icon name="edit" size={16} /></button><button className="icon-button danger" aria-label="Delete task" onClick={remove}><Icon name="trash" size={16} /></button></>}
         <button className="icon-button" aria-label="Close task" onClick={() => selectTask(null)}><Icon name="close" /></button>

@@ -61,10 +61,10 @@ export const api = {
     if (params?.state) search.set('state', params.state);
     return request<{ tasks: Task[] }>(`/tasks${search.size ? `?${search}` : ''}`);
   },
-  createTask: (data: { title: string; description?: string; acceptance?: string; task_links?: Array<{ task_id: number; relationship: TaskLinkRelationship }>; queue_state?: 'backlog' | 'ready'; run?: boolean; flow_id?: number }) =>
+  createTask: (data: { title: string; description?: string; acceptance?: string; task_links?: Array<{ task_id: number; relationship: TaskLinkRelationship }>; run?: boolean; flow_id?: number }) =>
     request<{ task: Task; links: TaskLink[]; run?: { id: number } }>('/tasks', { method: 'POST', body: JSON.stringify(data) }),
   getTask: (id: number) => request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}`),
-  updateTask: (id: number, data: Partial<Pick<Task, 'title' | 'description' | 'acceptance' | 'preferred_flow_id' | 'queue_state' | 'resolution' | 'sort_order'>> & { task_links?: Array<{ task_id: number; relationship: TaskLinkRelationship }> }) =>
+  updateTask: (id: number, data: Partial<Pick<Task, 'title' | 'description' | 'acceptance' | 'preferred_flow_id' | 'resolution' | 'sort_order'>> & { task_links?: Array<{ task_id: number; relationship: TaskLinkRelationship }> }) =>
     request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteTask: (id: number, force = false) => request<void>(`/tasks/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
   listFlows: () => request<{ flows: Flow[] }>('/flows'),

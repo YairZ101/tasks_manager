@@ -52,7 +52,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({
           tasks,
           flows,
-          workView: tasks.some((task) => task.operational_state === 'attention') ? 'attention' : tasks.length === 0 ? 'backlog' : 'ready',
+          workView: tasks.some((task) => task.operational_state === 'attention') ? 'attention' : 'backlog',
         });
       }
     } finally { set({ loading: false }); }

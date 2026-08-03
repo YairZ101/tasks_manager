@@ -1,6 +1,5 @@
 import type { CompiledFlowDefinition, FlowDefinition, ResultCategory } from '@flow/core';
 
-export type TaskQueueState = 'backlog' | 'ready';
 export type TaskResolution = 'open' | 'completed' | 'cancelled';
 export type RunStatus = 'queued' | 'running' | 'waiting' | 'attention' | 'finished' | 'stopped';
 export type AttemptStatus = 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'timed_out' | 'interrupted' | 'cancelled';
@@ -13,7 +12,6 @@ export interface Task {
   description: string;
   acceptance: string;
   preferred_flow_id: number | null;
-  queue_state: TaskQueueState;
   resolution: TaskResolution;
   sort_order: number;
   created_at: string;
@@ -21,7 +19,7 @@ export interface Task {
 }
 
 export interface TaskWithState extends Task {
-  operational_state: 'backlog' | 'ready' | 'active' | 'attention' | 'finished';
+  operational_state: 'backlog' | 'active' | 'attention' | 'finished';
   active_run_id: number | null;
   active_run_status: RunStatus | null;
   active_run_reason: string | null;

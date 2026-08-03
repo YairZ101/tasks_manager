@@ -27,4 +27,9 @@ describe('application store', () => {
     await useAppStore.getState().bootstrap();
     expect(useAppStore.getState().workView).toBe('backlog');
   });
+  test('opens Backlog for open tasks without an active Run', async () => {
+    vi.mocked(api.listTasks).mockResolvedValueOnce({ tasks: [{ id: 1, operational_state: 'backlog' } as any] });
+    await useAppStore.getState().bootstrap();
+    expect(useAppStore.getState().workView).toBe('backlog');
+  });
 });

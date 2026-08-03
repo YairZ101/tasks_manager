@@ -74,16 +74,37 @@ describe('Flow routes', () => {
     expect(await usedResponse.json()).toMatchObject({ reason: 'flow_has_runs' });
   });
 
-  test('creates, lists, and edits tasks using queue semantics', async () => {
-    const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Ship graph', queue_state: 'ready' }) });
+  test('creates and lists open tasks in Backlog', async () => {
+    const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Ship graph' }) });
     expect(created.status).toBe(201);
     const task = (await created.json() as any).task;
     expect(task.task_key).toBe('TST-1');
-    expect(task.operational_state).toBe('ready');
-    const patched = await app.request(`/tasks/${task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ queue_state: 'backlog' }) });
-    expect((await patched.json() as any).task.operational_state).toBe('backlog');
+    expect(task.operational_state).toBe('backlog');
     const listed = await app.request('/tasks?state=backlog');
     expect((await listed.json() as any).tasks).toHaveLength(1);
+    expect((await app.request('/tasks?state=ready')).status).toBe(400);
+  });
+
+  test('creates a task and starts the selected Flow in one request', async () => {
+    const db = getDb();
+    const definition = createMinimalFlow();
+    const alternate = db.query("INSERT INTO flows(name) VALUES('Focused delivery')").run();
+    const alternateId = Number(alternate.lastInsertRowid);
+    const version = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,1,'published',?,?,datetime('now'))")
+      .run(alternateId, JSON.stringify(definition), JSON.stringify(compileFlow(definition)));
+    const versionId = Number(version.lastInsertRowid);
+    db.query('UPDATE flows SET active_version_id = ? WHERE id = ?').run(versionId, alternateId);
+
+    const response = await app.request('/tasks', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: 'Ship the focused delivery', run: true, flow_id: alternateId }),
+    });
+
+    expect(response.status).toBe(201);
+    const { task, run } = await response.json() as any;
+    expect(run).toMatchObject({ task_id: task.id, flow_version_id: versionId });
+    expect(task).toMatchObject({ active_run_id: run.id, resolution: 'open' });
   });
 
   test('persists a task Flow preference and uses it when starting a Run', async () => {
@@ -166,7 +187,7 @@ describe('Flow routes', () => {
     const version = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,1,'published',?,?,datetime('now'))")
       .run(Number(flow.lastInsertRowid), JSON.stringify(definition), JSON.stringify(compiled));
     db.query('UPDATE flows SET active_version_id=? WHERE id=?').run(Number(version.lastInsertRowid), Number(flow.lastInsertRowid));
-    const task = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Review me', queue_state: 'ready' }) });
+    const task = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Review me' }) });
     const taskId = (await task.json() as any).task.id;
     const started = await app.request('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: taskId, flow_id: Number(flow.lastInsertRowid) }) });
     const run = (await started.json() as any).run;

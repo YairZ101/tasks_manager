@@ -63,7 +63,7 @@ function replaceTaskLinks(taskId: number, links: TaskLinkInput[], database = get
 
 tasks.get('/', (c) => {
   const state = c.req.query('state');
-  if (state && !['backlog', 'ready', 'active', 'attention', 'finished'].includes(state)) return c.json({ error: 'Invalid operational state.' }, 400);
+  if (state && !['backlog', 'active', 'attention', 'finished'].includes(state)) return c.json({ error: 'Invalid operational state.' }, 400);
   return c.json({ tasks: listTasks({ q: c.req.query('q'), state }) });
 });
 
@@ -82,7 +82,6 @@ tasks.post('/', async (c) => {
   const preferredFlowId = parsePreferredFlowId(body.preferred_flow_id);
   if (preferredFlowId === 'invalid') return c.json({ error: 'preferred_flow_id must be a published Flow ID or null.' }, 400);
   if (preferredFlowId && !hasPublishedFlow(preferredFlowId, db)) return c.json({ error: 'Choose a Flow with a published version.' }, 400);
-  const queueState = body.queue_state === 'ready' || body.run === true ? 'ready' : 'backlog';
   const config = db.query<ProjectConfig, []>('SELECT * FROM project_config WHERE id = 1').get();
   if (!config) return c.json({ error: 'Project not initialized.' }, 409);
 
@@ -90,10 +89,10 @@ tasks.post('/', async (c) => {
     const sequence = db.query<{ value: number }, []>(
       'UPDATE project_config SET next_task_number = next_task_number + 1 WHERE id = 1 RETURNING next_task_number - 1 AS value'
     ).get()!.value;
-    const order = db.query<{ value: number }, [string]>('SELECT COALESCE(MAX(sort_order), 0) + 1 AS value FROM tasks WHERE queue_state = ? AND resolution = \'open\'').get(queueState)!.value;
+    const order = db.query<{ value: number }, []>("SELECT COALESCE(MAX(sort_order), 0) + 1 AS value FROM tasks WHERE resolution = 'open'").get()!.value;
     const result = db.query(
-      'INSERT INTO tasks (task_key, title, description, acceptance, preferred_flow_id, queue_state, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)'
-    ).run(`${config.task_prefix}-${sequence}`, title, description, acceptance, preferredFlowId, queueState, order);
+      'INSERT INTO tasks (task_key, title, description, acceptance, preferred_flow_id, sort_order) VALUES (?, ?, ?, ?, ?, ?)'
+    ).run(`${config.task_prefix}-${sequence}`, title, description, acceptance, preferredFlowId, order);
     const id = Number(result.lastInsertRowid);
     replaceTaskLinks(id, taskLinks, db);
     return id;
@@ -127,7 +126,7 @@ tasks.patch('/:id', async (c) => {
   if (preferredFlowId === 'invalid') return c.json({ error: 'preferred_flow_id must be a published Flow ID or null.' }, 400);
   if (typeof preferredFlowId === 'number' && !hasPublishedFlow(preferredFlowId, db)) return c.json({ error: 'Choose a Flow with a published version.' }, 400);
   const active = db.query<{ id: number }, [number]>("SELECT id FROM runs WHERE task_id = ? AND status IN ('queued','running','waiting','attention')").get(id);
-  if (active && (body.queue_state !== undefined || body.resolution !== undefined)) return c.json({ error: 'Stop the active Run before changing task state.' }, 409);
+  if (active && body.resolution !== undefined) return c.json({ error: 'Stop the active Run before changing task state.' }, 409);
   const updates: string[] = [];
   const params: unknown[] = [];
   for (const field of ['title', 'description', 'acceptance'] as const) {
@@ -137,10 +136,6 @@ tasks.patch('/:id', async (c) => {
       if (field === 'title' && !value) return c.json({ error: 'Title cannot be empty.' }, 400);
       updates.push(`${field} = ?`); params.push(value);
     }
-  }
-  if (body.queue_state !== undefined) {
-    if (!['backlog', 'ready'].includes(String(body.queue_state))) return c.json({ error: 'queue_state must be backlog or ready.' }, 400);
-    updates.push('queue_state = ?'); params.push(body.queue_state);
   }
   if (body.resolution !== undefined) {
     if (!['open', 'completed', 'cancelled'].includes(String(body.resolution))) return c.json({ error: 'Invalid resolution.' }, 400);

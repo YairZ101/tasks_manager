@@ -12,7 +12,7 @@ let root = '';
 function seed(command: string): number {
   const db = getDb();
   db.query("INSERT INTO project_config(id,task_prefix,repo_name) VALUES(1,'TST','test')").run();
-  db.query("INSERT INTO tasks(task_key,title,queue_state) VALUES('TST-1','Execute check','ready')").run();
+  db.query("INSERT INTO tasks(task_key,title) VALUES('TST-1','Execute check')").run();
   const definition: FlowDefinition = {
     schemaVersion: 1,
     nodes: [
@@ -62,7 +62,7 @@ describe('persistent execution engine', () => {
     await waitFor(() => getRun(run.id)?.status === 'running');
     await stopRun(run.id);
     expect(getRun(run.id)?.status).toBe('stopped');
-    expect(getTaskWithState(1)?.operational_state).toBe('ready');
+    expect(getTaskWithState(1)?.operational_state).toBe('backlog');
     expect(getDb().query<{ status: string }, []>('SELECT status FROM attempts WHERE run_id=1 ORDER BY sequence DESC LIMIT 1').get()?.status).toBe('cancelled');
   });
 });

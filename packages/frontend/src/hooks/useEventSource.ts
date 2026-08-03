@@ -2,11 +2,12 @@ import { useEffect } from 'react';
 import { toast } from 'sonner';
 import { useAppStore } from './useTaskStore.js';
 
-export function useEventSource(): void {
+export function useEventSource(enabled: boolean): void {
   const refreshTasks = useAppStore((state) => state.refreshTasks);
   const refreshFlows = useAppStore((state) => state.refreshFlows);
   const bootstrap = useAppStore((state) => state.bootstrap);
   useEffect(() => {
+    if (!enabled) return;
     const source = new EventSource('/events');
     const tasks = () => { void refreshTasks(); };
     const flows = () => { void refreshFlows(); };
@@ -23,5 +24,5 @@ export function useEventSource(): void {
       } catch {}
     });
     return () => source.close();
-  }, [bootstrap, refreshFlows, refreshTasks]);
+  }, [bootstrap, enabled, refreshFlows, refreshTasks]);
 }

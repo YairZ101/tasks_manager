@@ -3,6 +3,7 @@ import { createElement } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import App, { queueForShortcutCode, sidebarCollapsedForContext, shouldAutoCollapseSidebar, shouldCollapseSidebarOnResize, shouldExpandSidebarOnResize } from './App.js';
 import { useAppStore } from './hooks/useTaskStore.js';
+import { useEventSource } from './hooks/useEventSource.js';
 
 vi.mock('./hooks/useEventSource.js', () => ({ useEventSource: vi.fn() }));
 vi.mock('./components/WorkBoard.js', () => ({ default: () => null }));
@@ -23,6 +24,7 @@ beforeEach(() => {
   useAppStore.setState({
     initialized: true,
     loading: false,
+    bootError: null,
     repoName: 'tasks_manager',
     isGitRepo: true,
     runner: { activeCount: 0, queuedCount: 0, maxConcurrent: 3, executions: [] },
@@ -54,6 +56,22 @@ test('does not expose a Ready operational view', () => {
   render(createElement(App));
   expect(screen.queryByRole('button', { name: 'Ready, Option 2' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Active, Option 2' })).toBeInTheDocument();
+});
+
+test('waits for bootstrap before opening the event stream', () => {
+  useAppStore.setState({ loading: true });
+  render(createElement(App));
+  expect(vi.mocked(useEventSource)).toHaveBeenLastCalledWith(false);
+});
+
+test('shows a retryable startup failure', () => {
+  const bootstrap = vi.fn();
+  useAppStore.setState({ loading: false, bootError: 'The server did not respond.', bootstrap });
+  render(createElement(App));
+  expect(screen.getByRole('alert')).toHaveTextContent('Workspace unavailable');
+  bootstrap.mockClear();
+  fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+  expect(bootstrap).toHaveBeenCalledOnce();
 });
 
 describe('shouldAutoCollapseSidebar', () => {

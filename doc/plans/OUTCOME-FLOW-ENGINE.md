@@ -1,3 +1,5 @@
+> ⚠️ **Superseded by [REMOVE-READY-STATE.md](./REMOVE-READY-STATE.md)** for task queue semantics. This record retains the original Backlog/Ready design.
+
 # Outcome-Driven Flow Engine
 
 > **Status:** Implemented July 2026.

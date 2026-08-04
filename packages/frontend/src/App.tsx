@@ -121,7 +121,7 @@ function AppContent() {
         </header>
         <div className="workspace-body">
           {store.section === 'work' ? <WorkBoard /> : store.editingFlowId ? (
-            <Suspense fallback={<div className="boot inline">Loading canvas…</div>}><FlowEditor flowId={store.editingFlowId} /></Suspense>
+            <Suspense fallback={<div className="boot inline">Loading canvas…</div>}><FlowEditor flowId={store.editingFlowId} versionId={store.viewingFlowVersionId} /></Suspense>
           ) : <FlowLibrary />}
         </div>
       </main>

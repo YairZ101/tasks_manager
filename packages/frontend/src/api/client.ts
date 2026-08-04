@@ -1,5 +1,5 @@
 import type { FlowDefinition, ValidationResult } from '@flow/core';
-import type { Attempt, Flow, FlowVersion, RunDetail, Runner, Task, TaskLink, TaskLinkRelationship, TaskLog } from '../domain.js';
+import type { Attempt, Flow, FlowVersion, FlowVersionAction, RunDetail, Runner, Task, TaskLink, TaskLinkRelationship, TaskLog } from '../domain.js';
 
 export type AgentSetup = {
   cli_cmd: string;
@@ -80,12 +80,14 @@ export const api = {
     request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteTask: (id: number, force = false) => request<void>(`/tasks/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
   listFlows: () => request<{ flows: Flow[] }>('/flows'),
+  getFlow: (flowId: number) => request<{ flow: Flow; versions: FlowVersion[] }>(`/flows/${flowId}`),
   createFlow: (name: string) => request<{ flow: Flow; draft: FlowVersion }>('/flows', { method: 'POST', body: JSON.stringify({ name }) }),
   updateFlow: (id: number, data: Pick<Flow, 'name'>) => request<{ flow: Flow }>(`/flows/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getDraft: (flowId: number) => request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`),
-  saveDraft: (flowId: number, definition: FlowDefinition, revision: number) =>
-    request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`, { method: 'PUT', body: JSON.stringify({ definition, revision }) }),
-  publishFlow: (flowId: number) => request<{ version: FlowVersion }>(`/flows/${flowId}/publish`, { method: 'POST' }),
+  saveDraft: (flowId: number, definition: FlowDefinition, revision: number, actions: FlowVersionAction[] = []) =>
+    request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`, { method: 'PUT', body: JSON.stringify({ definition, revision, actions }) }),
+  publishFlow: (flowId: number) => request<{ version: FlowVersion; draft: FlowVersion }>(`/flows/${flowId}/publish`, { method: 'POST' }),
+  activateFlowVersion: (flowId: number, versionId: number) => request<{ flow: Flow; version: FlowVersion }>(`/flows/${flowId}/versions/${versionId}/activate`, { method: 'POST' }),
   makeDefault: (flowId: number) => request<{ flow: Flow }>(`/flows/${flowId}/default`, { method: 'POST' }),
   deleteFlow: (flowId: number) => request<void>(`/flows/${flowId}`, { method: 'DELETE' }),
   startRun: (taskId: number, flowId?: number) => request<{ run: { id: number } }>('/runs', { method: 'POST', body: JSON.stringify({ task_id: taskId, flow_id: flowId }) }),

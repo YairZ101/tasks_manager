@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRecommendedFlow } from '@flow/core';
 import FlowLibrary from './FlowLibrary.js';
 import { api } from '../api/client.js';
@@ -13,6 +13,7 @@ describe('FlowLibrary', () => {
     useAppStore.setState({
       flows: [],
       editingFlowId: null,
+      viewingFlowVersionId: null,
       section: 'flows',
       refreshFlows: vi.fn().mockResolvedValue(undefined),
     });
@@ -50,6 +51,33 @@ describe('FlowLibrary', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Edit Release delivery' }));
 
     expect(useAppStore.getState()).toMatchObject({ editingFlowId: 8, section: 'flows' });
+  });
+
+  test('keeps version history out of the Flow library card', () => {
+    useAppStore.setState({ flows: [{ id: 8, name: 'Release delivery', is_default: 0, active_version_id: 12, activeVersion: { id: 12, version: 3, definition: createRecommendedFlow() } } as any] });
+    render(<FlowLibrary />);
+
+    expect(screen.queryByRole('button', { name: 'Version history' })).not.toBeInTheDocument();
+  });
+
+  test('shows only the meaningful default and version signals on a Flow card', () => {
+    useAppStore.setState({ flows: [
+      { id: 8, name: 'Standard delivery', is_default: 1, active_version_id: 12, activeVersion: { id: 12, version: 3, definition: createRecommendedFlow() } },
+      { id: 9, name: 'Delivery flow', is_default: 0, active_version_id: 13, activeVersion: { id: 13, version: 1, definition: createRecommendedFlow() } },
+    ] as any });
+    render(<FlowLibrary />);
+
+    const deliveryCard = screen.getByRole('button', { name: 'Edit Delivery flow' }).closest('article')!;
+    expect(within(deliveryCard).queryByText('FLOW')).not.toBeInTheDocument();
+    expect(within(deliveryCard).queryByText(/blocks/i)).not.toBeInTheDocument();
+    expect(within(deliveryCard).queryByText(/published/i)).not.toBeInTheDocument();
+    expect(within(deliveryCard).queryByText('0')).not.toBeInTheDocument();
+    expect(within(deliveryCard).getByText('v1')).toBeVisible();
+    expect(within(deliveryCard).getByRole('button', { name: 'Make default' })).toBeVisible();
+    const defaultCard = screen.getByRole('button', { name: 'Edit Standard delivery' }).closest('article')!;
+    expect(within(defaultCard).getByText('Default')).toHaveClass('default-flow-status');
+    expect(within(defaultCard).getByText('v3')).toBeVisible();
+    expect(defaultCard.querySelector('.flow-card-meta')).not.toBeInTheDocument();
   });
 
   test('renames a Flow directly from its library card', async () => {

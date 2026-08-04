@@ -8,12 +8,16 @@ import '@xyflow/react/dist/style.css';
 import { AGENT_PRESETS, createAgentConfig, getNodeOutcomes, validateFlow, type FlowDefinition, type FlowNode } from '@flow/core';
 import { toast } from 'sonner';
 import { api } from '../api/client.js';
+import type { FlowVersion, FlowVersionAction } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { BlockIcon, Icon } from './Icon.js';
 
 type CanvasNode = Node<{ flowNode: FlowNode }, 'flowBlock'>;
 type EditorViewport = NonNullable<FlowDefinition['viewport']>;
-type EditorPanel = 'palette' | 'inspector' | null;
+type EditorPanel = 'palette' | 'inspector' | 'history' | null;
+type SaveStatus = 'saved' | 'unsaved' | 'saving' | 'error';
+export type VersionChangeKind = 'initial' | 'added' | 'removed' | 'changed' | 'moved' | 'connected' | 'disconnected';
+export type VersionChange = { kind: VersionChangeKind; title: string; detail?: string; blockType?: FlowNode['type']; timestamp?: string };
 export type FlowZoomMode = 'overview' | 'compact' | 'detail';
 export const MIN_FLOW_ZOOM = 0.2;
 export const COMPACT_ZOOM_THRESHOLD = 0.35;
@@ -46,6 +50,127 @@ const typeMeta: Record<FlowNode['type'], { label: string; description: string }>
   result: { label: 'Result', description: 'Explicit outcome' },
   note: { label: 'Note', description: 'Canvas annotation' },
 };
+
+const configFieldLabels: Record<string, string> = {
+  artifacts: 'artifacts',
+  category: 'result category',
+  choices: 'decision choices',
+  color: 'note color',
+  command: 'command',
+  draftPullRequest: 'draft pull request setting',
+  effectLevel: 'effect level',
+  height: 'note height',
+  instructions: 'instructions',
+  message: 'result message',
+  planLocation: 'plan location',
+  preset: 'agent preset',
+  text: 'note text',
+  timeoutMs: 'timeout',
+  trackInGit: 'Git tracking setting',
+  width: 'note width',
+  workingDirectory: 'working directory',
+};
+
+function nodeName(node: FlowNode | undefined, fallback = 'block'): string {
+  if (!node) return fallback;
+  if ('name' in node.config && node.config.name) return node.config.name;
+  if (node.type === 'note' && node.config.text) return node.config.text.length > 42 ? `${node.config.text.slice(0, 39)}…` : node.config.text;
+  return typeMeta[node.type].label;
+}
+
+function humanizeOutcome(outcome: string): string {
+  return outcome.replaceAll('_', ' ');
+}
+
+function configFieldLabel(field: string): string {
+  return configFieldLabels[field] ?? field.replace(/([a-z])([A-Z])/g, '$1 $2').toLowerCase();
+}
+
+export function getVersionChanges(current: FlowDefinition, previous?: FlowDefinition): VersionChange[] {
+  if (!previous) return [{
+    kind: 'initial',
+    title: 'Created the first version',
+    detail: `${current.nodes.length} block${current.nodes.length === 1 ? '' : 's'} · ${current.connections.length} connection${current.connections.length === 1 ? '' : 's'}`,
+  }];
+
+  const currentNodes = new Map(current.nodes.map((node) => [node.id, node]));
+  const previousNodes = new Map(previous.nodes.map((node) => [node.id, node]));
+  const changes: VersionChange[] = [];
+
+  current.nodes.filter((node) => !previousNodes.has(node.id)).forEach((node) => changes.push({
+    kind: 'added', title: `Added ${typeMeta[node.type].label} block`, detail: nodeName(node), blockType: node.type,
+  }));
+  previous.nodes.filter((node) => !currentNodes.has(node.id)).forEach((node) => changes.push({
+    kind: 'removed', title: `Removed ${typeMeta[node.type].label} block`, detail: nodeName(node), blockType: node.type,
+  }));
+
+  current.nodes.forEach((node) => {
+    const before = previousNodes.get(node.id);
+    if (!before) return;
+    if (before.type !== node.type) {
+      changes.push({ kind: 'changed', title: `Changed ${nodeName(before)} to a ${typeMeta[node.type].label} block`, blockType: node.type });
+      return;
+    }
+    const beforeName = nodeName(before);
+    const afterName = nodeName(node);
+    if ('name' in before.config && 'name' in node.config && beforeName !== afterName) {
+      changes.push({ kind: 'changed', title: `Renamed ${beforeName} to ${afterName}`, blockType: node.type });
+    }
+    if (before.position.x !== node.position.x || before.position.y !== node.position.y) {
+      changes.push({ kind: 'moved', title: `Moved ${afterName}`, detail: `${typeMeta[node.type].label} block`, blockType: node.type });
+    }
+    const beforeConfig = before.config as Record<string, unknown>;
+    const afterConfig = node.config as Record<string, unknown>;
+    const fields = new Set([...Object.keys(beforeConfig), ...Object.keys(afterConfig)]);
+    fields.delete('name');
+    fields.forEach((field) => {
+      if (JSON.stringify(beforeConfig[field]) !== JSON.stringify(afterConfig[field])) {
+        changes.push({ kind: 'changed', title: `Changed ${configFieldLabel(field)}`, detail: `On ${afterName}`, blockType: node.type });
+      }
+    });
+  });
+
+  const currentConnections = new Map(current.connections.map((connection) => [connection.id, connection]));
+  const previousConnections = new Map(previous.connections.map((connection) => [connection.id, connection]));
+  current.connections.forEach((connection) => {
+    const before = previousConnections.get(connection.id);
+    const source = nodeName(currentNodes.get(connection.sourceNodeId), connection.sourceNodeId);
+    const target = nodeName(currentNodes.get(connection.targetNodeId), connection.targetNodeId);
+    if (!before) {
+      changes.push({ kind: 'connected', title: `Connected ${source}`, detail: `${humanizeOutcome(connection.sourceOutcomeId)} → ${target}` });
+      return;
+    }
+    if (JSON.stringify(before) !== JSON.stringify(connection)) {
+      const beforeSource = nodeName(previousNodes.get(before.sourceNodeId), before.sourceNodeId);
+      const beforeTarget = nodeName(previousNodes.get(before.targetNodeId), before.targetNodeId);
+      changes.push({ kind: 'changed', title: `Changed connection from ${source}`, detail: `${beforeSource}: ${humanizeOutcome(before.sourceOutcomeId)} → ${beforeTarget}; now ${humanizeOutcome(connection.sourceOutcomeId)} → ${target}` });
+    }
+  });
+  previous.connections.filter((connection) => !currentConnections.has(connection.id)).forEach((connection) => {
+    const source = nodeName(previousNodes.get(connection.sourceNodeId), connection.sourceNodeId);
+    const target = nodeName(previousNodes.get(connection.targetNodeId), connection.targetNodeId);
+    changes.push({ kind: 'disconnected', title: `Removed connection from ${source}`, detail: `${humanizeOutcome(connection.sourceOutcomeId)} → ${target}` });
+  });
+
+  return changes;
+}
+
+export function formatActionTimestamp(timestamp: string | undefined) {
+  if (!timestamp || Number.isNaN(new Date(timestamp).getTime())) return 'Just now';
+  return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(new Date(timestamp));
+}
+
+export function appendVersionActions(history: VersionChange[], incoming: VersionChange[]): VersionChange[] {
+  return incoming.reduce<VersionChange[]>((next, action) => {
+    const previous = next.at(-1);
+    const actionTime = action.timestamp ? new Date(action.timestamp).getTime() : Number.NaN;
+    const previousTime = previous?.timestamp ? new Date(previous.timestamp).getTime() : Number.NaN;
+    if (action.kind === 'moved' && previous?.kind === 'moved' && previous.title === action.title && previous.blockType === action.blockType && actionTime - previousTime < 750) {
+      return [...next.slice(0, -1), action];
+    }
+    return [...next, action];
+  }, history);
+}
 
 function SemanticSummary({ type, name }: { type: FlowNode['type']; name: string }) {
   return <span className={`node-zoom-summary type-${type}`} aria-hidden="true">
@@ -154,16 +279,47 @@ function Inspector({ node, nodes, edges, open, update, connectOutcome, remove, c
   </aside>;
 }
 
-function EditorCanvas({ flowId }: { flowId: number }) {
+function VersionChangeIcon({ change }: { change: VersionChange }) {
+  if (change.blockType) return <BlockIcon type={change.blockType} size={15} />;
+  const icon = change.kind === 'added' ? 'plus'
+    : change.kind === 'removed' ? 'trash'
+      : change.kind === 'connected' || change.kind === 'disconnected' ? 'branch'
+        : change.kind === 'moved' ? 'nodes'
+          : change.kind === 'changed' ? 'edit'
+            : 'history';
+  return <Icon name={icon} size={15} />;
+}
+
+function VersionHistoryPanel({ open, title, comparisonLabel, changes, close }: { open: boolean; title: string; comparisonLabel: string; changes: VersionChange[]; close: () => void }) {
+  return <aside id="flow-version-history" className={`version-history-panel editor-panel ${open ? 'panel-open' : ''}`} aria-label="Version history">
+    <header><div><span className="block-glyph history"><Icon name="history" size={18} /></span><div><span className="eyebrow">VERSION HISTORY</span><h3>{title}</h3></div></div><PanelCloseButton label="Close version history" onClick={close} /></header>
+    <div className="version-history-scroll">
+      <div className="version-history-context"><strong>{changes.length} {changes.length === 1 ? 'change' : 'changes'}</strong><span>{comparisonLabel}</span></div>
+      {changes.length ? <ol className="version-change-list">
+        {changes.map((change, index) => <li key={`${change.kind}-${change.title}-${index}`} className={`change-${change.kind}`} data-block-type={change.blockType}>
+          <span className="version-change-marker"><VersionChangeIcon change={change} /></span>
+          <div><strong>{change.title}</strong><small>{formatActionTimestamp(change.timestamp)}</small></div>
+        </li>)}
+      </ol> : <div className="version-history-empty"><Icon name="check" size={19} /><strong>No graph changes</strong><p>This draft matches the current published version.</p></div>}
+    </div>
+  </aside>;
+}
+
+function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number | null }) {
+  const readOnly = versionId !== null;
   const flow = useAppStore((state) => state.flows.find((candidate) => candidate.id === flowId));
   const back = useAppStore((state) => state.editFlow);
+  const viewFlowVersion = useAppStore((state) => state.viewFlowVersion);
   const refreshFlows = useAppStore((state) => state.refreshFlows);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
   const [revision, setRevision] = useState(1);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [publishing, setPublishing] = useState(false);
+  const [activating, setActivating] = useState(false);
   const [dirty, setDirty] = useState(false);
+  const [saveStatus, setSaveStatus] = useState<SaveStatus>('saved');
   const [flowName, setFlowName] = useState(flow?.name ?? 'Flow');
   const [nameDraft, setNameDraft] = useState(flow?.name ?? 'Flow');
   const [renaming, setRenaming] = useState(false);
@@ -171,6 +327,10 @@ function EditorCanvas({ flowId }: { flowId: number }) {
   const [openPanel, setOpenPanel] = useState<EditorPanel>(null);
   const [editorViewport, setEditorViewport] = useState<EditorViewport>(defaultViewport);
   const [viewportReady, setViewportReady] = useState(false);
+  const [versions, setVersions] = useState<FlowVersion[]>([]);
+  const [displayedVersion, setDisplayedVersion] = useState<FlowVersion | null>(null);
+  const [draftVersionNumber, setDraftVersionNumber] = useState<number | null>(null);
+  const [actionHistory, setActionHistory] = useState<VersionChange[]>([]);
   const savedViewport = useRef<EditorViewport | null>(null);
   const viewportChangedByUser = useRef(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
@@ -179,18 +339,54 @@ function EditorCanvas({ flowId }: { flowId: number }) {
   const definition = useMemo(() => definitionFrom(nodes, edges, editorViewport), [nodes, edges, editorViewport]);
   const validation = useMemo(() => validateFlow(definition), [definition]);
   const zoomMode = getFlowZoomMode(editorViewport.zoom);
+  const changeSequence = useRef(0);
+  const dirtyRef = useRef(false);
+  const definitionRef = useRef(definition);
+  const revisionRef = useRef(revision);
+  const savePromiseRef = useRef<Promise<boolean> | null>(null);
+  const actionDefinitionRef = useRef<FlowDefinition | null>(null);
+  const pendingActionsRef = useRef<VersionChange[]>([]);
+  definitionRef.current = definition;
+  revisionRef.current = revision;
+
+  const markDirty = useCallback(() => {
+    changeSequence.current += 1;
+    dirtyRef.current = true;
+    setDirty(true);
+    setSaveStatus('unsaved');
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
     let viewportFrame = 0;
     setViewportReady(false);
-    void api.getDraft(flowId).then(({ draft }) => {
+    const request = readOnly
+      ? api.getFlow(flowId).then(({ versions: availableVersions }) => {
+        const selected = availableVersions.find((version) => version.id === versionId);
+        if (!selected) throw new Error('Flow version not found.');
+        setVersions(availableVersions.filter((version) => version.state !== 'draft').sort((a, b) => b.version - a.version));
+        setDraftVersionNumber(availableVersions.find((version) => version.state === 'draft')?.version ?? null);
+        setDisplayedVersion(selected);
+        return selected;
+      })
+      : Promise.all([api.getDraft(flowId), api.getFlow(flowId)]).then(([{ draft }, { versions: availableVersions }]) => {
+        setVersions(availableVersions.filter((version) => version.state !== 'draft').sort((a, b) => b.version - a.version));
+        setDraftVersionNumber(draft.version);
+        setDisplayedVersion(draft);
+        return draft;
+      });
+    void request.then((draft) => {
       if (cancelled) return;
       const canvas = toCanvas(draft.definition);
       const nextViewport = draft.definition.viewport ?? defaultViewport;
       savedViewport.current = nextViewport;
       setEditorViewport(nextViewport);
-      setNodes(canvas.nodes); setEdges(canvas.edges); setRevision(draft.draft_revision); setDirty(false);
+      revisionRef.current = draft.draft_revision;
+      actionDefinitionRef.current = draft.definition;
+      pendingActionsRef.current = [];
+      setActionHistory((draft.action_history ?? []) as VersionChange[]);
+      dirtyRef.current = false;
+      setNodes(canvas.nodes); setEdges(canvas.edges); setRevision(draft.draft_revision); setDirty(false); setSaveStatus('saved');
       viewportFrame = requestAnimationFrame(() => {
         void fitView({ padding: 0.12, duration: 0 });
         viewportFrame = requestAnimationFrame(() => {
@@ -198,13 +394,15 @@ function EditorCanvas({ flowId }: { flowId: number }) {
           const fittedViewport = getViewport();
           savedViewport.current = fittedViewport;
           setEditorViewport(fittedViewport);
+          dirtyRef.current = false;
           setDirty(false);
+          setSaveStatus('saved');
           setViewportReady(true);
         });
       });
     });
     return () => { cancelled = true; cancelAnimationFrame(viewportFrame); };
-  }, [fitView, flowId, getViewport, setEdges, setNodes]);
+  }, [fitView, flowId, getViewport, readOnly, setEdges, setNodes, versionId]);
 
   useEffect(() => {
     if (renaming) return;
@@ -231,26 +429,37 @@ function EditorCanvas({ flowId }: { flowId: number }) {
     return () => window.removeEventListener('keydown', closePanel);
   }, [openPanel]);
 
+  useEffect(() => {
+    const previous = actionDefinitionRef.current;
+    actionDefinitionRef.current = definition;
+    if (readOnly || !previous) return;
+    const timestamp = new Date().toISOString();
+    const actions = getVersionChanges(definition, previous).map((change) => ({ ...change, timestamp }));
+    if (!actions.length) return;
+    setActionHistory((current) => appendVersionActions(current, actions));
+    pendingActionsRef.current = appendVersionActions(pendingActionsRef.current, actions);
+  }, [definition, readOnly]);
+
   const changeNodes = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
     onNodesChange(changes);
-    if (changes.some((change) => ['position', 'remove', 'add', 'replace'].includes(change.type))) setDirty(true);
-  }, [onNodesChange]);
+    if (changes.some((change) => ['position', 'remove', 'add', 'replace'].includes(change.type))) markDirty();
+  }, [markDirty, onNodesChange]);
   const changeEdges = useCallback((changes: Parameters<typeof onEdgesChange>[0]) => {
     onEdgesChange(changes);
-    if (changes.some((change) => change.type !== 'select')) setDirty(true);
-  }, [onEdgesChange]);
+    if (changes.some((change) => change.type !== 'select')) markDirty();
+  }, [markDirty, onEdgesChange]);
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.sourceHandle) return;
-    setEdges((current) => addEdge({ ...connection, id: uniqueId('connection'), type: 'smoothstep' }, current.filter((edge) => !(edge.source === connection.source && edge.sourceHandle === connection.sourceHandle)))); setDirty(true);
-  }, [setEdges]);
+    setEdges((current) => addEdge({ ...connection, id: uniqueId('connection'), type: 'smoothstep' }, current.filter((edge) => !(edge.source === connection.source && edge.sourceHandle === connection.sourceHandle)))); markDirty();
+  }, [markDirty, setEdges]);
   const insertNode = useCallback((type: FlowNode['type'], position: { x: number; y: number }) => {
     if (type === 'begin' && nodes.some((node) => node.data.flowNode.type === 'begin')) return;
     const flowNode = makeNode(type, position.x, position.y);
     setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), { id: flowNode.id, type: 'flowBlock', position, data: { flowNode }, style: flowNode.type === 'note' ? { width: flowNode.config.width ?? 220, height: flowNode.config.height ?? 120 } : { height: FLOW_NODE_HEIGHTS[flowNode.type] }, selected: true }]);
     setSelectedId(flowNode.id);
     setOpenPanel(null);
-    setDirty(true);
-  }, [nodes, setNodes]);
+    markDirty();
+  }, [markDirty, nodes, setNodes]);
   const addFromPalette = useCallback((type: FlowNode['type']) => {
     const bounds = canvasRef.current?.getBoundingClientRect();
     const offset = (nodes.length % 4) * 24;
@@ -264,7 +473,7 @@ function EditorCanvas({ flowId }: { flowId: number }) {
     if (!type) return;
     insertNode(type, screenToFlowPosition({ x: event.clientX, y: event.clientY }));
   };
-  const updateSelected = (next: FlowNode) => { setNodes((current) => current.map((node) => node.id === next.id ? { ...node, data: { flowNode: next } } : node)); setDirty(true); };
+  const updateSelected = (next: FlowNode) => { setNodes((current) => current.map((node) => node.id === next.id ? { ...node, data: { flowNode: next } } : node)); markDirty(); };
   const selected = nodes.find((node) => node.id === selectedId);
   const inspectorVisible = selected !== undefined && openPanel === 'inspector';
   const connectOutcome = (outcome: string, target: string) => {
@@ -272,19 +481,75 @@ function EditorCanvas({ flowId }: { flowId: number }) {
     setEdges((current) => {
       const remaining = current.filter((edge) => !(edge.source === selected.id && edge.sourceHandle === outcome));
       return target ? [...remaining, { id: uniqueId('connection'), source: selected.id, sourceHandle: outcome, target, type: 'smoothstep' }] : remaining;
-    }); setDirty(true);
+    }); markDirty();
   };
-  const removeSelected = () => { if (!selected) return; setNodes((current) => current.filter((node) => node.id !== selected.id)); setEdges((current) => current.filter((edge) => edge.source !== selected.id && edge.target !== selected.id)); setSelectedId(null); setOpenPanel(null); setDirty(true); };
+  const removeSelected = () => { if (!selected) return; setNodes((current) => current.filter((node) => node.id !== selected.id)); setEdges((current) => current.filter((edge) => edge.source !== selected.id && edge.target !== selected.id)); setSelectedId(null); setOpenPanel(null); markDirty(); };
   const clearSelection = useCallback(() => {
     setNodes((current) => current.map((node) => node.selected ? { ...node, selected: false } : node));
     setSelectedId(null);
     setOpenPanel(null);
   }, [setNodes]);
-  const save = async () => {
-    setSaving(true); try { const result = await api.saveDraft(flowId, definition, revision); savedViewport.current = editorViewport; setRevision(result.draft.draft_revision); setDirty(false); toast.success('Draft saved.'); return true; }
-    catch (error: any) { toast.error(error.data?.reason === 'revision_conflict' ? 'Draft changed elsewhere. Reload the editor.' : error.message); return false; } finally { setSaving(false); }
+  const saveDraftNow = useCallback((): Promise<boolean> => {
+    if (savePromiseRef.current) return savePromiseRef.current;
+    if (!dirtyRef.current) return Promise.resolve(true);
+    const savingSequence = changeSequence.current;
+    const definitionToSave = definitionRef.current;
+    const revisionToSave = revisionRef.current;
+    const actionsToSave = pendingActionsRef.current;
+    pendingActionsRef.current = [];
+    setSaving(true);
+    setSaveStatus('saving');
+    const request = api.saveDraft(flowId, definitionToSave, revisionToSave, actionsToSave as FlowVersionAction[]).then((result) => {
+      revisionRef.current = result.draft.draft_revision;
+      setRevision(result.draft.draft_revision);
+      setActionHistory(appendVersionActions((result.draft.action_history ?? []) as VersionChange[], pendingActionsRef.current));
+      savedViewport.current = definitionToSave.viewport ?? defaultViewport;
+      if (changeSequence.current === savingSequence) {
+        dirtyRef.current = false;
+        setDirty(false);
+        setSaveStatus('saved');
+      } else {
+        setSaveStatus('unsaved');
+      }
+      return true;
+    }).catch((error: any) => {
+      pendingActionsRef.current = appendVersionActions(actionsToSave, pendingActionsRef.current);
+      setSaveStatus('error');
+      toast.error(error.data?.reason === 'revision_conflict' ? 'This draft changed elsewhere. Reload before editing again.' : `Autosave failed: ${error.message}`);
+      return false;
+    }).finally(() => {
+      savePromiseRef.current = null;
+      setSaving(false);
+    });
+    savePromiseRef.current = request;
+    return request;
+  }, [flowId]);
+  const flushPendingSave = useCallback(async () => {
+    while (dirtyRef.current || savePromiseRef.current) {
+      if (!(await saveDraftNow())) return false;
+    }
+    return true;
+  }, [saveDraftNow]);
+
+  useEffect(() => {
+    if (readOnly || !dirty || saving || saveStatus === 'error') return;
+    const timer = window.setTimeout(() => { void saveDraftNow(); }, 600);
+    return () => window.clearTimeout(timer);
+  }, [definition, dirty, readOnly, saveDraftNow, saveStatus, saving]);
+
+  const publish = async () => {
+    if (!validation.valid) { toast.error('Resolve validation problems before publishing.'); return; }
+    if (!(await flushPendingSave())) return;
+    setPublishing(true);
+    try {
+      const result = await api.publishFlow(flowId);
+      await refreshFlows();
+      viewFlowVersion(flowId, result.version.id);
+      toast.success(`Version v${result.version.version} is live. A new draft is ready to edit.`);
+    }
+    catch (error) { toast.error(error instanceof Error ? error.message : 'Could not publish this Flow version.'); }
+    finally { setPublishing(false); }
   };
-  const publish = async () => { if (!validation.valid) { toast.error('Resolve validation problems before publishing.'); return; } if (!(await save())) return; await api.publishFlow(flowId); await refreshFlows(); toast.success('A new immutable Flow version is live.'); };
   const commitName = async () => {
     if (renamingSaving) return;
     const name = nameDraft.trim();
@@ -302,22 +567,81 @@ function EditorCanvas({ flowId }: { flowId: number }) {
     finally { setRenamingSaving(false); }
   };
 
-  return <div className={`editor-shell zoom-${zoomMode}`} data-zoom-mode={zoomMode} style={{ '--zoom-compensation': Math.min(1 / editorViewport.zoom, 1 / MIN_FLOW_ZOOM) } as CSSProperties}>
-    <div className="editor-toolbar"><div className="editor-toolbar-context"><button className="back-button" aria-label="Flow library" onClick={() => back(null)}><Icon name="back" size={15} /><span className="toolbar-nav-label">Library</span></button><div className={`flow-title ${renaming ? 'is-editing' : ''}`}><span className="flow-symbol"><Icon name="nodes" size={17} /></span><div>{renaming ? <input ref={nameInputRef} className="flow-name-input" aria-label="Flow name" value={nameDraft} disabled={renamingSaving} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => void commitName()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); setNameDraft(flowName); setRenaming(false); } }} /> : <button type="button" className="flow-name-button" aria-label={`Rename flow ${flowName}`} title="Rename flow" onClick={() => { setNameDraft(flowName); setRenaming(true); }}><strong>{flowName}</strong><Icon name="edit" size={13} /></button>}<small>{dirty ? 'Unsaved draft' : `Draft r${revision}`}</small></div></div><div className={`validation-chip ${validation.valid ? 'valid' : 'invalid'}`}><span />{validation.valid ? 'Ready to publish' : `${validation.problems.length} issue${validation.problems.length === 1 ? '' : 's'}`}</div></div><div className="editor-toolbar-actions"><button className="button ghost editor-toolbar-action" aria-label={saving ? 'Saving draft' : 'Save draft'} disabled={!dirty || saving} onClick={() => void save()}><Icon name="save" size={15} /><span className="toolbar-action-label">{saving ? 'Saving…' : 'Save draft'}</span></button><button className="button primary editor-toolbar-action" aria-label="Publish version" disabled={saving || !validation.valid} onClick={() => void publish()}><Icon name="publish" size={15} /><span className="toolbar-action-label">Publish version</span></button></div></div>
+  const previousVersion = readOnly && displayedVersion
+    ? versions.filter((version) => version.version < displayedVersion.version).sort((a, b) => b.version - a.version)[0]
+    : undefined;
+  const currentPublishedVersion = versions.find((version) => version.id === flow?.active_version_id)
+    ?? versions.slice().sort((a, b) => b.version - a.version)[0];
+  const comparisonVersion = readOnly ? previousVersion : currentPublishedVersion;
+  const versionChanges = useMemo(() => getVersionChanges(definition, comparisonVersion?.definition), [comparisonVersion, definition]);
+  const historyTitle = readOnly && displayedVersion ? `Changes in v${displayedVersion.version}` : 'Draft changes';
+  const historyComparisonLabel = readOnly
+    ? previousVersion ? `Compared with v${previousVersion.version}` : 'Initial published version'
+    : currentPublishedVersion ? `Since current v${currentPublishedVersion.version}` : 'Before the first publication';
+  const persistedHistory = readOnly ? (displayedVersion?.action_history ?? []) : actionHistory;
+  const historyChanges = persistedHistory.length
+    ? [...persistedHistory].reverse()
+    : versionChanges.map((change) => ({ ...change, timestamp: readOnly ? displayedVersion?.published_at ?? displayedVersion?.created_at : undefined }));
+  const draftSaveLabel = saveStatus === 'saving' ? 'Saving…' : saveStatus === 'error' ? 'Autosave failed' : dirty ? 'Unsaved changes' : 'Saved';
+  const openLibrary = async () => {
+    if (!readOnly && !(await flushPendingSave())) return;
+    back(null);
+  };
+  const selectVersion = async (value: string) => {
+    if (value === 'draft') { back(flowId); return; }
+    if (!readOnly && !(await flushPendingSave())) return;
+    viewFlowVersion(flowId, Number(value));
+  };
+  const selectedVersionIsCurrent = Boolean(readOnly && displayedVersion && displayedVersion.id === flow?.active_version_id);
+  const activateVersion = async () => {
+    if (!displayedVersion || selectedVersionIsCurrent || activating) return;
+    setActivating(true);
+    try {
+      const result = await api.activateFlowVersion(flowId, displayedVersion.id);
+      useAppStore.setState((state) => ({ flows: state.flows.map((item) => item.id === flowId ? { ...item, ...result.flow } : item) }));
+      toast.success(`Version v${displayedVersion.version} is now current. Future runs will use it.`);
+      void refreshFlows().catch((error) => {
+        toast.error(error instanceof Error ? `Version activated, but the Flow list could not refresh: ${error.message}` : 'Version activated, but the Flow list could not refresh.');
+      });
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not activate this Flow version.');
+    } finally {
+      setActivating(false);
+    }
+  };
+
+  return <div className={`editor-shell zoom-${zoomMode}${readOnly ? ' historical-view' : ''}`} data-zoom-mode={zoomMode} style={{ '--zoom-compensation': Math.min(1 / editorViewport.zoom, 1 / MIN_FLOW_ZOOM) } as CSSProperties}>
+    <div className="editor-toolbar">
+      <div className="editor-toolbar-context">
+        <button className="back-button" aria-label="Flow library" onClick={() => void openLibrary()}><Icon name="back" size={15} /><span className="toolbar-nav-label">Library</span></button>
+        <div className={`flow-title ${renaming ? 'is-editing' : ''}`}><span className="flow-symbol"><Icon name="nodes" size={17} /></span><div>{readOnly ? <strong>{flowName}</strong> : renaming ? <input ref={nameInputRef} className="flow-name-input" aria-label="Flow name" value={nameDraft} disabled={renamingSaving} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => void commitName()} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); setNameDraft(flowName); setRenaming(false); } }} /> : <button type="button" className="flow-name-button" aria-label={`Rename flow ${flowName}`} title="Rename flow" onClick={() => { setNameDraft(flowName); setRenaming(true); }}><strong>{flowName}</strong><Icon name="edit" size={13} /></button>}{!readOnly && <small className={`autosave-status ${saveStatus}`} aria-live="polite">{draftSaveLabel}</small>}</div></div>
+        {!readOnly && <div className={`validation-chip ${validation.valid ? 'valid' : 'invalid'}`}><span />{validation.valid ? 'Ready to publish' : `${validation.problems.length} issue${validation.problems.length === 1 ? '' : 's'}`}</div>}
+      </div>
+      <div className="editor-toolbar-actions">
+        <button type="button" className={`button ghost editor-history-toggle ${openPanel === 'history' ? 'active' : ''}`} aria-label="Version history" title="Version history" aria-expanded={openPanel === 'history'} aria-controls="flow-version-history" onClick={() => setOpenPanel((current) => current === 'history' ? null : 'history')}><Icon name="history" size={18} /><span className="toolbar-history-label">History</span></button>
+        <label className="version-picker"><span className="sr-only">Flow version</span><select aria-label="Flow version" value={readOnly ? String(versionId) : 'draft'} onChange={(event) => void selectVersion(event.target.value)}><option value="draft">{draftVersionNumber ? `Draft v${draftVersionNumber}` : 'Latest draft'} · edit</option>{versions.map((version) => <option key={version.id} value={version.id}>v{version.version}{flow?.active_version_id === version.id ? ' · current' : ''}{version.published_at ? ` · ${new Date(version.published_at).toLocaleDateString()}` : ''}</option>)}</select></label>
+        {readOnly ? !displayedVersion
+          ? <button className="button primary editor-toolbar-action" data-toolbar-action="loading" disabled><Icon name="history" size={15} /><span className="toolbar-action-label">Loading…</span></button>
+          : selectedVersionIsCurrent
+            ? <button className="button primary editor-toolbar-action" data-toolbar-action="edit" onClick={() => back(flowId)}><Icon name="edit" size={15} /><span className="toolbar-action-label">Edit latest draft</span></button>
+            : <button className="button primary editor-toolbar-action" data-toolbar-action={activating ? 'activating' : 'activate'} aria-label={activating ? 'Activating' : 'Activate'} title="Use this version for future runs" disabled={activating} onClick={() => void activateVersion()}><Icon name="check" size={15} /><span className="toolbar-action-label">{activating ? 'Activating…' : 'Activate'}</span></button>
+          : <button className="button primary editor-toolbar-action" data-toolbar-action={publishing ? 'publishing' : 'publish'} aria-label={publishing ? 'Publishing version' : 'Publish version'} disabled={publishing || !validation.valid} onClick={() => void publish()}><Icon name="publish" size={15} /><span className="toolbar-action-label">{publishing ? 'Publishing…' : 'Publish version'}</span></button>}
+      </div>
+    </div>
     <div className="editor-main">
-      <button type="button" className={`button ghost editor-palette-toggle ${openPanel === 'palette' ? 'active' : ''}`} aria-expanded={openPanel === 'palette'} aria-controls="flow-block-library" onClick={() => setOpenPanel((current) => current === 'palette' ? null : 'palette')}><Icon name="plus" size={15} />Blocks</button>
-      <BlockPalette nodes={nodes} open={openPanel === 'palette'} add={addFromPalette} />
-      <div ref={canvasRef} className="canvas-wrap" onDrop={onDrop} onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}>
-        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={changeNodes} onEdgesChange={changeEdges} onConnect={onConnect} onPaneClick={clearSelection} onNodeClick={(_, node) => { setSelectedId(node.id); setOpenPanel('inspector'); }} onSelectionChange={({ nodes: selection }) => { setSelectedId(selection[0]?.id ?? null); }} onMoveStart={(event) => { if (event) viewportChangedByUser.current = true; }} onMoveEnd={(_, viewport) => { setEditorViewport(viewport); if (viewportChangedByUser.current && savedViewport.current && !sameViewport(savedViewport.current, viewport)) setDirty(true); viewportChangedByUser.current = false; }} minZoom={MIN_FLOW_ZOOM} maxZoom={1.6} deleteKeyCode={['Backspace', 'Delete']} proOptions={{ hideAttribution: true }}>
+      {readOnly ? <div className="editor-read-only-indicator" role="status" aria-label="Read only"><Icon name="lock" size={15} /><span>Read only</span></div> : <><button type="button" className={`button ghost editor-palette-toggle ${openPanel === 'palette' ? 'active' : ''}`} aria-expanded={openPanel === 'palette'} aria-controls="flow-block-library" onClick={() => setOpenPanel((current) => current === 'palette' ? null : 'palette')}><Icon name="plus" size={15} />Blocks</button><BlockPalette nodes={nodes} open={openPanel === 'palette'} add={addFromPalette} /></>}
+      <div ref={canvasRef} className="canvas-wrap" onDrop={readOnly ? undefined : onDrop} onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}>
+        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={readOnly ? undefined : changeNodes} onEdgesChange={readOnly ? undefined : changeEdges} onConnect={readOnly ? undefined : onConnect} onPaneClick={readOnly ? undefined : clearSelection} onNodeClick={readOnly ? undefined : (_, node) => { setSelectedId(node.id); setOpenPanel('inspector'); }} onSelectionChange={readOnly ? undefined : ({ nodes: selection }) => { setSelectedId(selection[0]?.id ?? null); }} onMoveStart={(event) => { if (!readOnly && event) viewportChangedByUser.current = true; }} onMoveEnd={(_, viewport) => { setEditorViewport(viewport); if (!readOnly && viewportChangedByUser.current && savedViewport.current && !sameViewport(savedViewport.current, viewport)) markDirty(); viewportChangedByUser.current = false; }} nodesDraggable={!readOnly} nodesConnectable={!readOnly} elementsSelectable={!readOnly} minZoom={MIN_FLOW_ZOOM} maxZoom={1.6} deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']} proOptions={{ hideAttribution: true }}>
           <Background color="#26332f" gap={24} size={1} />{viewportReady && <Controls showInteractive={false} onZoomIn={() => { viewportChangedByUser.current = true; }} onZoomOut={() => { viewportChangedByUser.current = true; }} onFitView={() => { viewportChangedByUser.current = true; }}><output className="flow-zoom-indicator" aria-label="Current canvas zoom" aria-live="polite">{Math.round(editorViewport.zoom * 100)}%</output></Controls>}<MiniMap pannable zoomable maskColor="rgba(5, 9, 8, 0.82)" nodeColor={(node) => ({ begin: '#69e0b1', agent: '#6ba5ff', check: '#d4e052', decision: '#ffb454', result: '#dc7eff', note: '#7e8a86' } as Record<string, string>)[(node.data as any).flowNode.type] ?? '#fff'} />
         </ReactFlow>
-        {!validation.valid && <div className="validation-popover"><strong>Flow needs attention</strong>{validation.problems.slice(0, 4).map((problem) => <button key={`${problem.code}-${problem.nodeId}-${problem.connectionId}`} onClick={() => { if (problem.nodeId) { setSelectedId(problem.nodeId); setOpenPanel('inspector'); } }}><Icon name="alert" size={14} />{problem.message}</button>)}</div>}
+        {!readOnly && !validation.valid && <div className="validation-popover"><strong>Flow needs attention</strong>{validation.problems.slice(0, 4).map((problem) => <button key={`${problem.code}-${problem.nodeId}-${problem.connectionId}`} onClick={() => { if (problem.nodeId) { setSelectedId(problem.nodeId); setOpenPanel('inspector'); } }}><Icon name="alert" size={14} />{problem.message}</button>)}</div>}
       </div>
-      {inspectorVisible && <Inspector node={selected} nodes={nodes} edges={edges} open update={updateSelected} connectOutcome={connectOutcome} remove={removeSelected} close={() => setOpenPanel(null)} />}
+      {!readOnly && inspectorVisible && <Inspector node={selected} nodes={nodes} edges={edges} open update={updateSelected} connectOutcome={connectOutcome} remove={removeSelected} close={() => setOpenPanel(null)} />}
+      <VersionHistoryPanel open={openPanel === 'history'} title={historyTitle} comparisonLabel={historyComparisonLabel} changes={historyChanges} close={() => setOpenPanel(null)} />
     </div>
   </div>;
 }
 
-export default function FlowEditor({ flowId }: { flowId: number }) {
-  return <ReactFlowProvider><EditorCanvas flowId={flowId} /></ReactFlowProvider>;
+export default function FlowEditor({ flowId, versionId = null }: { flowId: number; versionId?: number | null }) {
+  return <ReactFlowProvider><EditorCanvas flowId={flowId} versionId={versionId} /></ReactFlowProvider>;
 }

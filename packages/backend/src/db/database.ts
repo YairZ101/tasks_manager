@@ -135,6 +135,7 @@ function createSchema(database: Database): void {
       draft_revision  INTEGER NOT NULL DEFAULT 1,
       definition_json TEXT NOT NULL,
       compiled_json   TEXT DEFAULT NULL,
+      action_history_json TEXT NOT NULL DEFAULT '[]',
       created_at      TEXT NOT NULL DEFAULT (datetime('now')),
       published_at    TEXT DEFAULT NULL,
       UNIQUE(flow_id, version, state)

@@ -15,6 +15,7 @@ interface AppState {
   workView: OperationalState;
   selectedTaskId: number | null;
   editingFlowId: number | null;
+  viewingFlowVersionId: number | null;
   createOpen: boolean;
   settingsOpen: boolean;
   bootstrap(): Promise<void>;
@@ -24,6 +25,7 @@ interface AppState {
   setWorkView(view: OperationalState): void;
   selectTask(id: number | null): void;
   editFlow(id: number | null): void;
+  viewFlowVersion(flowId: number, versionId: number): void;
   setCreateOpen(open: boolean): void;
   setSettingsOpen(open: boolean): void;
 }
@@ -43,6 +45,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   workView: 'backlog',
   selectedTaskId: null,
   editingFlowId: null,
+  viewingFlowVersionId: null,
   createOpen: false,
   settingsOpen: false,
   async bootstrap() {
@@ -64,10 +67,15 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
   async refreshTasks() { const { tasks } = await api.listTasks(); set({ tasks }); },
   async refreshFlows() { const { flows } = await api.listFlows(); set({ flows }); },
-  setSection: (section) => set({ section, editingFlowId: section === 'work' ? null : get().editingFlowId }),
+  setSection: (section) => set({
+    section,
+    editingFlowId: section === 'work' ? null : get().editingFlowId,
+    viewingFlowVersionId: section === 'work' ? null : get().viewingFlowVersionId,
+  }),
   setWorkView: (workView) => set({ workView, section: 'work' }),
   selectTask: (selectedTaskId) => set({ selectedTaskId }),
-  editFlow: (editingFlowId) => set({ editingFlowId, section: 'flows' }),
+  editFlow: (editingFlowId) => set({ editingFlowId, viewingFlowVersionId: null, section: 'flows' }),
+  viewFlowVersion: (editingFlowId, viewingFlowVersionId) => set({ editingFlowId, viewingFlowVersionId, section: 'flows' }),
   setCreateOpen: (createOpen) => set({ createOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 }));

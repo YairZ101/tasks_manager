@@ -7,7 +7,7 @@ import { buildRunPreflight } from './runPreflight.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
-vi.mock('../api/client.js', () => ({ api: { getTask: vi.fn(), listRuns: vi.fn(), getAttempt: vi.fn(), updateTask: vi.fn() } }));
+vi.mock('../api/client.js', () => ({ api: { getTask: vi.fn(), getRun: vi.fn(), listRuns: vi.fn(), getAttempt: vi.fn(), updateTask: vi.fn() } }));
 
 const flow = (effectLevel: 'read_only' | 'workspace_write' | 'external_write'): Flow => ({
   id: 1, name: 'Delivery', is_default: 1, active_version_id: 3, created_at: '', updated_at: '',
@@ -48,7 +48,7 @@ describe('TaskPanel task links', () => {
     vi.mocked(api.getTask).mockResolvedValue({ task, links: [{ id: 1, link_type: 'blocks', relationship: 'is_blocked_by', linked_task_id: 3, created_at: '', task_key: 'TST-3', title: 'Create the API contract', resolution: 'open' }] });
     vi.mocked(api.listRuns).mockResolvedValue({ runs: [] });
     vi.mocked(api.updateTask).mockResolvedValue({ task, links: [] });
-    useAppStore.setState({ tasks: [task], flows: [flow('read_only')], selectTask: vi.fn(), refreshTasks: vi.fn() });
+    useAppStore.setState({ tasks: [task], flows: [flow('read_only')], selectTask: vi.fn(), viewFlowVersion: vi.fn(), refreshTasks: vi.fn() });
   });
 
   test('warns before a Run when a dependency has not completed', async () => {
@@ -95,5 +95,25 @@ describe('TaskPanel task links', () => {
     render(createElement(TaskPanel, { taskId: 7 }));
     fireEvent.change(await screen.findByRole('combobox', { name: 'Flow to run' }), { target: { value: '2' } });
     await waitFor(() => expect(api.updateTask).toHaveBeenCalledWith(7, { preferred_flow_id: 2 }));
+  });
+
+  test('opens the exact Flow version pinned to a Run', async () => {
+    const runningTask = { ...task, active_run_id: 9, active_run_status: 'running', operational_state: 'active' as const };
+    const pinnedVersion = { ...flow('read_only').activeVersion!, id: 2, version: 3 };
+    vi.mocked(api.getTask).mockResolvedValue({ task: runningTask, links: [] });
+    vi.mocked(api.getRun).mockResolvedValue({
+      run: { id: 9, task_id: 7, flow_version_id: 2, workspace_id: null, status: 'running', result_category: null, reason: null, created_at: '', started_at: '', finished_at: null },
+      task: runningTask,
+      flowVersion: pinnedVersion,
+      attempts: [],
+      workspace: null,
+    });
+    useAppStore.setState({ tasks: [runningTask] });
+    render(createElement(TaskPanel, { taskId: 7 }));
+
+    fireEvent.click(await screen.findByRole('button', { name: /Delivery · v3/ }));
+
+    expect(useAppStore.getState().selectTask).toHaveBeenCalledWith(null);
+    expect(useAppStore.getState().viewFlowVersion).toHaveBeenCalledWith(1, 2);
   });
 });

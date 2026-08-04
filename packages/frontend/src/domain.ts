@@ -1,4 +1,4 @@
-import type { FlowDefinition, ResultCategory } from '@flow/core';
+import type { FlowDefinition, FlowNode, ResultCategory } from '@flow/core';
 
 export type OperationalState = 'backlog' | 'active' | 'attention' | 'finished';
 
@@ -14,6 +14,16 @@ export interface Task {
 
 export type TaskLinkRelationship = 'blocks' | 'is_blocked_by' | 'relates_to';
 
+export type FlowVersionActionKind = 'initial' | 'added' | 'removed' | 'changed' | 'moved' | 'connected' | 'disconnected';
+
+export interface FlowVersionAction {
+  kind: FlowVersionActionKind;
+  title: string;
+  detail?: string;
+  blockType?: FlowNode['type'];
+  timestamp: string;
+}
+
 export interface TaskLink {
   id: number; link_type: 'blocks' | 'relates_to'; relationship: TaskLinkRelationship; linked_task_id: number; created_at: string;
   task_key: string; title: string; resolution: Task['resolution'];
@@ -21,7 +31,7 @@ export interface TaskLink {
 
 export interface FlowVersion {
   id: number; flow_id: number; version: number; state: 'draft' | 'published' | 'archived';
-  draft_revision: number; definition: FlowDefinition; compiled: FlowDefinition | null; published_at: string | null;
+  draft_revision: number; definition: FlowDefinition; compiled: FlowDefinition | null; action_history?: FlowVersionAction[]; created_at?: string; published_at: string | null;
 }
 
 export interface Flow {

@@ -33,6 +33,7 @@ beforeEach(() => {
     section: 'work',
     workView: 'backlog',
     editingFlowId: null,
+    viewingFlowVersionId: null,
     selectedTaskId: null,
     createOpen: false,
     settingsOpen: false,

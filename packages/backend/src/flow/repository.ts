@@ -4,10 +4,13 @@ import { getDb } from '../db/database.js';
 import type { Flow, FlowVersion, FlowVersionRow, Task, TaskLink, TaskWithState, WorkflowRun } from '../types.js';
 
 export function parseFlowVersion(row: FlowVersionRow): FlowVersion {
+  const { definition_json, compiled_json, action_history_json, ...version } = row;
+  const actionHistory = JSON.parse(action_history_json) as unknown;
   return {
-    ...row,
-    definition: JSON.parse(row.definition_json) as FlowDefinition,
-    compiled: row.compiled_json ? JSON.parse(row.compiled_json) : null,
+    ...version,
+    definition: JSON.parse(definition_json) as FlowDefinition,
+    compiled: compiled_json ? JSON.parse(compiled_json) : null,
+    action_history: Array.isArray(actionHistory) ? actionHistory : [],
   };
 }
 

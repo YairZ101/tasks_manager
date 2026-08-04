@@ -13,7 +13,7 @@ const statusLabel: Record<string, string> = { queued: 'Queued', running: 'Runnin
 const relationshipLabels = { is_blocked_by: 'Is blocked by', blocks: 'Blocks', relates_to: 'Relates to' } as const;
 
 export default function TaskPanel({ taskId }: { taskId: number }) {
-  const { tasks, flows, selectTask, refreshTasks } = useAppStore();
+  const { tasks, flows, selectTask, refreshTasks, viewFlowVersion } = useAppStore();
   const task = tasks.find((candidate) => candidate.id === taskId);
   const [detail, setDetail] = useState<RunDetail | null>(null);
   const [logs, setLogs] = useState<TaskLog[]>([]);
@@ -57,6 +57,7 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   }), [links, tasks]);
   const incompleteDependencies = useMemo(() => currentLinks.filter((link) => link.relationship === 'is_blocked_by' && link.resolution !== 'completed'), [currentLinks]);
   const editableLinks = useMemo<TaskDetailLink[]>(() => links.map((link) => ({ task_id: link.linked_task_id, relationship: link.relationship, task_key: link.task_key, title: link.title })), [links]);
+  const runFlow = detail ? flows.find((flow) => flow.id === detail.flowVersion.flow_id) : undefined;
   if (!task) return null;
 
   const refresh = async (runId?: number) => { await refreshTasks(); if (runId) setDetail(await api.getRun(runId)); };
@@ -135,6 +136,7 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
 
         {detail && <section className="run-card">
           <div className="run-head"><div><span className="eyebrow">RUN #{detail.run.id}</span><h3>{statusLabel[detail.run.status]}</h3></div><span className={`run-light ${detail.run.status}`} /></div>
+          <button className="run-flow-version" type="button" onClick={() => { selectTask(null); viewFlowVersion(detail.flowVersion.flow_id, detail.flowVersion.id); }}><span><Icon name="history" size={15} /></span><div><small>FLOW USED BY THIS RUN</small><strong>{runFlow?.name ?? 'Flow'} · v{detail.flowVersion.version}</strong></div><em>View pinned version <Icon name="arrow" size={14} /></em></button>
           {detail.run.reason && <div className="run-reason"><Icon name="alert" size={16} />{detail.run.reason}</div>}
           {decision?.type === 'decision' && <div className="decision-box">
             <span className="eyebrow">DECISION REQUIRED</span><h3>{decision.config.name}</h3>{decision.config.instructions && <p>{decision.config.instructions}</p>}

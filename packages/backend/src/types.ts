@@ -1,4 +1,4 @@
-import type { CompiledFlowDefinition, FlowDefinition, ResultCategory } from '@flow/core';
+import type { CompiledFlowDefinition, FlowDefinition, FlowNode, ResultCategory } from '@flow/core';
 
 export type TaskResolution = 'open' | 'completed' | 'cancelled';
 export type RunStatus = 'queued' | 'running' | 'waiting' | 'attention' | 'finished' | 'stopped';
@@ -76,13 +76,25 @@ export interface FlowVersionRow {
   draft_revision: number;
   definition_json: string;
   compiled_json: string | null;
+  action_history_json: string;
   created_at: string;
   published_at: string | null;
 }
 
-export interface FlowVersion extends Omit<FlowVersionRow, 'definition_json' | 'compiled_json'> {
+export type FlowVersionActionKind = 'initial' | 'added' | 'removed' | 'changed' | 'moved' | 'connected' | 'disconnected';
+
+export interface FlowVersionAction {
+  kind: FlowVersionActionKind;
+  title: string;
+  detail?: string;
+  blockType?: FlowNode['type'];
+  timestamp: string;
+}
+
+export interface FlowVersion extends Omit<FlowVersionRow, 'definition_json' | 'compiled_json' | 'action_history_json'> {
   definition: FlowDefinition;
   compiled: CompiledFlowDefinition | null;
+  action_history: FlowVersionAction[];
 }
 
 export interface WorkflowRun {

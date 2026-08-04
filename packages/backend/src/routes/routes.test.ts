@@ -50,6 +50,44 @@ describe('Flow routes', () => {
     expect((await app.request('/flows/99999', { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Missing Flow' }) })).status).toBe(404);
   });
 
+  test('activates an older published version without removing newer versions or the draft', async () => {
+    const db = getDb();
+    const flow = db.query<{ id: number; active_version_id: number }, []>("SELECT id, active_version_id FROM flows WHERE name = 'Default'").get()!;
+    const firstVersionId = flow.active_version_id;
+    const definition = createMinimalFlow();
+    const second = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json,published_at) VALUES(?,2,'published',?,?,datetime('now'))")
+      .run(flow.id, JSON.stringify(definition), JSON.stringify(compileFlow(definition)));
+    const secondVersionId = Number(second.lastInsertRowid);
+    const draft = db.query("INSERT INTO flow_versions(flow_id,version,state,definition_json) VALUES(?,3,'draft',?)")
+      .run(flow.id, JSON.stringify(definition));
+    db.query('UPDATE flows SET active_version_id = ? WHERE id = ?').run(secondVersionId, flow.id);
+
+    const activated = await app.request(`/flows/${flow.id}/versions/${firstVersionId}/activate`, { method: 'POST' });
+    expect(activated.status).toBe(200);
+    expect(await activated.json()).toMatchObject({
+      flow: { id: flow.id, active_version_id: firstVersionId },
+      version: { id: firstVersionId, version: 1, state: 'published' },
+    });
+
+    const detail = await app.request(`/flows/${flow.id}`);
+    expect((await detail.json() as any).versions.map((version: any) => ({ id: version.id, version: version.version, state: version.state }))).toEqual([
+      { id: Number(draft.lastInsertRowid), version: 3, state: 'draft' },
+      { id: secondVersionId, version: 2, state: 'published' },
+      { id: firstVersionId, version: 1, state: 'published' },
+    ]);
+
+    const task = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Use restored version' }) });
+    const taskId = (await task.json() as any).task.id;
+    const started = await app.request('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: taskId, flow_id: flow.id }) });
+    expect(started.status).toBe(201);
+    expect((await started.json() as any).run.flow_version_id).toBe(firstVersionId);
+
+    const rejectedDraft = await app.request(`/flows/${flow.id}/versions/${Number(draft.lastInsertRowid)}/activate`, { method: 'POST' });
+    expect(rejectedDraft.status).toBe(409);
+    expect(await rejectedDraft.json()).toMatchObject({ reason: 'version_not_published' });
+    expect((await app.request(`/flows/${flow.id}/versions/99999/activate`, { method: 'POST' })).status).toBe(404);
+  });
+
   test('deletes an unused non-default Flow and protects default or used Flows', async () => {
     const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Disposable' }) });
     const disposable = (await created.json() as any).flow;
@@ -166,6 +204,71 @@ describe('Flow routes', () => {
     expect(stale.status).toBe(409);
     const publish = await app.request(`/flows/${flow.id}/publish`, { method: 'POST' });
     expect(publish.status).toBe(422);
+  });
+
+  test('persists independently timestamped actions with a Flow version', async () => {
+    const flow = getDb().query<{ id: number }, []>("SELECT id FROM flows WHERE name = 'Default'").get()!;
+    const draftResponse = await app.request(`/flows/${flow.id}/draft`);
+    const draft = (await draftResponse.json() as any).draft;
+    const actions = [
+      { kind: 'moved', title: 'Moved Begin', blockType: 'begin', timestamp: '2026-08-04T08:13:00.000Z' },
+      { kind: 'changed', title: 'Changed instructions', blockType: 'agent', timestamp: '2026-08-04T08:14:32.000Z' },
+    ];
+
+    const saved = await app.request(`/flows/${flow.id}/draft`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions }),
+    });
+    expect(saved.status).toBe(200);
+    expect((await saved.json() as any).draft.action_history).toEqual(actions);
+
+    const published = await app.request(`/flows/${flow.id}/publish`, { method: 'POST' });
+    expect(published.status).toBe(200);
+    expect((await published.json() as any).version.action_history).toEqual(actions);
+  });
+
+  test('rejects malformed history actions and coalesces a continuous move', async () => {
+    const flow = getDb().query<{ id: number }, []>("SELECT id FROM flows WHERE name = 'Default'").get()!;
+    const draft = (await (await app.request(`/flows/${flow.id}/draft`)).json() as any).draft;
+    const malformed = await app.request(`/flows/${flow.id}/draft`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions: [{ kind: 'moved', title: 'Moved Begin', blockType: 'begin', timestamp: 'not-a-timestamp' }] }),
+    });
+    expect(malformed.status).toBe(400);
+
+    const firstMove = { kind: 'moved', title: 'Moved Begin', blockType: 'begin', timestamp: '2026-08-04T08:13:00.000Z' };
+    const firstSave = await app.request(`/flows/${flow.id}/draft`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions: [firstMove] }),
+    });
+    const savedDraft = (await firstSave.json() as any).draft;
+    const finalMove = { ...firstMove, timestamp: '2026-08-04T08:13:00.400Z' };
+    const secondSave = await app.request(`/flows/${flow.id}/draft`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definition: draft.definition, revision: savedDraft.draft_revision, actions: [finalMove] }),
+    });
+    expect(secondSave.status).toBe(200);
+    expect((await secondSave.json() as any).draft.action_history).toEqual([finalMove]);
+  });
+
+  test('publishes an immutable version and immediately prepares the next draft', async () => {
+    const created = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Release flow', definition: createRecommendedFlow() }) });
+    const { flow } = await created.json() as any;
+
+    const published = await app.request(`/flows/${flow.id}/publish`, { method: 'POST' });
+    expect(published.status).toBe(200);
+    const body = await published.json() as any;
+    expect(body).toMatchObject({
+      version: { flow_id: flow.id, version: 1, state: 'published' },
+      draft: { flow_id: flow.id, version: 2, state: 'draft', draft_revision: 1, definition: createRecommendedFlow() },
+    });
+
+    const detail = await app.request(`/flows/${flow.id}`);
+    expect((await detail.json() as any).versions.map((version: any) => ({ version: version.version, state: version.state }))).toEqual([
+      { version: 2, state: 'draft' },
+      { version: 1, state: 'published' },
+    ]);
   });
 
   test('starts at a Decision and resolves to a Result exactly once', async () => {

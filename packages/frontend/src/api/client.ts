@@ -82,6 +82,7 @@ export const api = {
   listFlows: () => request<{ flows: Flow[] }>('/flows'),
   getFlow: (flowId: number) => request<{ flow: Flow; versions: FlowVersion[] }>(`/flows/${flowId}`),
   createFlow: (name: string) => request<{ flow: Flow; draft: FlowVersion }>('/flows', { method: 'POST', body: JSON.stringify({ name }) }),
+  duplicateFlow: (flowId: number) => request<{ flow: Flow; draft: FlowVersion }>(`/flows/${flowId}/duplicate`, { method: 'POST' }),
   updateFlow: (id: number, data: Pick<Flow, 'name'>) => request<{ flow: Flow }>(`/flows/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   getDraft: (flowId: number) => request<{ draft: FlowVersion; validation: ValidationResult }>(`/flows/${flowId}/draft`),
   saveDraft: (flowId: number, definition: FlowDefinition, revision: number, actions: FlowVersionAction[] = []) =>

@@ -36,6 +36,29 @@ describe('Flow routes', () => {
     expect(draft.definition).toEqual(createBlankFlow());
   });
 
+  test('duplicates a Flow from its current draft into a new editable Flow', async () => {
+    const source = getDb().query<{ id: number }, []>("SELECT id FROM flows WHERE name = 'Default'").get()!;
+    const sourceDraft = (await (await app.request(`/flows/${source.id}/draft`)).json() as any).draft;
+    const definition = createRecommendedFlow();
+    const saved = await app.request(`/flows/${source.id}/draft`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definition, revision: sourceDraft.draft_revision }),
+    });
+    expect(saved.status).toBe(200);
+
+    const duplicated = await app.request(`/flows/${source.id}/duplicate`, { method: 'POST' });
+    expect(duplicated.status).toBe(201);
+    const { flow, draft } = await duplicated.json() as any;
+    expect(flow).toMatchObject({ name: 'Copy of Default', is_default: 0, active_version_id: null });
+    expect(draft).toMatchObject({ flow_id: flow.id, version: 1, state: 'draft', definition });
+    expect((await app.request(`/flows/${flow.id}`)).status).toBe(200);
+    const listed = await app.request('/flows');
+    const listedCopy = (await listed.json() as any).flows.find((candidate: any) => candidate.id === flow.id);
+    expect(listedCopy.draftVersion).toMatchObject({ id: draft.id, definition });
+    expect((await app.request('/flows/99999/duplicate', { method: 'POST' })).status).toBe(404);
+  });
+
   test('renames a Flow and validates its name', async () => {
     const flow = getDb().query<{ id: number }, []>("SELECT id FROM flows WHERE name = 'Default'").get()!;
     const renamed = await app.request(`/flows/${flow.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: '  Release train  ' }) });

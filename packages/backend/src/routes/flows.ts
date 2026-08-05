@@ -46,7 +46,14 @@ function appendDraftActions(history: FlowVersionAction[], actions: FlowVersionAc
 flows.get('/', (c) => {
   const db = getDb();
   const rows = db.query<Flow, []>('SELECT * FROM flows ORDER BY is_default DESC, name ASC').all();
-  return c.json({ flows: rows.map((flow) => ({ ...flow, activeVersion: flow.active_version_id ? getFlowVersion(flow.active_version_id) : null })) });
+  return c.json({ flows: rows.map((flow) => {
+    const draft = db.query<FlowVersionRow, [number]>("SELECT * FROM flow_versions WHERE flow_id = ? AND state = 'draft'").get(flow.id);
+    return {
+      ...flow,
+      activeVersion: flow.active_version_id ? getFlowVersion(flow.active_version_id) : null,
+      draftVersion: draft ? parseFlowVersion(draft) : null,
+    };
+  }) });
 });
 
 flows.post('/', async (c) => {
@@ -62,6 +69,27 @@ flows.post('/', async (c) => {
     return { flowId, draftId: Number(draft.lastInsertRowid) };
   })();
   emitEvent('flow:changed', { flowId: result.flowId }, 'flow', result.flowId);
+  return c.json({ flow: db.query<Flow, [number]>('SELECT * FROM flows WHERE id = ?').get(result.flowId), draft: getFlowVersion(result.draftId) }, 201);
+});
+
+flows.post('/:id/duplicate', (c) => {
+  const db = getDb();
+  const id = Number(c.req.param('id'));
+  const source = db.query<Flow, [number]>('SELECT * FROM flows WHERE id = ?').get(id);
+  if (!source) return c.json({ error: 'Flow not found.' }, 404);
+
+  const sourceDraft = db.query<FlowVersionRow, [number]>("SELECT * FROM flow_versions WHERE flow_id = ? AND state = 'draft'").get(id);
+  const sourceVersion = sourceDraft ?? (source.active_version_id ? db.query<FlowVersionRow, [number]>('SELECT * FROM flow_versions WHERE id = ?').get(source.active_version_id) : null);
+  const definition = sourceVersion ? sourceVersion.definition_json : JSON.stringify(createBlankFlow());
+  const name = `Copy of ${source.name}`.slice(0, 200);
+  const result = db.transaction(() => {
+    const inserted = db.query('INSERT INTO flows (name, is_default) VALUES (?, 0)').run(name);
+    const flowId = Number(inserted.lastInsertRowid);
+    const draft = db.query("INSERT INTO flow_versions (flow_id, version, state, definition_json) VALUES (?, 1, 'draft', ?)").run(flowId, definition);
+    return { flowId, draftId: Number(draft.lastInsertRowid) };
+  })();
+
+  emitEvent('flow:changed', { flowId: result.flowId, sourceFlowId: id, action: 'duplicated' }, 'flow', result.flowId);
   return c.json({ flow: db.query<Flow, [number]>('SELECT * FROM flows WHERE id = ?').get(result.flowId), draft: getFlowVersion(result.draftId) }, 201);
 });
 

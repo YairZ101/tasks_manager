@@ -134,8 +134,60 @@ describe('FlowLibrary', () => {
     const preview = document.querySelector('.flow-mini');
     expect(preview).not.toBeNull();
     expect(preview?.querySelector('[data-block-icon="decision"] svg')).toHaveAttribute('data-icon', 'question');
-    expect(preview?.querySelectorAll('[data-block-icon] svg').length).toBeGreaterThan(1);
-    expect(preview).toHaveTextContent('');
+    expect(preview?.querySelectorAll('[data-block-icon] svg').length).toBe(createRecommendedFlow().nodes.length);
+    expect(preview?.querySelectorAll('.flow-mini-links path').length).toBe(createRecommendedFlow().connections.length);
+    expect(preview?.querySelector('.flow-mini-node-name')).not.toBeInTheDocument();
+    expect(preview?.querySelectorAll('.flow-mini-links .is-forward')).toHaveLength(9);
+    expect(preview?.querySelectorAll('.flow-mini-links .is-feedback')).toHaveLength(3);
+    expect(preview?.querySelector('.flow-mini-links path')).toHaveAttribute('stroke-width', '3');
+    expect(preview?.querySelectorAll('marker')).toHaveLength(1);
+    expect(preview?.querySelector('marker')).toHaveAttribute('markerUnits', 'userSpaceOnUse');
+    expect(preview?.querySelector('marker')).toHaveAttribute('markerWidth', '12');
+    expect(preview?.querySelector('marker path')).toHaveAttribute('fill', '#577166');
+  });
+
+  test('keeps SVG arrow markers unique across Flow cards', () => {
+    const definition = createRecommendedFlow();
+    useAppStore.setState({ flows: [
+      { id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 1, activeVersion: { version: 1, definition } },
+      { id: 2, name: 'Release delivery', is_default: 0, active_version_id: 2, activeVersion: { version: 1, definition } },
+    ] as any });
+    render(<FlowLibrary />);
+
+    const cards = screen.getAllByRole('button', { name: /^Edit / }).map((button) => button.closest('article')!);
+    const markerIds = cards.map((card) => card.querySelector('marker')?.id);
+    expect(new Set(markerIds).size).toBe(cards.length);
+    cards.forEach((card, index) => {
+      expect(card.querySelector('.flow-mini-links path')).toHaveAttribute('marker-end', `url(#${markerIds[index]})`);
+    });
+  });
+
+  test('keeps Note blocks out of the executable Flow preview', () => {
+    const definition = createRecommendedFlow();
+    definition.nodes.push({ id: 'delivery-note', type: 'note', typeVersion: 1, position: { x: 0, y: 0 }, config: { text: 'Release context', color: 'amber', width: 220, height: 120 } });
+    useAppStore.setState({ flows: [{ id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 1, activeVersion: { version: 1, definition } } as any] });
+    render(<FlowLibrary />);
+
+    const preview = document.querySelector('.flow-mini');
+    expect(preview?.querySelector('[data-node-id="delivery-note"]')).not.toBeInTheDocument();
+    expect(preview?.querySelectorAll('.flow-mini-node')).toHaveLength(createRecommendedFlow().nodes.length);
+  });
+
+  test('lays out the preview from connections instead of canvas positions', () => {
+    const definition = createRecommendedFlow();
+    definition.nodes = definition.nodes.map((node) => ({ ...node, position: { x: 0, y: 0 } }));
+    useAppStore.setState({ flows: [{ id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 1, activeVersion: { version: 1, definition } } as any] });
+    render(<FlowLibrary />);
+
+    const preview = document.querySelector('.flow-mini');
+    const transforms = [...(preview?.querySelectorAll('.flow-mini-node') ?? [])].map((node) => node.getAttribute('transform'));
+    expect(new Set(transforms).size).toBe(definition.nodes.length);
+    expect(preview?.querySelector('[data-node-id="final-decision"]')).toHaveAttribute('transform', 'translate(504 34)');
+    expect(preview?.querySelector('[data-node-id="test-decision"]')).toHaveAttribute('transform', 'translate(504 116)');
+    expect(preview?.querySelector('.flow-mini-graph')).toHaveAttribute('viewBox', '0 0 780 224');
+    expect(preview?.querySelector('[data-connection-id="c4"]')).toHaveAttribute('d', expect.stringContaining('V 108 H'));
+    expect(preview?.querySelector('[data-connection-id="c8"]')).toHaveAttribute('d', expect.stringContaining('V 190 H'));
+    expect(preview?.querySelector('[data-connection-id="c11"]')).toHaveAttribute('d', expect.stringContaining('V 108 H'));
   });
 
   test('shows the copied draft graph in the Flow library', () => {

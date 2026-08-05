@@ -40,6 +40,39 @@ export function BlockIcon({ type, size = 18 }: { type: BlockIconType; size?: num
   return <Icon name={BLOCK_ICON_NAMES[type]} size={size} />;
 }
 
+interface FlowPreviewSvgProps {
+  arrowSize: number;
+  connectionWidth: number;
+  height: number;
+  iconSize: number;
+  markerId: string;
+  nodeSize: number;
+  nodes: Array<{ id: string; type: BlockIconType; x: number; y: number }>;
+  paths: Array<{ id: string; kind: 'forward' | 'feedback'; path: string }>;
+  width: number;
+}
+
+export function FlowPreviewSvg({ arrowSize, connectionWidth, height, iconSize, markerId, nodeSize, nodes, paths: connections, width }: FlowPreviewSvgProps) {
+  return <svg className="flow-mini-graph" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet">
+    <defs>
+      <marker id={markerId} viewBox="0 0 10 10" refX="9" refY="5" markerUnits="userSpaceOnUse" markerWidth={arrowSize} markerHeight={arrowSize} orient="auto-start-reverse">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#577166" />
+      </marker>
+    </defs>
+    <g className="flow-mini-links">
+      {connections.map((connection) => <path key={connection.id} data-connection-id={connection.id} className={`is-${connection.kind}`} d={connection.path} strokeWidth={connectionWidth} markerEnd={`url(#${markerId})`} />)}
+    </g>
+    {nodes.map((node) => <g key={node.id} className={`flow-mini-node ${node.type}`} data-node-id={node.id} transform={`translate(${node.x} ${node.y})`}>
+      <rect width={nodeSize} height={nodeSize} rx="5" />
+      <foreignObject width={nodeSize} height={nodeSize}>
+        <div className="flow-mini-node-icon" data-block-icon={node.type}>
+          <BlockIcon type={node.type} size={iconSize} />
+        </div>
+      </foreignObject>
+    </g>)}
+  </svg>;
+}
+
 export function AppMark({ variant = 'default' }: { variant?: 'default' | 'large' | 'loading' }) {
   const className = variant === 'loading' ? 'boot-mark' : `brand-mark${variant === 'large' ? ' large' : ''}`;
   return <span className={className} aria-hidden="true">F</span>;

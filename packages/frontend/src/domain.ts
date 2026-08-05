@@ -35,7 +35,7 @@ export interface FlowVersion {
 }
 
 export interface Flow {
-  id: number; name: string; is_default: number; active_version_id: number | null; activeVersion: FlowVersion | null;
+  id: number; name: string; is_default: number; active_version_id: number | null; activeVersion: FlowVersion | null; draftVersion?: FlowVersion | null;
   created_at: string; updated_at: string;
 }
 

@@ -12,6 +12,7 @@ export default function FlowLibrary() {
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<Flow | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [duplicatingFlowId, setDuplicatingFlowId] = useState<number | null>(null);
   const [editingNameFor, setEditingNameFor] = useState<number | null>(null);
   const [nameDraft, setNameDraft] = useState('');
   const [renaming, setRenaming] = useState(false);
@@ -45,6 +46,22 @@ export default function FlowLibrary() {
       setDeleting(false);
     }
   };
+  const duplicate = async (flow: Flow) => {
+    if (duplicatingFlowId !== null) return;
+    setDuplicatingFlowId(flow.id);
+    try {
+      const { flow: duplicate } = await api.duplicateFlow(flow.id);
+      editFlow(duplicate.id);
+      void refreshFlows().catch((error) => {
+        toast.error(error instanceof Error ? `Flow duplicated, but the library could not refresh: ${error.message}` : 'Flow duplicated, but the library could not refresh.');
+      });
+      toast.success(`Created ${duplicate.name}.`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Could not duplicate the Flow.');
+    } finally {
+      setDuplicatingFlowId(null);
+    }
+  };
   const beginRename = (flow: Flow) => {
     setNameDraft(flow.name);
     setEditingNameFor(flow.id);
@@ -74,15 +91,18 @@ export default function FlowLibrary() {
   return <div className="flow-library">
     <div className="library-intro"><div><span className="eyebrow">VERSIONED AUTOMATION</span><h2>Design how outcomes happen.</h2><p>Tasks stay simple. Flows hold the logic—agents, checks, human decisions, and explicit results.</p></div><button className="button primary" onClick={() => setCreateOpen(true)}><Icon name="plus" />New Flow</button></div>
     <div className="flow-grid">
-      {flows.map((flow) => <article key={flow.id} className="flow-card">
-        <div className="flow-card-top"><span className="flow-symbol"><Icon name="nodes" size={21} /></span><div className="flow-card-heading"><h3>{editingNameFor === flow.id ? <input ref={nameInputRef} className="library-flow-name-input" aria-label={`Flow name for ${flow.name}`} value={nameDraft} disabled={renaming} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => void commitRename(flow)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); cancelRename(); } }} /> : <button type="button" className="library-flow-name-button" aria-label={`Rename flow ${flow.name}`} title="Rename flow" onClick={() => beginRename(flow)}><span>{flow.name}</span><Icon name="edit" size={13} /></button>}</h3>{flow.activeVersion && <span className="flow-version">v{flow.activeVersion.version}</span>}</div></div>
+      {flows.map((flow) => {
+        const previewVersion = flow.activeVersion ?? flow.draftVersion;
+        return <article key={flow.id} className="flow-card">
+        <div className="flow-card-top"><span className="flow-symbol"><Icon name="nodes" size={21} /></span><div className="flow-card-heading"><h3>{editingNameFor === flow.id ? <input ref={nameInputRef} className="library-flow-name-input" aria-label={`Flow name for ${flow.name}`} value={nameDraft} disabled={renaming} onChange={(event) => setNameDraft(event.target.value)} onBlur={() => void commitRename(flow)} onKeyDown={(event) => { if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } if (event.key === 'Escape') { event.preventDefault(); cancelRename(); } }} /> : <button type="button" className="library-flow-name-button" aria-label={`Rename flow ${flow.name}`} title="Rename flow" onClick={() => beginRename(flow)}><span>{flow.name}</span><Icon name="edit" size={13} /></button>}</h3>{previewVersion && <span className="flow-version">{flow.activeVersion ? `v${previewVersion.version}` : `Draft v${previewVersion.version}`}</span>}</div></div>
         <button type="button" className="flow-card-open" onClick={() => editFlow(flow.id)} aria-label={`Edit ${flow.name}`}>
           <div className="flow-mini">
-            {(flow.activeVersion?.definition.nodes ?? []).filter((node) => node.type !== 'note').slice(0, 7).map((node, index) => <span key={node.id} className={node.type} data-block-icon={node.type}>{index > 0 && <i />}<BlockIcon type={node.type} /></span>)}
+            {(previewVersion?.definition.nodes ?? []).filter((node) => node.type !== 'note').slice(0, 7).map((node, index) => <span key={node.id} className={node.type} data-block-icon={node.type}>{index > 0 && <i />}<BlockIcon type={node.type} /></span>)}
           </div>
         </button>
-        <footer><div className="flow-card-actions"><button className="text-danger" disabled={Boolean(flow.is_default)} title={flow.is_default ? 'Set another published Flow as default before deleting this one.' : undefined} onClick={() => setDeleteTarget(flow)}><Icon name="trash" size={15} />Delete Flow</button></div>{flow.is_default ? <span className="default-flow-status"><Icon name="check" size={14} />Default</span> : flow.active_version_id && <button className="text-button" onClick={async () => { await api.makeDefault(flow.id); await refreshFlows(); toast.success('Default Flow updated.'); }}>Make default</button>}</footer>
-      </article>)}
+        <footer><div className="flow-card-actions"><button className="text-button" disabled={duplicatingFlowId !== null} onClick={() => void duplicate(flow)}><Icon name="copy" size={15} />{duplicatingFlowId === flow.id ? 'Duplicating…' : 'Duplicate Flow'}</button><button className="text-danger" disabled={Boolean(flow.is_default)} title={flow.is_default ? 'Set another published Flow as default before deleting this one.' : undefined} onClick={() => setDeleteTarget(flow)}><Icon name="trash" size={15} />Delete Flow</button></div>{flow.is_default ? <span className="default-flow-status"><Icon name="check" size={14} />Default</span> : flow.active_version_id && <button className="text-button" onClick={async () => { await api.makeDefault(flow.id); await refreshFlows(); toast.success('Default Flow updated.'); }}><Icon name="check" size={15} />Make default</button>}</footer>
+      </article>;
+      })}
       <button className="flow-card add-flow" onClick={() => setCreateOpen(true)}><span><Icon name="plus" size={25} /></span><strong>Create another Flow</strong><small>Start from the recommended delivery graph</small></button>
     </div>
     {createOpen && <FlowComposer onClose={() => setCreateOpen(false)} onCreate={create} />}

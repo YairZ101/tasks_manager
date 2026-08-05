@@ -5,7 +5,7 @@ import FlowLibrary from './FlowLibrary.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
-vi.mock('../api/client.js', () => ({ api: { createFlow: vi.fn(), deleteFlow: vi.fn(), updateFlow: vi.fn() } }));
+vi.mock('../api/client.js', () => ({ api: { createFlow: vi.fn(), duplicateFlow: vi.fn(), deleteFlow: vi.fn(), updateFlow: vi.fn() } }));
 
 describe('FlowLibrary', () => {
   beforeEach(() => {
@@ -73,7 +73,9 @@ describe('FlowLibrary', () => {
     expect(within(deliveryCard).queryByText(/published/i)).not.toBeInTheDocument();
     expect(within(deliveryCard).queryByText('0')).not.toBeInTheDocument();
     expect(within(deliveryCard).getByText('v1')).toBeVisible();
-    expect(within(deliveryCard).getByRole('button', { name: 'Make default' })).toBeVisible();
+    const makeDefault = within(deliveryCard).getByRole('button', { name: 'Make default' });
+    expect(makeDefault).toBeVisible();
+    expect(makeDefault.querySelector('[data-icon="check"]')).toBeInTheDocument();
     const defaultCard = screen.getByRole('button', { name: 'Edit Standard delivery' }).closest('article')!;
     expect(within(defaultCard).getByText('Default')).toHaveClass('default-flow-status');
     expect(within(defaultCard).getByText('v3')).toBeVisible();
@@ -134,6 +136,28 @@ describe('FlowLibrary', () => {
     expect(preview?.querySelector('[data-block-icon="decision"] svg')).toHaveAttribute('data-icon', 'question');
     expect(preview?.querySelectorAll('[data-block-icon] svg').length).toBeGreaterThan(1);
     expect(preview).toHaveTextContent('');
+  });
+
+  test('shows the copied draft graph in the Flow library', () => {
+    useAppStore.setState({ flows: [{ id: 8, name: 'Copy of Standard delivery', is_default: 0, active_version_id: null, activeVersion: null, draftVersion: { id: 12, version: 1, definition: createRecommendedFlow() } } as any] });
+    render(<FlowLibrary />);
+
+    const copyCard = screen.getByRole('button', { name: 'Edit Copy of Standard delivery' }).closest('article')!;
+    expect(within(copyCard).getByText('Draft v1')).toBeVisible();
+    expect(copyCard.querySelectorAll('[data-block-icon]').length).toBeGreaterThan(1);
+  });
+
+  test('duplicates a Flow and opens the new draft editor', async () => {
+    const flow = { id: 8, name: 'Release delivery', is_default: 0, active_version_id: null } as any;
+    useAppStore.setState({ flows: [flow] });
+    vi.mocked(api.duplicateFlow).mockResolvedValue({ flow: { id: 42, name: 'Copy of Release delivery' } as any, draft: {} as any });
+    render(<FlowLibrary />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Duplicate Flow' }));
+
+    await waitFor(() => expect(api.duplicateFlow).toHaveBeenCalledWith(8));
+    expect(useAppStore.getState()).toMatchObject({ editingFlowId: 42, section: 'flows' });
+    expect(useAppStore.getState().refreshFlows).toHaveBeenCalledTimes(1);
   });
 
   test('confirms and deletes a non-default Flow', async () => {

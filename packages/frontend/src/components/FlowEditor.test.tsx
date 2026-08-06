@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { createRecommendedFlow } from '@flow/core';
-import FlowEditor, { appendVersionActions, COMPACT_ZOOM_THRESHOLD, DETAIL_ZOOM_THRESHOLD, FLOW_NODE_HEIGHTS, MIN_FLOW_ZOOM, formatActionTimestamp, getFlowZoomMode, getVersionChanges } from './FlowEditor.js';
+import { createRecommendedFlow, getNodeOutcomes } from '@flow/core';
+import FlowEditor, { appendVersionActions, COMPACT_ZOOM_THRESHOLD, DETAIL_ZOOM_THRESHOLD, FLOW_LAYOUT_COLUMN_GAP, FLOW_LAYOUT_NODE_WIDTH, FLOW_NODE_HEIGHTS, MIN_FLOW_ZOOM, createFlowAutoLayout, formatActionTimestamp, getFlowZoomMode, getVersionChanges, toCanvas } from './FlowEditor.js';
+import { FLOW_CONNECTOR_CLEARANCE, connectorCrossesRect, connectorSegmentsOverlap, connectorSourcePortTop, createConnectorPath, routeFlowConnectors } from './flowRouting.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
@@ -60,6 +61,168 @@ describe('FlowEditor', () => {
     expect(appendVersionActions([firstMove], [finalMove, rename])).toEqual([finalMove, rename]);
   });
 
+  test('creates a compact deterministic topology and docks notes beneath the graph', () => {
+    const definition = createRecommendedFlow();
+    definition.nodes.push({ id: 'layout-note', type: 'note', typeVersion: 1, position: { x: 9999, y: 9999 }, config: { text: 'Keep this visible', color: 'amber', width: 260, height: 120 } });
+
+    const positions = createFlowAutoLayout(definition);
+    const begin = positions.get('begin')!;
+    const planning = positions.get('planning')!;
+    const review = positions.get('plan-decision')!;
+    const tests = positions.get('tests')!;
+    const failedChecks = positions.get('test-decision')!;
+    const finalReview = positions.get('final-decision')!;
+    const openPr = positions.get('open-pr')!;
+    const note = positions.get('layout-note')!;
+
+    expect(planning.x - begin.x).toBe(FLOW_LAYOUT_NODE_WIDTH + FLOW_LAYOUT_COLUMN_GAP);
+    expect(review.x).toBeGreaterThan(planning.x);
+    expect(tests.x).toBeGreaterThan(review.x);
+    expect(failedChecks.x).toBe(tests.x + FLOW_LAYOUT_NODE_WIDTH + FLOW_LAYOUT_COLUMN_GAP);
+    expect(finalReview.y).toBe(tests.y);
+    expect(openPr.y).toBe(finalReview.y);
+    expect(failedChecks.y).toBeGreaterThan(finalReview.y);
+    expect(note.y).toBeGreaterThan(failedChecks.y);
+    expect(createFlowAutoLayout(definition)).toEqual(positions);
+  });
+
+  test('routes every connector through a separate obstacle-free lane', () => {
+    const definition = createRecommendedFlow();
+    const arrangedPositions = createFlowAutoLayout(definition);
+    const routingNodes = definition.nodes.map((node) => ({
+      id: node.id,
+      position: arrangedPositions.get(node.id) ?? node.position,
+      width: node.type === 'note' ? node.config.width ?? 220 : FLOW_LAYOUT_NODE_WIDTH,
+      height: node.type === 'note' ? node.config.height ?? 120 : FLOW_NODE_HEIGHTS[node.type],
+      flowNode: node,
+    }));
+    const routingEdges = definition.connections.map((connection) => ({
+      id: connection.id,
+      source: connection.sourceNodeId,
+      sourceHandle: connection.sourceOutcomeId,
+      target: connection.targetNodeId,
+    }));
+    const plan = routeFlowConnectors(routingNodes, routingEdges);
+
+    expect(plan.routes.size).toBe(definition.connections.length);
+    for (const edge of routingEdges) {
+      const route = plan.routes.get(edge.id)!;
+      const sourceNode = routingNodes.find((node) => node.id === edge.source)!;
+      const targetNode = routingNodes.find((node) => node.id === edge.target)!;
+      const outcomes = getNodeOutcomes(sourceNode.flowNode);
+      const outcomeIndex = outcomes.indexOf(edge.sourceHandle);
+
+      expect(route.points[0].x).toBe(sourceNode.position.x + sourceNode.width);
+      expect(route.points[0].y).toBeCloseTo(sourceNode.position.y + sourceNode.height * (connectorSourcePortTop(outcomeIndex, outcomes.length, sourceNode.height) / 100));
+      expect(route.points.at(-1)!.x).toBe(targetNode.position.x);
+      expect(route.points.at(-1)!.y).toBeCloseTo(targetNode.position.y + targetNode.height / 2);
+      expect(route.targetHandle).toBe('input');
+      expect(route.points[0].y).toBe(route.points[1].y);
+      expect(route.points.at(-2)!.y).toBe(route.points.at(-1)!.y);
+      for (const node of routingNodes) {
+        if (node.id === edge.source || node.id === edge.target) continue;
+        expect(connectorCrossesRect(route.points, {
+          left: node.position.x - FLOW_CONNECTOR_CLEARANCE,
+          top: node.position.y - FLOW_CONNECTOR_CLEARANCE,
+          right: node.position.x + node.width + FLOW_CONNECTOR_CLEARANCE,
+          bottom: node.position.y + node.height + FLOW_CONNECTOR_CLEARANCE,
+        })).toBe(false);
+      }
+    }
+
+    for (let first = 0; first < routingEdges.length; first += 1) {
+      for (let second = first + 1; second < routingEdges.length; second += 1) {
+        const overlap = connectorSegmentsOverlap(plan.routes.get(routingEdges[first].id)!.points, plan.routes.get(routingEdges[second].id)!.points);
+        expect(overlap).toBe(routingEdges[first].target === routingEdges[second].target);
+      }
+    }
+
+    const graphTop = Math.min(...routingNodes.map((node) => node.position.y - FLOW_CONNECTOR_CLEARANCE));
+    const graphBottom = Math.max(...routingNodes.map((node) => node.position.y + node.height + FLOW_CONNECTOR_CLEARANCE));
+    const feedbackRoutes = routingEdges
+      .filter((edge) => routingNodes.find((node) => node.id === edge.source)!.position.x >= routingNodes.find((node) => node.id === edge.target)!.position.x)
+      .map((edge) => plan.routes.get(edge.id)!);
+    const feedbackSides = feedbackRoutes.map((route) => Math.min(...route.points.map((point) => point.y)) < graphTop ? 'top' : Math.max(...route.points.map((point) => point.y)) > graphBottom ? 'bottom' : 'inside');
+    expect(new Set(feedbackSides)).toEqual(new Set([feedbackSides[0]]));
+    expect(feedbackSides[0]).not.toBe('inside');
+    expect([...plan.routes.values()].some((route) => route.path.includes(' A 6 6 '))).toBe(true);
+
+    expect(createConnectorPath([{ x: 0, y: 20 }, { x: 100, y: 20 }], [{ x: 50, y: 20 }]))
+      .toContain('L 44 20 A 6 6 0 0 1 56 20');
+    expect(createConnectorPath([{ x: 100, y: 20 }, { x: 0, y: 20 }], [{ x: 50, y: 20 }]))
+      .toContain('L 56 20 A 6 6 0 0 0 44 20');
+    const { edges } = toCanvas(definition);
+    expect(edges.every((edge) => edge.type === 'flowConnector' && typeof edge.data?.routePath === 'string')).toBe(true);
+  });
+
+  test('shows one semantic input port without additional fan-in controls', async () => {
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    const planning = await screen.findByLabelText('Agent block: Planning');
+    const development = await screen.findByLabelText('Agent block: Development');
+    const planReview = await screen.findByLabelText('Decision block: Plan review');
+
+    expect(planning.querySelectorAll('.input-handle')).toHaveLength(1);
+    expect(development.querySelectorAll('.input-handle')).toHaveLength(1);
+    expect(planReview.querySelectorAll('.input-handle')).toHaveLength(1);
+    expect(document.querySelector('.input-fan-in')).toBeNull();
+
+    const expectAlignedOutcomes = (block: HTMLElement, labels: string[]) => {
+      const outcomeRows = [...block.querySelectorAll<HTMLElement>('.node-outcome-row')];
+      const outputHandles = [...block.querySelectorAll<HTMLElement>('.output-handle')];
+      expect(outcomeRows.map((row) => row.textContent)).toEqual(labels);
+      expect(outputHandles).toHaveLength(outcomeRows.length);
+      outcomeRows.forEach((row, index) => expect(row.style.top).toBe(outputHandles[index].style.top));
+      expect(outcomeRows.every((row) => Number.parseFloat(row.style.top) > 50)).toBe(true);
+    };
+    expectAlignedOutcomes(planning, ['completed', 'failed', 'timed out']);
+    expectAlignedOutcomes(development, ['completed', 'failed', 'timed out']);
+    expectAlignedOutcomes(planReview, ['approved', 'changes']);
+
+    const planningPortTops = [0, 1, 2].map((index) => connectorSourcePortTop(index, 3, FLOW_NODE_HEIGHTS.agent));
+    expect((planningPortTops[1] - planningPortTops[0]) * FLOW_NODE_HEIGHTS.agent / 100).toBeCloseTo(24);
+    expect(FLOW_NODE_HEIGHTS.agent - planningPortTops[2] * FLOW_NODE_HEIGHTS.agent / 100).toBeCloseTo(20);
+    const decisionLastPort = connectorSourcePortTop(1, 2, FLOW_NODE_HEIGHTS.decision);
+    expect(FLOW_NODE_HEIGHTS.decision - decisionLastPort * FLOW_NODE_HEIGHTS.decision / 100).toBeCloseTo(20);
+  });
+
+  test('routes around manually positioned blocks without sharing connector segments', () => {
+    const definition = createRecommendedFlow();
+    const routingNodes = definition.nodes.map((node) => ({
+      id: node.id,
+      position: node.position,
+      width: node.type === 'note' ? node.config.width ?? 220 : FLOW_LAYOUT_NODE_WIDTH,
+      height: node.type === 'note' ? node.config.height ?? 120 : FLOW_NODE_HEIGHTS[node.type],
+      flowNode: node,
+    }));
+    const routingEdges = definition.connections.map((connection) => ({
+      id: connection.id,
+      source: connection.sourceNodeId,
+      sourceHandle: connection.sourceOutcomeId,
+      target: connection.targetNodeId,
+    }));
+    const plan = routeFlowConnectors(routingNodes, routingEdges);
+
+    for (const edge of routingEdges) {
+      const route = plan.routes.get(edge.id)!;
+      for (const node of routingNodes) {
+        if (node.id === edge.source || node.id === edge.target) continue;
+        expect(connectorCrossesRect(route.points, {
+          left: node.position.x,
+          top: node.position.y,
+          right: node.position.x + node.width,
+          bottom: node.position.y + node.height,
+        })).toBe(false);
+      }
+    }
+
+    for (let first = 0; first < routingEdges.length; first += 1) {
+      for (let second = first + 1; second < routingEdges.length; second += 1) {
+        const overlap = connectorSegmentsOverlap(plan.routes.get(routingEdges[first].id)!.points, plan.routes.get(routingEdges[second].id)!.points);
+        expect(overlap).toBe(routingEdges[first].target === routingEdges[second].target);
+      }
+    }
+  });
+
   test('opens an immutable published version in read-only mode', async () => {
     const first = { id: 2, flow_id: 1, version: 1, state: 'published', draft_revision: 0, definition: createRecommendedFlow(), compiled: createRecommendedFlow(), published_at: '2026-07-01T12:00:00Z' } as any;
     const current = { ...first, id: 3, version: 2, published_at: '2026-08-01T12:00:00Z' };
@@ -72,7 +235,7 @@ describe('FlowEditor', () => {
     expect(screen.queryByText('Published version 1')).not.toBeInTheDocument();
     const picker = screen.getByRole('combobox', { name: 'Flow version' });
     const historyButton = screen.getByRole('button', { name: 'Version history' });
-    const activateButton = screen.getByRole('button', { name: 'Activate' });
+    const activateButton = await screen.findByRole('button', { name: 'Activate' });
     expect(activateButton).toHaveAttribute('data-toolbar-action', 'activate');
     expect(activateButton.querySelector('[data-icon="check"]')).toBeInTheDocument();
     expect(picker).toHaveValue('2');
@@ -96,6 +259,7 @@ describe('FlowEditor', () => {
     expect(screen.getByRole('option', { name: /^v2 ·/ })).toBeInTheDocument();
     expect(useAppStore.getState().refreshFlows).toHaveBeenCalled();
     expect(screen.queryByRole('button', { name: 'Blocks' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Automatically arrange flow' })).not.toBeInTheDocument();
     const readOnlyIndicator = screen.getByRole('status', { name: 'Read only' });
     expect(readOnlyIndicator).toHaveClass('editor-read-only-indicator');
     expect(readOnlyIndicator.querySelector('[data-icon="lock"]')).toBeInTheDocument();
@@ -136,6 +300,8 @@ describe('FlowEditor', () => {
     expect(historyButton.querySelector('[data-icon="history"]')).toHaveAttribute('width', '18');
     expect(publishButton).toHaveAttribute('data-toolbar-action', 'publish');
     expect(publishButton.querySelector('[data-icon="publish"]')).toBeInTheDocument();
+    const arrangeButton = screen.getByRole('button', { name: 'Automatically arrange flow' });
+    expect(arrangeButton.parentElement).toHaveClass('canvas-edit-actions');
     const draftActions = Array.from(historyButton.parentElement!.children);
     expect(draftActions[0]).toBe(historyButton);
     expect(draftActions[1]).toBe(picker.parentElement);
@@ -284,7 +450,7 @@ describe('FlowEditor', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Blocks' }));
     const library = screen.getByRole('complementary', { name: 'Block library' });
     expect(library).toHaveClass('panel-open');
-    expect(screen.getByRole('button', { name: 'Blocks' }).parentElement).toHaveClass('editor-main');
+    expect(screen.getByRole('button', { name: 'Blocks' }).parentElement?.parentElement).toHaveClass('editor-main');
     fireEvent.click(within(library).getByRole('button', { name: 'Add Agent block' }));
 
     expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
@@ -294,6 +460,23 @@ describe('FlowEditor', () => {
     expect(await screen.findByText('Saved')).toBeVisible();
     fireEvent.click(screen.getByRole('button', { name: 'Version history' }));
     expect(await screen.findByText('Added Agent block')).toBeVisible();
+  });
+
+  test('arranges the draft from the canvas controls and saves the new block positions', async () => {
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    await screen.findByLabelText('Decision block: Plan review');
+
+    const arrangeButton = screen.getByRole('button', { name: 'Automatically arrange flow' });
+    expect(arrangeButton.parentElement).toHaveClass('canvas-edit-actions');
+    expect(arrangeButton.querySelector('[data-icon="layout"]')).toBeInTheDocument();
+    fireEvent.click(arrangeButton);
+
+    expect(screen.getByText('Unsaved changes')).toBeVisible();
+    await waitFor(() => expect(vi.mocked(api.saveDraft).mock.calls.some(([, definition]) => definition?.nodes?.some((node) => node.id === 'planning'))).toBe(true), { timeout: 2_000 });
+    const savedDefinition = vi.mocked(api.saveDraft).mock.calls.find(([, definition]) => definition?.nodes?.some((node) => node.id === 'planning'))?.[1];
+    const savedNodes = new Map(savedDefinition?.nodes.map((node) => [node.id, node]));
+    expect(savedNodes.get('planning')!.position.x).toBeGreaterThan(savedNodes.get('begin')!.position.x);
+    expect(savedNodes.get('plan-decision')!.position.x).toBeGreaterThan(savedNodes.get('planning')!.position.x);
   });
 
   test('keeps the compact canvas clear until a block is selected', async () => {

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import {
   ReactFlow, ReactFlowProvider, Background, Controls, MiniMap, Handle, Position,
-  addEdge, useEdgesState, useNodesState, useReactFlow,
-  type Connection, type Edge, type Node, type NodeProps,
+  addEdge, BaseEdge, getSmoothStepPath, useEdgesState, useNodesState, useReactFlow,
+  type Connection, type Edge, type EdgeProps, type Node, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
 import { AGENT_PRESETS, createAgentConfig, getNodeOutcomes, validateFlow, type FlowDefinition, type FlowNode } from '@flow/core';
@@ -10,6 +10,7 @@ import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import type { FlowVersion, FlowVersionAction } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
+import { connectorSourcePortTop, routeFlowConnectors } from './flowRouting.js';
 import { BlockIcon, Icon } from './Icon.js';
 
 type CanvasNode = Node<{ flowNode: FlowNode }, 'flowBlock'>;
@@ -29,6 +30,11 @@ export const FLOW_NODE_HEIGHTS: Record<Exclude<FlowNode['type'], 'note'>, number
   decision: 154,
   result: 142,
 };
+export const FLOW_LAYOUT_NODE_WIDTH = 244;
+export const FLOW_LAYOUT_COLUMN_GAP = 148;
+export const FLOW_LAYOUT_ROW_GAP = 84;
+const FLOW_LAYOUT_MARGIN = 80;
+const FLOW_LAYOUT_NOTE_GAP = 28;
 
 const defaultViewport: EditorViewport = { x: 30, y: 120, zoom: 0.86 };
 
@@ -190,25 +196,154 @@ function BlockNode({ data, selected }: NodeProps<CanvasNode>) {
   }
   const outcomes = getNodeOutcomes(flowNode);
   const name = 'name' in flowNode.config ? flowNode.config.name : flowNode.type;
+  const nodeHeight = FLOW_NODE_HEIGHTS[flowNode.type];
+  const outcomeRows = outcomes.map((outcome, index) => ({ outcome, top: connectorSourcePortTop(index, outcomes.length, nodeHeight) }));
   return <div className={`canvas-node type-${flowNode.type} ${selected ? 'selected' : ''}`} title={`${typeMeta[flowNode.type].label}: ${name}`} aria-label={`${typeMeta[flowNode.type].label} block: ${name}`}>
-    {flowNode.type !== 'begin' && <Handle type="target" position={Position.Left} className="input-handle" />}
+    {flowNode.type !== 'begin' && <Handle id="input" type="target" position={Position.Left} className="input-handle" style={{ top: '50%' }} />}
+    {outcomeRows.map(({ outcome, top }) => <Handle key={outcome} id={outcome} type="source" position={Position.Right} className="output-handle" style={{ top: `${top}%` }} />)}
     <div className="node-cap"><span><BlockIcon type={flowNode.type} /></span><em>{typeMeta[flowNode.type].label}</em></div>
     <strong>{name}</strong>
     {flowNode.type === 'agent' && <small className="node-detail">{flowNode.config.preset.replace('-', ' ')} · {flowNode.config.effectLevel.replace('_', ' ')}</small>}
     {flowNode.type === 'check' && <code className="node-detail">{flowNode.config.command || 'No command yet'}</code>}
     {flowNode.type === 'result' && <small className="node-detail">{flowNode.config.category}</small>}
-    <div className="node-outcomes">{outcomes.map((outcome, index) => <span key={outcome}><span className="node-outcome-label">{outcome.replace('_', ' ')}</span><Handle id={outcome} type="source" position={Position.Right} style={{ top: `${((index + 1) / (outcomes.length + 1)) * 100}%` }} /></span>)}</div>
+    <div className="node-outcomes" style={{ '--outcome-count': outcomeRows.length } as CSSProperties}>{outcomeRows.map(({ outcome, top }) => <span key={outcome} className="node-outcome-row" style={{ top: `${top}%` }}><span className="node-outcome-label">{outcome.replace('_', ' ')}</span></span>)}</div>
     <SemanticSummary type={flowNode.type} name={name} />
   </div>;
 }
 
 const nodeTypes = { flowBlock: BlockNode };
 
-function toCanvas(definition: FlowDefinition): { nodes: CanvasNode[]; edges: Edge[] } {
-  return {
-    nodes: definition.nodes.map((flowNode) => ({ id: flowNode.id, type: 'flowBlock', position: flowNode.position, data: { flowNode }, style: flowNode.type === 'note' ? { width: flowNode.config.width ?? 220, height: flowNode.config.height ?? 120 } : { height: FLOW_NODE_HEIGHTS[flowNode.type] } })),
-    edges: definition.connections.map((connection) => ({ id: connection.id, source: connection.sourceNodeId, sourceHandle: connection.sourceOutcomeId, target: connection.targetNodeId, type: 'smoothstep', animated: false })),
+function FlowConnector({ id, sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition, markerEnd, markerStart, style, interactionWidth, data }: EdgeProps) {
+  const routedPath = typeof data?.routePath === 'string' ? data.routePath : null;
+  const path = routedPath ?? getSmoothStepPath({ sourceX, sourceY, sourcePosition, targetX, targetY, targetPosition })[0];
+  return <BaseEdge id={id} path={path} markerEnd={markerEnd} markerStart={markerStart} style={style} interactionWidth={interactionWidth} />;
+}
+
+const edgeTypes = { flowConnector: FlowConnector };
+
+function routeCanvasGraph(nodes: CanvasNode[], edges: Edge[]): { nodes: CanvasNode[]; edges: Edge[] } {
+  const plan = routeFlowConnectors(nodes.map((node) => {
+    const flowNode = node.data.flowNode;
+    return {
+      id: node.id,
+      position: node.position,
+      width: flowNode.type === 'note' ? flowNode.config.width ?? 220 : FLOW_LAYOUT_NODE_WIDTH,
+      height: flowNode.type === 'note' ? flowNode.config.height ?? 120 : FLOW_NODE_HEIGHTS[flowNode.type],
+      flowNode,
+    };
+  }), edges.map((edge) => ({ id: edge.id, source: edge.source, sourceHandle: edge.sourceHandle, target: edge.target })));
+
+  let edgesChanged = false;
+  const nextEdges = edges.map((edge) => {
+    const route = plan.routes.get(edge.id);
+    if (!route) return edge;
+    if (edge.targetHandle === route.targetHandle && edge.data?.routePath === route.path) return edge;
+    edgesChanged = true;
+    return { ...edge, targetHandle: route.targetHandle, data: { ...edge.data, routePath: route.path } };
+  });
+  return { nodes, edges: edgesChanged ? nextEdges : edges };
+}
+
+export function toCanvas(definition: FlowDefinition): { nodes: CanvasNode[]; edges: Edge[] } {
+  const nodes = definition.nodes.map((flowNode) => ({ id: flowNode.id, type: 'flowBlock' as const, position: flowNode.position, data: { flowNode }, style: flowNode.type === 'note' ? { width: flowNode.config.width ?? 220, height: flowNode.config.height ?? 120 } : { height: FLOW_NODE_HEIGHTS[flowNode.type] } }));
+  const edges = definition.connections.map((connection) => ({ id: connection.id, source: connection.sourceNodeId, sourceHandle: connection.sourceOutcomeId, target: connection.targetNodeId, type: 'flowConnector', animated: false }));
+  return routeCanvasGraph(nodes, edges);
+}
+
+/**
+ * Produces a deterministic left-to-right topology without adding a layout
+ * dependency. Back edges keep their source rank, so review loops remain easy
+ * to trace while the primary path stays forward-facing.
+ */
+export function createFlowAutoLayout(definition: FlowDefinition): Map<string, { x: number; y: number }> {
+  const executableNodes = definition.nodes.filter((node): node is Exclude<FlowNode, { type: 'note' }> => node.type !== 'note');
+  const notes = definition.nodes.filter((node) => node.type === 'note');
+  const nodeById = new Map(executableNodes.map((node) => [node.id, node]));
+  const outgoing = new Map<string, string[]>();
+  const connectionsBySource = new Map<string, FlowDefinition['connections']>();
+  const incomingCount = new Map(executableNodes.map((node) => [node.id, 0]));
+
+  for (const connection of definition.connections) {
+    if (!nodeById.has(connection.sourceNodeId) || !nodeById.has(connection.targetNodeId)) continue;
+    const targets = outgoing.get(connection.sourceNodeId) ?? [];
+    targets.push(connection.targetNodeId);
+    outgoing.set(connection.sourceNodeId, targets);
+    const sourceConnections = connectionsBySource.get(connection.sourceNodeId) ?? [];
+    sourceConnections.push(connection);
+    connectionsBySource.set(connection.sourceNodeId, sourceConnections);
+    incomingCount.set(connection.targetNodeId, (incomingCount.get(connection.targetNodeId) ?? 0) + 1);
+  }
+
+  const primaryOutcomes = ['started', 'completed', 'passed', 'approved'];
+  const primaryPath = new Set<string>();
+  let primaryCursor = executableNodes.find((node) => node.type === 'begin')?.id;
+  while (primaryCursor && !primaryPath.has(primaryCursor)) {
+    primaryPath.add(primaryCursor);
+    const candidates = connectionsBySource.get(primaryCursor) ?? [];
+    const next = [...candidates].sort((a, b) => {
+      const aPriority = primaryOutcomes.indexOf(a.sourceOutcomeId);
+      const bPriority = primaryOutcomes.indexOf(b.sourceOutcomeId);
+      return (aPriority < 0 ? primaryOutcomes.length : aPriority) - (bPriority < 0 ? primaryOutcomes.length : bPriority);
+    })[0];
+    primaryCursor = next?.targetNodeId;
+  }
+
+  const ranks = new Map<string, number>();
+  const queue: string[] = [];
+  const enqueue = (id: string, rank: number) => {
+    if (ranks.has(id)) return;
+    ranks.set(id, rank);
+    queue.push(id);
   };
+
+  for (const node of executableNodes) if (node.type === 'begin') enqueue(node.id, 0);
+  for (const node of executableNodes) if ((incomingCount.get(node.id) ?? 0) === 0) enqueue(node.id, 0);
+
+  let cursor = 0;
+  const drainQueue = () => {
+    while (cursor < queue.length) {
+      const id = queue[cursor++];
+      const nextRank = (ranks.get(id) ?? 0) + 1;
+      for (const targetId of outgoing.get(id) ?? []) enqueue(targetId, nextRank);
+    }
+  };
+  drainQueue();
+
+  for (const node of executableNodes) {
+    if (ranks.has(node.id)) continue;
+    enqueue(node.id, Math.max(0, ...ranks.values()) + 1);
+    drainQueue();
+  }
+
+  const columns = new Map<number, FlowNode[]>();
+  for (const node of executableNodes) {
+    const rank = ranks.get(node.id) ?? 0;
+    const column = columns.get(rank) ?? [];
+    column.push(node);
+    columns.set(rank, column);
+  }
+
+  const positions = new Map<string, { x: number; y: number }>();
+  let graphBottom = FLOW_LAYOUT_MARGIN;
+  for (const [rank, column] of [...columns.entries()].sort(([a], [b]) => a - b)) {
+    let y = FLOW_LAYOUT_MARGIN;
+    const orderedColumn = [...column].sort((a, b) => Number(primaryPath.has(b.id)) - Number(primaryPath.has(a.id)));
+    for (const node of orderedColumn) {
+      if (node.type === 'note') continue;
+      positions.set(node.id, { x: FLOW_LAYOUT_MARGIN + rank * (FLOW_LAYOUT_NODE_WIDTH + FLOW_LAYOUT_COLUMN_GAP), y });
+      y += FLOW_NODE_HEIGHTS[node.type] + FLOW_LAYOUT_ROW_GAP;
+    }
+    graphBottom = Math.max(graphBottom, y - FLOW_LAYOUT_ROW_GAP);
+  }
+
+  let noteX = FLOW_LAYOUT_MARGIN;
+  for (const note of notes) {
+    const width = note.config.width ?? 220;
+    positions.set(note.id, { x: noteX, y: graphBottom + FLOW_LAYOUT_NOTE_GAP });
+    noteX += width + FLOW_LAYOUT_NOTE_GAP;
+  }
+
+  return positions;
 }
 
 function definitionFrom(nodes: CanvasNode[], edges: Edge[], viewport?: FlowDefinition['viewport']): FlowDefinition {
@@ -440,6 +575,12 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     pendingActionsRef.current = appendVersionActions(pendingActionsRef.current, actions);
   }, [definition, readOnly]);
 
+  useEffect(() => {
+    const routed = routeCanvasGraph(nodes, edges);
+    if (routed.nodes !== nodes) setNodes(routed.nodes);
+    if (routed.edges !== edges) setEdges(routed.edges);
+  }, [edges, nodes, setEdges, setNodes]);
+
   const changeNodes = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
     onNodesChange(changes);
     if (changes.some((change) => ['position', 'remove', 'add', 'replace'].includes(change.type))) markDirty();
@@ -450,7 +591,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
   }, [markDirty, onEdgesChange]);
   const onConnect = useCallback((connection: Connection) => {
     if (!connection.sourceHandle) return;
-    setEdges((current) => addEdge({ ...connection, id: uniqueId('connection'), type: 'smoothstep' }, current.filter((edge) => !(edge.source === connection.source && edge.sourceHandle === connection.sourceHandle)))); markDirty();
+    setEdges((current) => addEdge({ ...connection, id: uniqueId('connection'), type: 'flowConnector' }, current.filter((edge) => !(edge.source === connection.source && edge.sourceHandle === connection.sourceHandle)))); markDirty();
   }, [markDirty, setEdges]);
   const insertNode = useCallback((type: FlowNode['type'], position: { x: number; y: number }) => {
     if (type === 'begin' && nodes.some((node) => node.data.flowNode.type === 'begin')) return;
@@ -480,7 +621,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     if (!selected) return;
     setEdges((current) => {
       const remaining = current.filter((edge) => !(edge.source === selected.id && edge.sourceHandle === outcome));
-      return target ? [...remaining, { id: uniqueId('connection'), source: selected.id, sourceHandle: outcome, target, type: 'smoothstep' }] : remaining;
+      return target ? [...remaining, { id: uniqueId('connection'), source: selected.id, sourceHandle: outcome, target, type: 'flowConnector' }] : remaining;
     }); markDirty();
   };
   const removeSelected = () => { if (!selected) return; setNodes((current) => current.filter((node) => node.id !== selected.id)); setEdges((current) => current.filter((edge) => edge.source !== selected.id && edge.target !== selected.id)); setSelectedId(null); setOpenPanel(null); markDirty(); };
@@ -489,6 +630,21 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     setSelectedId(null);
     setOpenPanel(null);
   }, [setNodes]);
+  const autoArrange = useCallback(() => {
+    const positions = createFlowAutoLayout(definitionRef.current);
+    if (positions.size === 0) return;
+    const arrangedNodes = nodes.map((node) => {
+      const position = positions.get(node.id);
+      return position ? { ...node, position } : node;
+    });
+    const routed = routeCanvasGraph(arrangedNodes, edges);
+    setNodes(routed.nodes);
+    setEdges(routed.edges);
+    markDirty();
+    requestAnimationFrame(() => {
+      void fitView({ padding: 0.16, duration: 220 }).then(() => setEditorViewport(getViewport()));
+    });
+  }, [edges, fitView, getViewport, markDirty, nodes, setEdges, setNodes]);
   const saveDraftNow = useCallback((): Promise<boolean> => {
     if (savePromiseRef.current) return savePromiseRef.current;
     if (!dirtyRef.current) return Promise.resolve(true);
@@ -629,9 +785,9 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
       </div>
     </div>
     <div className="editor-main">
-      {readOnly ? <div className="editor-read-only-indicator" role="status" aria-label="Read only"><Icon name="lock" size={15} /><span>Read only</span></div> : <><button type="button" className={`button ghost editor-palette-toggle ${openPanel === 'palette' ? 'active' : ''}`} aria-expanded={openPanel === 'palette'} aria-controls="flow-block-library" onClick={() => setOpenPanel((current) => current === 'palette' ? null : 'palette')}><Icon name="plus" size={15} />Blocks</button><BlockPalette nodes={nodes} open={openPanel === 'palette'} add={addFromPalette} /></>}
+      {readOnly ? <div className="editor-read-only-indicator" role="status" aria-label="Read only"><Icon name="lock" size={15} /><span>Read only</span></div> : <><div className="canvas-edit-actions"><button type="button" className={`button ghost editor-palette-toggle ${openPanel === 'palette' ? 'active' : ''}`} aria-expanded={openPanel === 'palette'} aria-controls="flow-block-library" onClick={() => setOpenPanel((current) => current === 'palette' ? null : 'palette')}><Icon name="plus" size={15} />Blocks</button><button type="button" className="button ghost editor-canvas-action" aria-label="Automatically arrange flow" title="Arrange blocks into a compact flow" onClick={autoArrange}><Icon name="layout" size={15} />Arrange</button></div><BlockPalette nodes={nodes} open={openPanel === 'palette'} add={addFromPalette} /></>}
       <div ref={canvasRef} className="canvas-wrap" onDrop={readOnly ? undefined : onDrop} onDragOver={readOnly ? undefined : (e) => { e.preventDefault(); e.dataTransfer.dropEffect = 'move'; }}>
-        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} onNodesChange={readOnly ? undefined : changeNodes} onEdgesChange={readOnly ? undefined : changeEdges} onConnect={readOnly ? undefined : onConnect} onPaneClick={readOnly ? undefined : clearSelection} onNodeClick={readOnly ? undefined : (_, node) => { setSelectedId(node.id); setOpenPanel('inspector'); }} onSelectionChange={readOnly ? undefined : ({ nodes: selection }) => { setSelectedId(selection[0]?.id ?? null); }} onMoveStart={(event) => { if (!readOnly && event) viewportChangedByUser.current = true; }} onMoveEnd={(_, viewport) => { setEditorViewport(viewport); if (!readOnly && viewportChangedByUser.current && savedViewport.current && !sameViewport(savedViewport.current, viewport)) markDirty(); viewportChangedByUser.current = false; }} nodesDraggable={!readOnly} nodesConnectable={!readOnly} elementsSelectable={!readOnly} minZoom={MIN_FLOW_ZOOM} maxZoom={1.6} deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']} proOptions={{ hideAttribution: true }}>
+        <ReactFlow nodes={nodes} edges={edges} nodeTypes={nodeTypes} edgeTypes={edgeTypes} onNodesChange={readOnly ? undefined : changeNodes} onEdgesChange={readOnly ? undefined : changeEdges} onConnect={readOnly ? undefined : onConnect} onPaneClick={readOnly ? undefined : clearSelection} onNodeClick={readOnly ? undefined : (_, node) => { setSelectedId(node.id); setOpenPanel('inspector'); }} onSelectionChange={readOnly ? undefined : ({ nodes: selection }) => { setSelectedId(selection[0]?.id ?? null); }} onMoveStart={(event) => { if (!readOnly && event) viewportChangedByUser.current = true; }} onMoveEnd={(_, viewport) => { setEditorViewport(viewport); if (!readOnly && viewportChangedByUser.current && savedViewport.current && !sameViewport(savedViewport.current, viewport)) markDirty(); viewportChangedByUser.current = false; }} nodesDraggable={!readOnly} nodesConnectable={!readOnly} elementsSelectable={!readOnly} minZoom={MIN_FLOW_ZOOM} maxZoom={1.6} deleteKeyCode={readOnly ? null : ['Backspace', 'Delete']} proOptions={{ hideAttribution: true }}>
           <Background color="#26332f" gap={24} size={1} />{viewportReady && <Controls showInteractive={false} onZoomIn={() => { viewportChangedByUser.current = true; }} onZoomOut={() => { viewportChangedByUser.current = true; }} onFitView={() => { viewportChangedByUser.current = true; }}><output className="flow-zoom-indicator" aria-label="Current canvas zoom" aria-live="polite">{Math.round(editorViewport.zoom * 100)}%</output></Controls>}<MiniMap pannable zoomable maskColor="rgba(5, 9, 8, 0.82)" nodeColor={(node) => ({ begin: '#69e0b1', agent: '#6ba5ff', check: '#d4e052', decision: '#ffb454', result: '#dc7eff', note: '#7e8a86' } as Record<string, string>)[(node.data as any).flowNode.type] ?? '#fff'} />
         </ReactFlow>
         {!readOnly && !validation.valid && <div className="validation-popover"><strong>Flow needs attention</strong>{validation.problems.slice(0, 4).map((problem) => <button key={`${problem.code}-${problem.nodeId}-${problem.connectionId}`} onClick={() => { if (problem.nodeId) { setSelectedId(problem.nodeId); setOpenPanel('inspector'); } }}><Icon name="alert" size={14} />{problem.message}</button>)}</div>}

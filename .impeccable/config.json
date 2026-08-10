@@ -1,0 +1,17 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "codex-grid-background",
+        "value": "*",
+        "files": [
+          "packages/frontend/src/index.css"
+        ],
+        "createdAt": "2026-08-10T20:42:05.658Z",
+        "reason": "Work-board and onboarding grid backgrounds are intentional visual texture (user-confirmed)"
+      }
+    ]
+  }
+}

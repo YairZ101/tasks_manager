@@ -128,7 +128,7 @@ function AppContent() {
         <header className="topbar">
           <div><span className="eyebrow">{store.section === 'work' ? 'OPERATIONAL VIEW' : store.section === 'flows' ? 'AUTOMATION DESIGN' : 'AGENT CONFIGURATION'}</span><h1>{store.section === 'work' ? 'Work control' : store.section === 'agents' ? 'Agents' : store.editingFlowId ? 'Flow editor' : 'Flow library'}</h1></div>
           <div className="topbar-actions">
-            <span className="capacity"><i style={{ width: `${Math.min(100, store.runner.activeCount / Math.max(1, store.runner.maxConcurrent) * 100)}%` }} />Capacity {store.runner.activeCount}/{store.runner.maxConcurrent}</span>
+            <span className="capacity"><i style={{ transform: `scaleX(${Math.min(1, store.runner.activeCount / Math.max(1, store.runner.maxConcurrent))})` }} />Capacity {store.runner.activeCount}/{store.runner.maxConcurrent}</span>
             {store.section === 'work' && store.workView === 'backlog' && <button className="button primary" onClick={() => store.setCreateOpen(true)} title="Option + N" aria-keyshortcuts="Alt+N"><Icon name="plus" />New task <KeyboardShortcut keys={['⌥', 'N']} /></button>}
           </div>
         </header>

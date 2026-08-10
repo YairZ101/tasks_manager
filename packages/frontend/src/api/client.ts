@@ -1,5 +1,5 @@
 import type { FlowDefinition, ValidationResult } from '@flow/core';
-import type { Attempt, Flow, FlowVersion, FlowVersionAction, RunDetail, Runner, Task, TaskLink, TaskLinkRelationship, TaskLog } from '../domain.js';
+import type { AgentPreset, Attempt, Flow, FlowVersion, FlowVersionAction, RunDetail, Runner, Task, TaskLink, TaskLinkRelationship, TaskLog } from '../domain.js';
 
 export type AgentSetup = {
   cli_cmd: string;
@@ -102,6 +102,10 @@ export const api = {
   updateAgentConfig: (data: Record<string, unknown>) => request<{ config: Record<string, unknown> }>('/agent-config', { method: 'PUT', body: JSON.stringify(data) }),
   testAgentConfig: (candidate?: AgentSetup) => request<{ success: boolean; durationMs: number; output?: string; error?: string }>('/agent-config/test', { method: 'POST', body: candidate ? JSON.stringify(candidate) : undefined }),
   testAgentConfigStream: (candidate: AgentSetup, onOutput: (line: string) => void) => streamAgentTest(candidate, onOutput),
+  listAgentPresets: () => request<{ presets: AgentPreset[] }>('/agent-presets'),
+  createAgentPreset: (data: Pick<AgentPreset, 'name' | 'description' | 'system_prompt'>) => request<{ preset: AgentPreset }>('/agent-presets', { method: 'POST', body: JSON.stringify(data) }),
+  updateAgentPreset: (id: number, data: Pick<AgentPreset, 'name' | 'description' | 'system_prompt'>) => request<{ preset: AgentPreset }>(`/agent-presets/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteAgentPreset: (id: number) => request<void>(`/agent-presets/${id}`, { method: 'DELETE' }),
   savePrefix: (prefix: string, repoName: string) => request('/init/save-prefix', { method: 'POST', body: JSON.stringify({ prefix, repoName }) }),
   completeInitialization: (data: { prefix: string; repoName: string; flowTemplate: FlowTemplate; agent: AgentSetup }) =>
     request<{ projectConfig: unknown; flow: { id: number; versionId: number } }>('/init/complete', { method: 'POST', body: JSON.stringify(data) }),

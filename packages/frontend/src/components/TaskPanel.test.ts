@@ -9,32 +9,27 @@ import { useAppStore } from '../hooks/useTaskStore.js';
 
 vi.mock('../api/client.js', () => ({ api: { getTask: vi.fn(), getRun: vi.fn(), listRuns: vi.fn(), getAttempt: vi.fn(), updateTask: vi.fn() } }));
 
-const flow = (effectLevel: 'read_only' | 'workspace_write' | 'external_write'): Flow => ({
+const flow = (): Flow => ({
   id: 1, name: 'Delivery', is_default: 1, active_version_id: 3, created_at: '', updated_at: '',
   activeVersion: {
     id: 3, flow_id: 1, version: 4, state: 'published', draft_revision: 0, compiled: null, published_at: '',
     definition: { schemaVersion: 1, nodes: [
       { id: 'begin', type: 'begin', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Begin' } },
-      { id: 'agent', type: 'agent', typeVersion: 1, position: { x: 10, y: 0 }, config: { name: 'Implement', preset: 'development', instructions: '', effectLevel } },
-      { id: 'check', type: 'check', typeVersion: 1, position: { x: 20, y: 0 }, config: { name: 'Verify', command: 'bun test', workingDirectory: '.', timeoutMs: 1000, effectLevel: 'read_only' } },
+      { id: 'agent', type: 'agent', typeVersion: 1, position: { x: 10, y: 0 }, config: { name: 'Implement', preset: 'development' } },
+      { id: 'check', type: 'check', typeVersion: 1, position: { x: 20, y: 0 }, config: { name: 'Verify', command: 'bun test', workingDirectory: '.', timeoutMs: 1000 } },
       { id: 'result', type: 'result', typeVersion: 1, position: { x: 30, y: 0 }, config: { name: 'Done', category: 'completed', message: '' } },
     ], connections: [] },
   },
 });
 
 describe('buildRunPreflight', () => {
-  test('summarizes the published Flow and its strongest effect level', () => {
-    const result = buildRunPreflight(flow('workspace_write'));
-    expect(result).toMatchObject({ name: 'Delivery', version: 4, effectCopy: 'May change this task’s workspace', blockNames: ['Begin', 'Implement', 'Verify', 'Done'] });
+  test('summarizes the published Flow and its blocks', () => {
+    const result = buildRunPreflight(flow());
+    expect(result).toMatchObject({ name: 'Delivery', version: 4, blockNames: ['Begin', 'Implement', 'Verify', 'Done'] });
   });
   test('requires a published default Flow', () => {
     expect(buildRunPreflight(undefined)).toBeNull();
-    expect(buildRunPreflight({ ...flow('read_only'), activeVersion: null })).toBeNull();
-  });
-
-  test('describes read-only and external-write Flows accurately', () => {
-    expect(buildRunPreflight(flow('read_only'))?.effectCopy).toBe('Read-only analysis and checks');
-    expect(buildRunPreflight(flow('external_write'))?.effectCopy).toBe('May change the workspace and external services');
+    expect(buildRunPreflight({ ...flow(), activeVersion: null })).toBeNull();
   });
 });
 
@@ -48,7 +43,7 @@ describe('TaskPanel task links', () => {
     vi.mocked(api.getTask).mockResolvedValue({ task, links: [{ id: 1, link_type: 'blocks', relationship: 'is_blocked_by', linked_task_id: 3, created_at: '', task_key: 'TST-3', title: 'Create the API contract', resolution: 'open' }] });
     vi.mocked(api.listRuns).mockResolvedValue({ runs: [] });
     vi.mocked(api.updateTask).mockResolvedValue({ task, links: [] });
-    useAppStore.setState({ tasks: [task], flows: [flow('read_only')], selectTask: vi.fn(), viewFlowVersion: vi.fn(), refreshTasks: vi.fn() });
+    useAppStore.setState({ tasks: [task], flows: [flow()], selectTask: vi.fn(), viewFlowVersion: vi.fn(), refreshTasks: vi.fn() });
   });
 
   test('warns before a Run when a dependency has not completed', async () => {
@@ -90,8 +85,8 @@ describe('TaskPanel task links', () => {
   });
 
   test('saves a selected published Flow for the task', async () => {
-    const selectedFlow = { ...flow('read_only'), id: 2, name: 'Focused delivery', is_default: 0 };
-    useAppStore.setState({ flows: [flow('read_only'), selectedFlow] });
+    const selectedFlow = { ...flow(), id: 2, name: 'Focused delivery', is_default: 0 };
+    useAppStore.setState({ flows: [flow(), selectedFlow] });
     render(createElement(TaskPanel, { taskId: 7 }));
     fireEvent.change(await screen.findByRole('combobox', { name: 'Flow to run' }), { target: { value: '2' } });
     await waitFor(() => expect(api.updateTask).toHaveBeenCalledWith(7, { preferred_flow_id: 2 }));
@@ -99,7 +94,7 @@ describe('TaskPanel task links', () => {
 
   test('opens the exact Flow version pinned to a Run', async () => {
     const runningTask = { ...task, active_run_id: 9, active_run_status: 'running', operational_state: 'active' as const };
-    const pinnedVersion = { ...flow('read_only').activeVersion!, id: 2, version: 3 };
+    const pinnedVersion = { ...flow().activeVersion!, id: 2, version: 3 };
     vi.mocked(api.getTask).mockResolvedValue({ task: runningTask, links: [] });
     vi.mocked(api.getRun).mockResolvedValue({
       run: { id: 9, task_id: 7, flow_version_id: 2, workspace_id: null, status: 'running', result_category: null, reason: null, created_at: '', started_at: '', finished_at: null },

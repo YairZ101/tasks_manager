@@ -17,12 +17,25 @@ describe('Flow database', () => {
     initDb(root);
     const db = getDb();
     const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name);
-    for (const name of ['app_meta', 'tasks', 'flows', 'flow_versions', 'runs', 'attempts', 'workspaces', 'logs', 'events']) expect(tables).toContain(name);
+    for (const name of ['app_meta', 'tasks', 'flows', 'flow_versions', 'runs', 'attempts', 'workspaces', 'logs', 'events', 'agent_presets']) expect(tables).toContain(name);
     const taskColumns = db.query<{ name: string }, []>('PRAGMA table_info(tasks)').all().map((column) => column.name);
     expect(taskColumns).not.toContain('queue_state');
+    const runColumns = db.query<{ name: string }, []>('PRAGMA table_info(runs)').all().map((column) => column.name);
+    expect(runColumns).toContain('agent_prompts_json');
+    expect(db.query<{ name: string }, []>('PRAGMA table_info(agent_presets)').all().map((column) => column.name)).not.toContain('effect_level');
     expect(db.query<{ value: string }, []>("SELECT value FROM app_meta WHERE key='schema_family'").get()?.value).toBe('flow');
     expect(db.query<{ value: string }, []>("SELECT value FROM app_meta WHERE key='schema_version'").get()?.value).toBe('2');
     expect(db.query<{ max_concurrent_executions: number }, []>('SELECT max_concurrent_executions FROM agent_config WHERE id=1').get()?.max_concurrent_executions).toBe(3);
+    expect(db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM agent_presets').get()?.count).toBe(5);
+  });
+
+  test('seeds Agent presets once without restoring presets the user removed', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-agent-presets-'));
+    initDb(root);
+    getDb().exec('DELETE FROM agent_presets');
+    closeDb();
+    initDb(root);
+    expect(getDb().query<{ count: number }, []>('SELECT COUNT(*) AS count FROM agent_presets').get()?.count).toBe(0);
   });
 
   test('rejects a legacy database without deleting it', () => {

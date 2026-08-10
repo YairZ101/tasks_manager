@@ -385,4 +385,53 @@ describe('Flow routes', () => {
     expect(db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM project_config').get()?.count).toBe(0);
     expect(db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM flows').get()?.count).toBe(0);
   });
+
+  test('lists, creates, updates, and deletes Agent presets', async () => {
+    const listed = await app.request('/agent-presets');
+    expect(listed.status).toBe(200);
+    expect((await listed.json() as any).presets).toEqual(expect.arrayContaining([
+      expect.objectContaining({ preset_key: 'development', name: 'Development', system_prompt: expect.stringContaining('Implement the task') }),
+    ]));
+
+    const created = await app.request('/agent-presets', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Release Engineer', description: 'Prepares a release.', system_prompt: 'Prepare and verify the release.' }),
+    });
+    expect(created.status).toBe(201);
+    const preset = (await created.json() as any).preset;
+    expect(preset).toMatchObject({ preset_key: 'release-engineer', name: 'Release Engineer' });
+    expect(preset).not.toHaveProperty('effect_level');
+
+    const updated = await app.request(`/agent-presets/${preset.id}`, {
+      method: 'PATCH', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ system_prompt: 'Prepare, verify, and publish the release.' }),
+    });
+    expect(updated.status).toBe(200);
+    expect((await updated.json() as any).preset.system_prompt).toBe('Prepare, verify, and publish the release.');
+    expect((await app.request(`/agent-presets/${preset.id}`, { method: 'DELETE' })).status).toBe(204);
+    expect((await app.request(`/agent-presets/${preset.id}`, { method: 'DELETE' })).status).toBe(404);
+  });
+
+  test('validates required Agent preset configuration', async () => {
+    const response = await app.request('/agent-presets', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'Incomplete', description: '', system_prompt: '' }),
+    });
+    expect(response.status).toBe(400);
+    expect(await response.json()).toMatchObject({ error: expect.stringContaining('System prompt') });
+  });
+
+  test('refuses to delete an Agent that a Flow still uses, and names the Flows', async () => {
+    // Create a Flow whose draft references the Development agent.
+    const definition = { schemaVersion: 1, nodes: [{ id: 'a', type: 'agent', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Dev', preset: 'development' } }], connections: [] };
+    const flow = await app.request('/flows', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ name: 'Uses agents', definition }) });
+    expect(flow.status).toBe(201);
+    const development = (await (await app.request('/agent-presets')).json() as any).presets.find((preset: any) => preset.preset_key === 'development');
+
+    const blocked = await app.request(`/agent-presets/${development.id}`, { method: 'DELETE' });
+    expect(blocked.status).toBe(409);
+    expect(await blocked.json()).toMatchObject({ reason: 'agent_in_use', flows: expect.arrayContaining(['Uses agents']) });
+    // The agent is untouched after the blocked delete.
+    expect(getDb().query<{ count: number }, [number]>('SELECT COUNT(*) AS count FROM agent_presets WHERE id = ?').get(development.id)?.count).toBe(1);
+  });
 });

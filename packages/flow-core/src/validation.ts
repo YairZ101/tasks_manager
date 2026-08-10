@@ -20,8 +20,14 @@ function add(problems: ValidationProblem[], code: string, message: string, detai
   problems.push({ code, message, ...detail });
 }
 
-export function validateFlow(definition: FlowDefinition): ValidationResult {
+/**
+ * `knownAgentKeys` is the set of Agent library keys that currently exist. When omitted (for example
+ * in unit tests), the built-in catalog keys are used. An Agent block is valid only if it references
+ * an agent that exists, because its prompt is resolved live from that agent at run start.
+ */
+export function validateFlow(definition: FlowDefinition, knownAgentKeys?: Set<string>): ValidationResult {
   const problems: ValidationProblem[] = [];
+  const agentKeys = knownAgentKeys ?? new Set(AGENT_PRESET_MAP.keys());
 
   if (definition.schemaVersion !== 1) {
     add(problems, 'schema_version', `Unsupported Flow schema version ${definition.schemaVersion}.`);
@@ -79,7 +85,7 @@ export function validateFlow(definition: FlowDefinition): ValidationResult {
       if ((outgoing.get(`${node.id}:started`)?.length ?? 0) !== 1) add(problems, 'begin_output', 'Begin must connect its Started outcome.', { nodeId: node.id });
     }
     if (node.type === 'agent') {
-      if (!AGENT_PRESET_MAP.has(node.config.preset)) add(problems, 'agent_preset', `Unknown Agent preset "${node.config.preset}".`, { nodeId: node.id });
+      if (!agentKeys.has(node.config.preset)) add(problems, 'agent_preset', `Agent "${node.config.name || node.config.preset}" is not in the Agent library. Pick an existing agent.`, { nodeId: node.id });
       if (!node.config.name.trim()) add(problems, 'node_name', 'Agent name is required.', { nodeId: node.id });
       if ((outgoing.get(`${node.id}:completed`)?.length ?? 0) !== 1) add(problems, 'agent_completed', `Agent "${node.config.name}" must connect Completed.`, { nodeId: node.id });
     }

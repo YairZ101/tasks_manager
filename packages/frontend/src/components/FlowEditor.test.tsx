@@ -1,12 +1,12 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRecommendedFlow, getNodeOutcomes } from '@flow/core';
-import FlowEditor, { appendVersionActions, COMPACT_ZOOM_THRESHOLD, DETAIL_ZOOM_THRESHOLD, FLOW_LAYOUT_COLUMN_GAP, FLOW_LAYOUT_NODE_WIDTH, FLOW_NODE_HEIGHTS, MIN_FLOW_ZOOM, createFlowAutoLayout, formatActionTimestamp, getFlowZoomMode, getVersionChanges, toCanvas } from './FlowEditor.js';
+import FlowEditor, { agentConfigFromPreset, appendVersionActions, COMPACT_ZOOM_THRESHOLD, DETAIL_ZOOM_THRESHOLD, FLOW_LAYOUT_COLUMN_GAP, FLOW_LAYOUT_NODE_WIDTH, FLOW_NODE_HEIGHTS, MIN_FLOW_ZOOM, createFlowAutoLayout, formatActionTimestamp, getFlowZoomMode, getVersionChanges, toCanvas } from './FlowEditor.js';
 import { FLOW_CONNECTOR_CLEARANCE, connectorCrossesRect, connectorSegmentsOverlap, connectorSourcePortTop, createConnectorPath, routeFlowConnectors } from './flowRouting.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
-vi.mock('../api/client.js', () => ({ api: { getDraft: vi.fn(), getFlow: vi.fn(), saveDraft: vi.fn(), publishFlow: vi.fn(), activateFlowVersion: vi.fn(), updateFlow: vi.fn() } }));
+vi.mock('../api/client.js', () => ({ api: { getDraft: vi.fn(), getFlow: vi.fn(), saveDraft: vi.fn(), publishFlow: vi.fn(), activateFlowVersion: vi.fn(), updateFlow: vi.fn(), listAgentPresets: vi.fn() } }));
 
 describe('FlowEditor', () => {
   beforeEach(() => {
@@ -19,6 +19,11 @@ describe('FlowEditor', () => {
     vi.mocked(api.publishFlow).mockResolvedValue({ version: { id: 4, flow_id: 1, version: 2, state: 'published', draft_revision: 4, definition, compiled: definition, published_at: '2026-08-04T12:00:00Z' } as any, draft: { id: 5, flow_id: 1, version: 3, state: 'draft', draft_revision: 1, definition, compiled: null, published_at: null } as any });
     vi.mocked(api.activateFlowVersion).mockResolvedValue({ flow: { id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 2 } as any, version: { id: 2, version: 1, definition } as any });
     vi.mocked(api.updateFlow).mockResolvedValue({ flow: { id: 1, name: 'Renamed delivery' } as any });
+    vi.mocked(api.listAgentPresets).mockResolvedValue({ presets: [
+      { id: 1, preset_key: 'planning', name: 'Planning', description: 'Plan work', system_prompt: 'Plan carefully.', created_at: '', updated_at: '' },
+      { id: 2, preset_key: 'development', name: 'Development', description: 'Build work', system_prompt: 'Build carefully.', created_at: '', updated_at: '' },
+      { id: 3, preset_key: 'open-pr', name: 'Open PR', description: 'Open a pull request', system_prompt: 'Open a PR.', created_at: '', updated_at: '' },
+    ] });
     useAppStore.setState({ flows: [{ id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 2 } as any], editingFlowId: 1, viewingFlowVersionId: null, refreshFlows: vi.fn(), editFlow: vi.fn(), viewFlowVersion: vi.fn() });
   });
 
@@ -283,7 +288,7 @@ describe('FlowEditor', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'Version history' }));
     const movedItem = (await screen.findByText('Moved Planning')).closest('li')!;
     expect(movedItem).toHaveAttribute('data-block-type', 'agent');
-    expect(movedItem.querySelector('[data-icon="terminal"]')).toBeInTheDocument();
+    expect(movedItem.querySelector('[data-icon="agent"]')).toBeInTheDocument();
     expect(movedItem).toHaveTextContent(formatActionTimestamp('2026-08-04T08:13:00.000Z'));
     expect(screen.getByText('Changed instructions').closest('li')).toHaveTextContent(formatActionTimestamp('2026-08-04T08:14:32.000Z'));
   });
@@ -434,6 +439,28 @@ describe('FlowEditor', () => {
     fireEvent.click(pane!);
     expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Inspector' })).not.toBeInTheDocument();
+  });
+
+  test('an Agent block only references an agent; it exposes no inline prompt config', async () => {
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    const planning = await screen.findByLabelText('Agent block: Planning');
+    fireEvent.click(planning);
+    const agent = await screen.findByLabelText('Agent');
+    await waitFor(() => expect(within(agent).getByRole('option', { name: 'Development' })).toBeInTheDocument());
+    // The block is a pure reference — no prompt, effect level, or drift affordance.
+    expect(screen.queryByLabelText('System prompt')).not.toBeInTheDocument();
+    expect(screen.queryByLabelText('Effect level')).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /update block/i })).not.toBeInTheDocument();
+    fireEvent.change(agent, { target: { value: 'development' } });
+    await waitFor(() => expect((agent as HTMLSelectElement).value).toBe('development'));
+    expect(screen.getByText('Build work')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Edit agent/ })).toBeInTheDocument();
+  });
+
+  test('builds a new Agent block configuration as a bare reference to the agent', () => {
+    expect(agentConfigFromPreset({ id: 9, preset_key: 'reviewer', name: 'Reviewer', description: '', system_prompt: 'Review the work.', created_at: '', updated_at: '' })).toEqual({
+      name: 'Reviewer', preset: 'reviewer',
+    });
   });
 
   test('opens the block library and adds a selected block without dragging', async () => {

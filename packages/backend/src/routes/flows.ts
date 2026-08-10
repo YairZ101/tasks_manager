@@ -7,6 +7,11 @@ import type { Flow, FlowVersionAction, FlowVersionActionKind, FlowVersionRow } f
 
 const flows = new Hono();
 
+// The set of agents currently in the library; an Agent block is only valid if it references one of these.
+function knownAgentKeys(): Set<string> {
+  return new Set(getDb().query<{ preset_key: string }, []>('SELECT preset_key FROM agent_presets').all().map((row) => row.preset_key));
+}
+
 const actionKinds = new Set<FlowVersionActionKind>(['initial', 'added', 'removed', 'changed', 'moved', 'connected', 'disconnected']);
 const blockTypes = new Set<FlowNode['type']>(['begin', 'agent', 'check', 'decision', 'result', 'note']);
 
@@ -127,7 +132,7 @@ flows.get('/:id/draft', (c) => {
     const inserted = db.query("INSERT INTO flow_versions (flow_id, version, state, definition_json) VALUES (?, ?, 'draft', ?)").run(id, next, JSON.stringify(source?.definition ?? createRecommendedFlow()));
     row = db.query<FlowVersionRow, [number]>('SELECT * FROM flow_versions WHERE id = ?').get(Number(inserted.lastInsertRowid))!;
   }
-  return c.json({ draft: parseFlowVersion(row), validation: validateFlow(JSON.parse(row.definition_json)) });
+  return c.json({ draft: parseFlowVersion(row), validation: validateFlow(JSON.parse(row.definition_json), knownAgentKeys()) });
 });
 
 flows.put('/:id/draft', async (c) => {
@@ -137,7 +142,7 @@ flows.put('/:id/draft', async (c) => {
   if (!body?.definition || !Number.isInteger(body.revision)) return c.json({ error: 'definition and revision are required.' }, 400);
   const actions = parseDraftActions(body.actions);
   if (!actions) return c.json({ error: 'actions must be valid history entries.' }, 400);
-  const validation = validateFlow(body.definition);
+  const validation = validateFlow(body.definition, knownAgentKeys());
   const existing = db.query<FlowVersionRow, [number]>("SELECT * FROM flow_versions WHERE flow_id = ? AND state = 'draft'").get(id);
   if (!existing || existing.draft_revision !== body.revision) return c.json({ error: 'This draft changed elsewhere. Reload before saving again.', reason: 'revision_conflict' }, 409);
   const existingActions = JSON.parse(existing.action_history_json) as unknown;
@@ -176,9 +181,10 @@ flows.post('/:id/publish', (c) => {
   const draft = db.query<FlowVersionRow, [number]>("SELECT * FROM flow_versions WHERE flow_id = ? AND state = 'draft'").get(id);
   if (!draft) return c.json({ error: 'Flow has no draft to publish.' }, 409);
   const definition = JSON.parse(draft.definition_json) as FlowDefinition;
-  const validation = validateFlow(definition);
+  const agentKeys = knownAgentKeys();
+  const validation = validateFlow(definition, agentKeys);
   if (!validation.valid) return c.json({ error: 'Fix Flow validation problems before publishing.', problems: validation.problems }, 422);
-  const compiled = compileFlow(definition);
+  const compiled = compileFlow(definition, agentKeys);
   const nextDraftId = db.transaction(() => {
     db.query("UPDATE flow_versions SET state = 'published', compiled_json = ?, published_at = datetime('now') WHERE id = ?").run(JSON.stringify(compiled), draft.id);
     db.query('UPDATE flows SET active_version_id = ? WHERE id = ?').run(draft.id, id);

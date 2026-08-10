@@ -43,7 +43,7 @@ function nextConnection(definition: CompiledFlowDefinition, blockId: string, out
 
 function insertAttempt(runId: number, blockId: string, parentAttemptId: number | null, connectionId: string | null, status: Attempt['status']): Attempt {
   const db = getDb();
-  const counters = db.query<{ sequence: number; block_attempt: number }, [number, string]>(`
+  const counters = db.query<{ sequence: number; block_attempt: number }, [string, number]>(`
     SELECT COALESCE(MAX(sequence), 0) + 1 AS sequence,
       COALESCE(MAX(CASE WHEN block_id = ? THEN block_attempt END), 0) + 1 AS block_attempt
     FROM attempts WHERE run_id = ?
@@ -98,7 +98,9 @@ async function followOutcome(attempt: Attempt, outcomeId: string): Promise<void>
   const definition = definitionFor(run);
   const connection = nextConnection(definition, attempt.block_id, outcomeId);
   if (!connection) {
-    return putRunInAttention(run.id, `Outcome "${outcomeId}" from "${nodeFor(definition, attempt.block_id).config && 'name' in nodeFor(definition, attempt.block_id).config ? nodeFor(definition, attempt.block_id).config.name : attempt.block_id}" is not connected.`);
+    const node = nodeFor(definition, attempt.block_id);
+    const label = 'name' in node.config ? node.config.name : attempt.block_id;
+    return putRunInAttention(run.id, `Outcome "${outcomeId}" from "${label}" is not connected.`);
   }
   await enterBlock(run.id, connection.targetNodeId, attempt.id, connection.id);
 }
@@ -154,6 +156,29 @@ function createLogWriter(taskId: number, runId: number, attemptId: number) {
   };
 }
 
+/** The agent's system prompt for this Run: the snapshot taken at Run start, or a live lookup as a fallback. */
+function agentSystemPrompt(run: WorkflowRun, presetKey: string): string {
+  const db = getDb();
+  if (run.agent_prompts_json) {
+    const snapshot = JSON.parse(run.agent_prompts_json) as Record<string, string>;
+    if (presetKey in snapshot) return snapshot[presetKey];
+  }
+  return db.query<{ system_prompt: string }, [string]>('SELECT system_prompt FROM agent_presets WHERE preset_key = ?').get(presetKey)?.system_prompt ?? '';
+}
+
+/** Resolve every referenced agent's prompt from the Agent library, to snapshot onto a starting Run. */
+export function snapshotAgentPrompts(definition: CompiledFlowDefinition): string {
+  const db = getDb();
+  const keys = [...new Set(definition.nodes.filter((node) => node.type === 'agent').map((node) => node.config.preset))];
+  const prompts: Record<string, string> = {};
+  for (const key of keys) {
+    const row = db.query<{ system_prompt: string }, [string]>('SELECT system_prompt FROM agent_presets WHERE preset_key = ?').get(key);
+    if (!row) throw Object.assign(new Error(`Agent "${key}" used by this Flow no longer exists. Update the Flow before running it.`), { status: 409 });
+    prompts[key] = row.system_prompt;
+  }
+  return JSON.stringify(prompts);
+}
+
 function buildPrompt(task: Task, node: Extract<CompiledFlowNode, { type: 'agent' }>, run: WorkflowRun): string {
   const db = getDb();
   const previous = db.query<{ block_id: string; outcome_id: string | null; decision_comment: string | null }, [number]>(
@@ -165,7 +190,7 @@ function buildPrompt(task: Task, node: Extract<CompiledFlowNode, { type: 'agent'
     ? `\nLinked tasks:\n${links.map((link) => `- ${link.relationship.replaceAll('_', ' ')} ${link.task_key}: ${link.title} (${link.resolution})`).join('\n')}`
     : '';
   return [
-    node.config.compiledInstructions,
+    agentSystemPrompt(run, node.config.preset),
     '',
     `Task ${task.task_key}: ${task.title}`,
     task.description ? `\nDescription:\n${task.description}` : '',
@@ -350,9 +375,10 @@ export async function startRun(taskId: number, flowId?: number): Promise<Workflo
   if (!versionId) throw Object.assign(new Error('Choose a Flow with a published version before starting.'), { status: 409 });
   const version = getFlowVersion(versionId);
   if (!version?.compiled) throw Object.assign(new Error('The selected Flow version is not published.'), { status: 409 });
+  const agentPrompts = snapshotAgentPrompts(version.compiled);
   const workspace = await ensureWorkspace(task, repoRoot);
-  const result = db.query("INSERT INTO runs (task_id, flow_version_id, workspace_id, status) VALUES (?, ?, ?, 'queued')")
-    .run(task.id, version.id, workspace.id);
+  const result = db.query("INSERT INTO runs (task_id, flow_version_id, workspace_id, status, agent_prompts_json) VALUES (?, ?, ?, 'queued', ?)")
+    .run(task.id, version.id, workspace.id, agentPrompts);
   const run = getRun(Number(result.lastInsertRowid))!;
   const begin = version.compiled.nodes.find((node) => node.type === 'begin')!;
   await enterBlock(run.id, begin.id, null, null);

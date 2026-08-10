@@ -11,21 +11,24 @@ interface AppState {
   runner: Runner;
   tasks: Task[];
   flows: Flow[];
-  section: 'work' | 'flows';
+  section: 'work' | 'flows' | 'agents';
   workView: OperationalState;
   selectedTaskId: number | null;
   editingFlowId: number | null;
   viewingFlowVersionId: number | null;
+  agentsFocusPresetKey: string | null;
   createOpen: boolean;
   settingsOpen: boolean;
   bootstrap(): Promise<void>;
   refreshTasks(): Promise<void>;
   refreshFlows(): Promise<void>;
-  setSection(section: 'work' | 'flows'): void;
+  setSection(section: 'work' | 'flows' | 'agents'): void;
   setWorkView(view: OperationalState): void;
   selectTask(id: number | null): void;
   editFlow(id: number | null): void;
   viewFlowVersion(flowId: number, versionId: number): void;
+  openAgent(presetKey: string | null): void;
+  clearAgentsFocus(): void;
   setCreateOpen(open: boolean): void;
   setSettingsOpen(open: boolean): void;
 }
@@ -46,6 +49,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectedTaskId: null,
   editingFlowId: null,
   viewingFlowVersionId: null,
+  agentsFocusPresetKey: null,
   createOpen: false,
   settingsOpen: false,
   async bootstrap() {
@@ -69,13 +73,16 @@ export const useAppStore = create<AppState>((set, get) => ({
   async refreshFlows() { const { flows } = await api.listFlows(); set({ flows }); },
   setSection: (section) => set({
     section,
-    editingFlowId: section === 'work' ? null : get().editingFlowId,
-    viewingFlowVersionId: section === 'work' ? null : get().viewingFlowVersionId,
+    editingFlowId: section === 'flows' ? get().editingFlowId : null,
+    viewingFlowVersionId: section === 'flows' ? get().viewingFlowVersionId : null,
+    agentsFocusPresetKey: section === 'agents' ? get().agentsFocusPresetKey : null,
   }),
-  setWorkView: (workView) => set({ workView, section: 'work' }),
+  setWorkView: (workView) => set({ workView, section: 'work', agentsFocusPresetKey: null }),
   selectTask: (selectedTaskId) => set({ selectedTaskId }),
   editFlow: (editingFlowId) => set({ editingFlowId, viewingFlowVersionId: null, section: 'flows' }),
   viewFlowVersion: (editingFlowId, viewingFlowVersionId) => set({ editingFlowId, viewingFlowVersionId, section: 'flows' }),
+  openAgent: (agentsFocusPresetKey) => set({ section: 'agents', agentsFocusPresetKey, editingFlowId: null, viewingFlowVersionId: null }),
+  clearAgentsFocus: () => set({ agentsFocusPresetKey: null }),
   setCreateOpen: (createOpen) => set({ createOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
 }));

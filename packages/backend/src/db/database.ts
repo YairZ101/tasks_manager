@@ -1,6 +1,7 @@
 import { Database } from 'bun:sqlite';
 import fs from 'fs';
 import path from 'path';
+import { AGENT_PRESETS } from '@flow/core';
 
 const DATA_DIR = '.flow';
 const SCHEMA_FAMILY = 'flow';
@@ -108,6 +109,16 @@ function createSchema(database: Database): void {
       updated_at                TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS agent_presets (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      preset_key    TEXT UNIQUE NOT NULL CHECK (length(preset_key) BETWEEN 1 AND 80),
+      name          TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 120),
+      description   TEXT NOT NULL DEFAULT '' CHECK (length(description) <= 500),
+      system_prompt TEXT NOT NULL CHECK (length(system_prompt) BETWEEN 1 AND 50000),
+      created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS project_config (
       id               INTEGER PRIMARY KEY CHECK (id = 1),
       task_prefix      TEXT NOT NULL CHECK (length(task_prefix) BETWEEN 1 AND 5 AND task_prefix GLOB '[A-Z0-9]*'),
@@ -166,6 +177,7 @@ function createSchema(database: Database): void {
       status          TEXT NOT NULL CHECK (status IN ('queued', 'running', 'waiting', 'attention', 'finished', 'stopped')),
       result_category TEXT DEFAULT NULL CHECK (result_category IS NULL OR result_category IN ('completed', 'paused', 'cancelled')),
       reason          TEXT DEFAULT NULL,
+      agent_prompts_json TEXT DEFAULT NULL,
       created_at      TEXT NOT NULL DEFAULT (datetime('now')),
       started_at      TEXT DEFAULT NULL,
       finished_at     TEXT DEFAULT NULL
@@ -236,24 +248,23 @@ function createSchema(database: Database): void {
       UPDATE workspaces SET updated_at = datetime('now') WHERE id = NEW.id;
     END;
 
+    CREATE TRIGGER IF NOT EXISTS agent_presets_updated_at AFTER UPDATE ON agent_presets
+    BEGIN
+      UPDATE agent_presets SET updated_at = datetime('now') WHERE id = NEW.id;
+    END;
+
     INSERT INTO agent_config (id) VALUES (1) ON CONFLICT DO NOTHING;
     PRAGMA user_version = 1;
   `);
-  ensureTaskFlowPreference(database);
-  migrateTaskDependencies(database);
-}
-
-function ensureTaskFlowPreference(database: Database): void {
-  const columns = database.query<{ name: string }, []>('PRAGMA table_info(tasks)').all();
-  if (columns.some((column) => column.name === 'preferred_flow_id')) return;
-  database.exec('ALTER TABLE tasks ADD COLUMN preferred_flow_id INTEGER DEFAULT NULL REFERENCES flows(id) ON DELETE SET NULL');
-}
-
-function migrateTaskDependencies(database: Database): void {
-  const legacy = database.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'task_dependencies'").get();
-  if (!legacy) return;
-  database.exec(`
-    INSERT OR IGNORE INTO task_links (source_task_id, target_task_id, link_type)
-    SELECT depends_on_task_id, task_id, 'blocks' FROM task_dependencies;
-  `);
+  const presetsSeeded = database.query<{ value: string }, [string]>('SELECT value FROM app_meta WHERE key = ?').get('agent_presets_seeded');
+  if (!presetsSeeded) {
+    const presetCount = database.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM agent_presets').get()?.count ?? 0;
+    const insertPreset = database.query('INSERT INTO agent_presets (preset_key, name, description, system_prompt) VALUES (?, ?, ?, ?)');
+    database.transaction(() => {
+      if (presetCount === 0) {
+        for (const preset of AGENT_PRESETS) insertPreset.run(preset.key, preset.name, preset.description, preset.systemPrompt);
+      }
+      database.query("INSERT INTO app_meta (key, value) VALUES ('agent_presets_seeded', '1')").run();
+    })();
+  }
 }

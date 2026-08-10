@@ -51,6 +51,16 @@ export interface AgentConfig {
   updated_at: string;
 }
 
+export interface AgentPreset {
+  id: number;
+  preset_key: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ProjectConfig {
   id: number;
   task_prefix: string;
@@ -105,6 +115,9 @@ export interface WorkflowRun {
   status: RunStatus;
   result_category: ResultCategory | null;
   reason: string | null;
+  // Snapshot of { [agentKey]: systemPrompt } captured when the Run started, so it stays consistent
+  // even if the underlying agents are edited mid-run.
+  agent_prompts_json: string | null;
   created_at: string;
   started_at: string | null;
   finished_at: string | null;

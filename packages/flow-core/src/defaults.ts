@@ -46,7 +46,7 @@ export function createRecommendedFlow(): FlowDefinition {
       },
     },
     { id: 'development', type: 'agent', typeVersion: 1, position: { x: 870, y: 250 }, config: createAgentConfig('development') },
-    { id: 'tests', type: 'check', typeVersion: 1, position: { x: 1160, y: 250 }, config: { name: 'Project checks', command: 'bun run test', workingDirectory: '.', timeoutMs: 180000, effectLevel: 'read_only' } },
+    { id: 'tests', type: 'check', typeVersion: 1, position: { x: 1160, y: 250 }, config: { name: 'Project checks', command: 'bun run test', workingDirectory: '.', timeoutMs: 180000 } },
     {
       id: 'test-decision', type: 'decision', typeVersion: 1, position: { x: 1160, y: 520 }, config: {
         name: 'Failed checks', instructions: 'Choose whether to send the task back for fixes or pause the run.', choices: [

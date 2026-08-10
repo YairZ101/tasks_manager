@@ -12,7 +12,7 @@ const defaultFlow = {
     id: 8, flow_id: 5, version: 3, state: 'published', draft_revision: 0, compiled: null, published_at: '',
     definition: { schemaVersion: 1, nodes: [
       { id: 'begin', type: 'begin', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Begin' } },
-      { id: 'agent', type: 'agent', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Implement', preset: 'development', instructions: '', effectLevel: 'workspace_write' } },
+      { id: 'agent', type: 'agent', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Implement', preset: 'development' } },
     ], connections: [] },
   },
 } as any;

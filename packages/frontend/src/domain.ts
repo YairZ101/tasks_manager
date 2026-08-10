@@ -54,3 +54,13 @@ export interface Attempt {
 export interface TaskLog { id: number; attempt_id: number; level: string; message: string; timestamp: string }
 export interface RunDetail { run: Run; task: Task; flowVersion: FlowVersion; attempts: Attempt[]; workspace: { id: number; state: string; worktree_path: string; branch: string | null } | null }
 export interface Runner { activeCount: number; queuedCount: number; maxConcurrent: number; executions: Array<{ attemptId: number; taskKey: string; blockName: string }> }
+
+export interface AgentPreset {
+  id: number;
+  preset_key: string;
+  name: string;
+  description: string;
+  system_prompt: string;
+  created_at: string;
+  updated_at: string;
+}

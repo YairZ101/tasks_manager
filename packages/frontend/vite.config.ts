@@ -28,6 +28,7 @@ export default defineConfig({
       '/attempts': 'http://127.0.0.1:4200',
       '/workspaces': 'http://127.0.0.1:4200',
       '/agent-config': 'http://127.0.0.1:4200',
+      '/agent-presets': 'http://127.0.0.1:4200',
       '/init': 'http://127.0.0.1:4200',
     },
   },

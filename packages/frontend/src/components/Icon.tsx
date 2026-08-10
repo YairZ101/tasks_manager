@@ -16,6 +16,7 @@ const paths = {
   copy: <><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M15 9V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h3"/></>,
   trash: <><path d="M4 7h16M9 7V4h6v3M6 7l1 14h10l1-14M10 11v6M14 11v6"/></>,
   terminal: <><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></>,
+  agent: <><path d="M12 4v3"/><circle cx="12" cy="3" r="1"/><rect x="4" y="7" width="16" height="12" rx="4"/><path d="M4 12H2M22 12h-2M9 15h6"/><circle cx="9" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="15" cy="12" r="1" fill="currentColor" stroke="none"/></>,
   question: <><path d="M9.7 9a2.5 2.5 0 1 1 3.7 2.2c-.9.5-1.4 1.2-1.4 2.3"/><path d="M12 17h.01"/></>,
   flag: <><path d="M5 21V4"/><path d="M5 5h11l-2 4 2 4H5"/></>,
   note: <><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h4M8 12h8M8 16h6"/></>,
@@ -26,7 +27,7 @@ export type BlockIconType = 'begin' | 'agent' | 'check' | 'decision' | 'result' 
 
 export const BLOCK_ICON_NAMES = {
   begin: 'play',
-  agent: 'terminal',
+  agent: 'agent',
   check: 'check',
   decision: 'question',
   result: 'flag',

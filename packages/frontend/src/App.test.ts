@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { createElement } from 'react';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import App, { queueForShortcutCode, sidebarCollapsedForContext, shouldAutoCollapseSidebar, shouldCollapseSidebarOnResize, shouldExpandSidebarOnResize } from './App.js';
+import App, { canNavigateFromAgents, queueForShortcutCode, sidebarCollapsedForContext, shouldAutoCollapseSidebar, shouldCollapseSidebarOnResize, shouldExpandSidebarOnResize } from './App.js';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
 
@@ -10,6 +10,7 @@ vi.mock('./components/WorkBoard.js', () => ({ default: () => null }));
 vi.mock('./components/TaskPanel.js', () => ({ default: () => null }));
 vi.mock('./components/TaskComposer.js', () => ({ default: () => null }));
 vi.mock('./components/FlowLibrary.js', () => ({ default: () => null }));
+vi.mock('./components/AgentsLibrary.js', () => ({ default: () => 'Agents library content' }));
 vi.mock('./components/SettingsPanel.js', () => ({ default: () => null }));
 vi.mock('./components/InitScreen.js', () => ({ default: () => null }));
 vi.mock('./components/FlowEditor.js', () => ({ default: () => null }));
@@ -53,10 +54,28 @@ describe('queueForShortcutCode', () => {
   });
 });
 
+test('guards unsaved Agent preset edits when leaving the tab', () => {
+  const confirmDiscard = vi.fn(() => false);
+  expect(canNavigateFromAgents('agents', 'flows', true, confirmDiscard)).toBe(false);
+  expect(confirmDiscard).toHaveBeenCalledOnce();
+  expect(canNavigateFromAgents('agents', 'agents', true, confirmDiscard)).toBe(true);
+  expect(canNavigateFromAgents('work', 'flows', true, confirmDiscard)).toBe(true);
+});
+
 test('does not expose a Ready operational view', () => {
   render(createElement(App));
   expect(screen.queryByRole('button', { name: 'Ready, Option 2' })).not.toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Active, Option 2' })).toBeInTheDocument();
+});
+
+test('opens the Agents tab from the primary navigation', () => {
+  render(createElement(App));
+  const agents = screen.getByRole('button', { name: 'Agents' });
+  expect(agents.querySelector('[data-icon="agent"]')).toBeInTheDocument();
+  expect(agents.querySelector('[data-icon="agent"] rect[x="4"][y="7"]')).toBeInTheDocument();
+  fireEvent.click(agents);
+  expect(screen.getByText('Agents library content')).toBeVisible();
+  expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible();
 });
 
 test('waits for bootstrap before opening the event stream', () => {

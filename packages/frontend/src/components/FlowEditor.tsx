@@ -5,9 +5,10 @@ import {
   type Connection, type Edge, type EdgeProps, type Node, type NodeProps,
 } from '@xyflow/react';
 import '@xyflow/react/dist/style.css';
-import { AGENT_PRESETS, createAgentConfig, getNodeOutcomes, validateFlow, type FlowDefinition, type FlowNode } from '@flow/core';
+import { createAgentConfig, getNodeOutcomes, validateFlow, type FlowDefinition, type FlowNode } from '@flow/core';
 import { toast } from 'sonner';
 import { api } from '../api/client.js';
+import type { AgentPreset } from '../domain.js';
 import type { FlowVersion, FlowVersionAction } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { connectorSourcePortTop, routeFlowConnectors } from './flowRouting.js';
@@ -58,21 +59,17 @@ const typeMeta: Record<FlowNode['type'], { label: string; description: string }>
 };
 
 const configFieldLabels: Record<string, string> = {
-  artifacts: 'artifacts',
   category: 'result category',
   choices: 'decision choices',
   color: 'note color',
   command: 'command',
-  draftPullRequest: 'draft pull request setting',
-  effectLevel: 'effect level',
   height: 'note height',
   instructions: 'instructions',
   message: 'result message',
-  planLocation: 'plan location',
   preset: 'agent preset',
+  systemPrompt: 'system prompt',
   text: 'note text',
   timeoutMs: 'timeout',
-  trackInGit: 'Git tracking setting',
   width: 'note width',
   workingDirectory: 'working directory',
 };
@@ -203,7 +200,7 @@ function BlockNode({ data, selected }: NodeProps<CanvasNode>) {
     {outcomeRows.map(({ outcome, top }) => <Handle key={outcome} id={outcome} type="source" position={Position.Right} className="output-handle" style={{ top: `${top}%` }} />)}
     <div className="node-cap"><span><BlockIcon type={flowNode.type} /></span><em>{typeMeta[flowNode.type].label}</em></div>
     <strong>{name}</strong>
-    {flowNode.type === 'agent' && <small className="node-detail">{flowNode.config.preset.replace('-', ' ')} · {flowNode.config.effectLevel.replace('_', ' ')}</small>}
+    {flowNode.type === 'agent' && <small className="node-detail">{flowNode.config.preset.replace('-', ' ')}</small>}
     {flowNode.type === 'check' && <code className="node-detail">{flowNode.config.command || 'No command yet'}</code>}
     {flowNode.type === 'result' && <small className="node-detail">{flowNode.config.category}</small>}
     <div className="node-outcomes" style={{ '--outcome-count': outcomeRows.length } as CSSProperties}>{outcomeRows.map(({ outcome, top }) => <span key={outcome} className="node-outcome-row" style={{ top: `${top}%` }}><span className="node-outcome-label">{outcome.replace('_', ' ')}</span></span>)}</div>
@@ -359,12 +356,19 @@ function uniqueId(type: string): string {
   return `${type}-${typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID().slice(0, 8) : Math.random().toString(36).slice(2, 10)}`;
 }
 
-function makeNode(type: FlowNode['type'], x: number, y: number): FlowNode {
+export function agentConfigFromPreset(preset: AgentPreset, name = preset.name) {
+  return { name, preset: preset.preset_key };
+}
+
+function makeNode(type: FlowNode['type'], x: number, y: number, agentPresets: AgentPreset[] = []): FlowNode {
   const base = { id: uniqueId(type), typeVersion: 1 as const, position: { x, y } };
   switch (type) {
     case 'begin': return { ...base, type, config: { name: 'Begin' } };
-    case 'agent': return { ...base, type, config: createAgentConfig('development', 'Development') };
-    case 'check': return { ...base, type, config: { name: 'Project checks', command: 'bun run test', workingDirectory: '.', timeoutMs: 180000, effectLevel: 'read_only' } };
+    case 'agent': {
+      const preset = agentPresets.find((candidate) => candidate.preset_key === 'development') ?? agentPresets[0];
+      return { ...base, type, config: preset ? agentConfigFromPreset(preset) : createAgentConfig('development', 'Development') };
+    }
+    case 'check': return { ...base, type, config: { name: 'Project checks', command: 'bun run test', workingDirectory: '.', timeoutMs: 180000 } };
     case 'decision': return { ...base, type, config: { name: 'Review', instructions: '', choices: [{ id: 'approved', label: 'Approved', commentRequired: false, tone: 'positive' }, { id: 'changes', label: 'Changes requested', commentRequired: true, tone: 'warning' }] } };
     case 'result': return { ...base, type, config: { name: 'Completed', category: 'completed', message: '' } };
     case 'note': return { ...base, type, config: { text: 'Add context for collaborators…', color: 'amber', width: 220, height: 120 } };
@@ -383,19 +387,25 @@ function BlockPalette({ nodes, open, add }: { nodes: CanvasNode[]; open: boolean
   </aside>;
 }
 
-function Inspector({ node, nodes, edges, open, update, connectOutcome, remove, close }: { node: CanvasNode; nodes: CanvasNode[]; edges: Edge[]; open: boolean; update: (next: FlowNode) => void; connectOutcome: (outcome: string, target: string) => void; remove: () => void; close: () => void }) {
+function Inspector({ node, nodes, edges, presets, open, update, connectOutcome, remove, close, openAgent }: { node: CanvasNode; nodes: CanvasNode[]; edges: Edge[]; presets: AgentPreset[]; open: boolean; update: (next: FlowNode) => void; connectOutcome: (outcome: string, target: string) => void; remove: () => void; close: () => void; openAgent: (presetKey: string) => void }) {
   const flowNode = node.data.flowNode;
   const config: any = flowNode.config;
   const patch = (changes: any) => update({ ...flowNode, config: { ...flowNode.config, ...changes } } as FlowNode);
+  const selectedPreset = flowNode.type === 'agent' ? presets.find((preset) => preset.preset_key === config.preset) : undefined;
+  const presetMissing = flowNode.type === 'agent' && presets.length > 0 && !selectedPreset;
   const executableTargets = nodes.filter((candidate) => candidate.id !== node.id && candidate.data.flowNode.type !== 'note' && candidate.data.flowNode.type !== 'begin');
   return <aside id="flow-block-inspector" className={`inspector editor-panel ${open ? 'panel-open' : ''}`} aria-label="Block inspector">
     <header><div><span className={`block-glyph ${flowNode.type}`}><BlockIcon type={flowNode.type} /></span><div><span className="eyebrow">{typeMeta[flowNode.type].label.toUpperCase()} BLOCK</span><h3>{config.name || typeMeta[flowNode.type].label}</h3></div></div><PanelCloseButton label="Close block inspector" onClick={close} /></header>
     <div className="inspector-scroll">
       {flowNode.type !== 'note' && <label>Name<input value={config.name} onChange={(e) => patch({ name: e.target.value })} /></label>}
       {flowNode.type === 'agent' && <>
-        <label>Preset<select value={config.preset} onChange={(e) => patch(createAgentConfig(e.target.value as any, config.name))}>{AGENT_PRESETS.map((preset) => <option key={preset.key} value={preset.key}>{preset.name}</option>)}</select></label>
-        <label>Additional instructions<textarea value={config.instructions ?? ''} onChange={(e) => patch({ instructions: e.target.value })} placeholder="Specific guidance for this block…" /></label>
-        <label>Effect level<select value={config.effectLevel} onChange={(e) => patch({ effectLevel: e.target.value })}><option value="read_only">Read only</option><option value="workspace_write">Workspace write</option><option value="external_write">External write</option></select></label>
+        <label>Agent<select aria-label="Agent" value={config.preset} onChange={(e) => patch({ preset: e.target.value })}>{presetMissing && <option value={config.preset}>{config.preset} · not in library</option>}{presets.map((preset) => <option key={preset.id} value={preset.preset_key}>{preset.name}</option>)}</select></label>
+        <div className="agent-block-summary">
+          {selectedPreset?.description ? <p>{selectedPreset.description}</p> : presetMissing
+            ? <p className="agent-block-note">This agent is no longer in the library. Pick another so the block can run.</p>
+            : <p className="agent-block-note">This agent runs with its current prompt from the Agents tab.</p>}
+          <button type="button" className="agent-block-open" onClick={() => openAgent(config.preset)}><Icon name="agent" size={13} />{presetMissing ? 'Open Agents tab' : 'Edit agent'}</button>
+        </div>
       </>}
       {flowNode.type === 'check' && <>
         <label>Command<input className="mono" value={config.command} onChange={(e) => patch({ command: e.target.value })} /></label>
@@ -445,6 +455,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
   const flow = useAppStore((state) => state.flows.find((candidate) => candidate.id === flowId));
   const back = useAppStore((state) => state.editFlow);
   const viewFlowVersion = useAppStore((state) => state.viewFlowVersion);
+  const openAgent = useAppStore((state) => state.openAgent);
   const refreshFlows = useAppStore((state) => state.refreshFlows);
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([]);
   const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
@@ -466,13 +477,17 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
   const [displayedVersion, setDisplayedVersion] = useState<FlowVersion | null>(null);
   const [draftVersionNumber, setDraftVersionNumber] = useState<number | null>(null);
   const [actionHistory, setActionHistory] = useState<VersionChange[]>([]);
+  const [agentPresets, setAgentPresets] = useState<AgentPreset[]>([]);
   const savedViewport = useRef<EditorViewport | null>(null);
   const viewportChangedByUser = useRef(false);
   const canvasRef = useRef<HTMLDivElement | null>(null);
   const nameInputRef = useRef<HTMLInputElement | null>(null);
   const { fitView, getViewport, screenToFlowPosition } = useReactFlow();
   const definition = useMemo(() => definitionFrom(nodes, edges, editorViewport), [nodes, edges, editorViewport]);
-  const validation = useMemo(() => validateFlow(definition), [definition]);
+  // Validate against the current Agent library once it has loaded; before then, fall back to the
+  // built-in defaults so seeded agents are not briefly flagged as missing.
+  const knownAgentKeys = useMemo(() => agentPresets.length ? new Set(agentPresets.map((preset) => preset.preset_key)) : undefined, [agentPresets]);
+  const validation = useMemo(() => validateFlow(definition, knownAgentKeys), [definition, knownAgentKeys]);
   const zoomMode = getFlowZoomMode(editorViewport.zoom);
   const changeSequence = useRef(0);
   const dirtyRef = useRef(false);
@@ -490,6 +505,15 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     setDirty(true);
     setSaveStatus('unsaved');
   }, []);
+
+  useEffect(() => {
+    if (readOnly) return;
+    let cancelled = false;
+    void api.listAgentPresets().then(({ presets }) => { if (!cancelled) setAgentPresets(presets); }).catch((error) => {
+      if (!cancelled) toast.error(error instanceof Error ? `Agent presets could not be loaded: ${error.message}` : 'Agent presets could not be loaded.');
+    });
+    return () => { cancelled = true; };
+  }, [readOnly]);
 
   useEffect(() => {
     let cancelled = false;
@@ -595,12 +619,12 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
   }, [markDirty, setEdges]);
   const insertNode = useCallback((type: FlowNode['type'], position: { x: number; y: number }) => {
     if (type === 'begin' && nodes.some((node) => node.data.flowNode.type === 'begin')) return;
-    const flowNode = makeNode(type, position.x, position.y);
+    const flowNode = makeNode(type, position.x, position.y, agentPresets);
     setNodes((current) => [...current.map((node) => ({ ...node, selected: false })), { id: flowNode.id, type: 'flowBlock', position, data: { flowNode }, style: flowNode.type === 'note' ? { width: flowNode.config.width ?? 220, height: flowNode.config.height ?? 120 } : { height: FLOW_NODE_HEIGHTS[flowNode.type] }, selected: true }]);
     setSelectedId(flowNode.id);
     setOpenPanel(null);
     markDirty();
-  }, [markDirty, nodes, setNodes]);
+  }, [agentPresets, markDirty, nodes, setNodes]);
   const addFromPalette = useCallback((type: FlowNode['type']) => {
     const bounds = canvasRef.current?.getBoundingClientRect();
     const offset = (nodes.length % 4) * 24;
@@ -686,6 +710,9 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     }
     return true;
   }, [saveDraftNow]);
+  const openAgentInLibrary = useCallback((presetKey: string) => {
+    void flushPendingSave().then((saved) => { if (saved) openAgent(presetKey); });
+  }, [flushPendingSave, openAgent]);
 
   useEffect(() => {
     if (readOnly || !dirty || saving || saveStatus === 'error') return;
@@ -792,7 +819,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
         </ReactFlow>
         {!readOnly && !validation.valid && <div className="validation-popover"><strong>Flow needs attention</strong>{validation.problems.slice(0, 4).map((problem) => <button key={`${problem.code}-${problem.nodeId}-${problem.connectionId}`} onClick={() => { if (problem.nodeId) { setSelectedId(problem.nodeId); setOpenPanel('inspector'); } }}><Icon name="alert" size={14} />{problem.message}</button>)}</div>}
       </div>
-      {!readOnly && inspectorVisible && <Inspector node={selected} nodes={nodes} edges={edges} open update={updateSelected} connectOutcome={connectOutcome} remove={removeSelected} close={() => setOpenPanel(null)} />}
+      {!readOnly && inspectorVisible && <Inspector node={selected} nodes={nodes} edges={edges} presets={agentPresets} open update={updateSelected} connectOutcome={connectOutcome} remove={removeSelected} close={() => setOpenPanel(null)} openAgent={openAgentInLibrary} />}
       <VersionHistoryPanel open={openPanel === 'history'} title={historyTitle} comparisonLabel={historyComparisonLabel} changes={historyChanges} close={() => setOpenPanel(null)} />
     </div>
   </div>;

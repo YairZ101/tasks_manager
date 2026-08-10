@@ -37,4 +37,17 @@ describe('application store', () => {
     await useAppStore.getState().bootstrap();
     expect(useAppStore.getState()).toMatchObject({ loading: false, bootError: 'The server did not respond.' });
   });
+  test('opens the Agents tab focused on a specific preset and leaves the flow editor', () => {
+    useAppStore.setState({ section: 'flows', editingFlowId: 7, viewingFlowVersionId: 3, agentsFocusPresetKey: null });
+    useAppStore.getState().openAgent('release-engineer');
+    expect(useAppStore.getState()).toMatchObject({ section: 'agents', agentsFocusPresetKey: 'release-engineer', editingFlowId: null, viewingFlowVersionId: null });
+  });
+  test('clears the focused preset once consumed and when leaving the Agents tab', () => {
+    useAppStore.setState({ section: 'agents', agentsFocusPresetKey: 'planning' });
+    useAppStore.getState().clearAgentsFocus();
+    expect(useAppStore.getState().agentsFocusPresetKey).toBeNull();
+    useAppStore.setState({ agentsFocusPresetKey: 'planning' });
+    useAppStore.getState().setSection('work');
+    expect(useAppStore.getState().agentsFocusPresetKey).toBeNull();
+  });
 });

@@ -13,10 +13,14 @@
     "start": "bun ./packages/backend/src/index.ts",
     "dev": "concurrently --kill-others -n be,fe -c blue,green \"bun --watch packages/backend/src/index.ts\" \"cd packages/frontend && bun run dev\"",
     "build": "cd packages/frontend && bun run build",
-    "test": "bun run test:core && bun run test:be && bun run test:fe",
+    "test": "bun run typecheck && bun run test:core && bun run test:be && bun run test:fe",
     "test:core": "cd packages/flow-core && bun test",
     "test:be": "cd packages/backend && bun test",
     "test:fe": "cd packages/frontend && bun run test",
+    "typecheck": "bun run typecheck:core && bun run typecheck:be && bun run typecheck:fe",
+    "typecheck:core": "cd packages/flow-core && bun run typecheck",
+    "typecheck:be": "cd packages/backend && bun run typecheck",
+    "typecheck:fe": "cd packages/frontend && bun run typecheck",
     "prepublishOnly": "cd packages/frontend && bun run build"
   },
   "devDependencies": {

@@ -5,7 +5,7 @@ import path from 'path';
 import { compileFlow, type FlowDefinition } from '@flow/core';
 import { closeDb, getDb, initDb } from '../db/database.js';
 import { getRun, getTaskWithState } from './repository.js';
-import { initEngine, shutdownEngine, startRun, stopRun } from './engine.js';
+import { initEngine, shutdownEngine, snapshotAgentPrompts, startRun, stopRun } from './engine.js';
 
 let root = '';
 
@@ -17,7 +17,7 @@ function seed(command: string): number {
     schemaVersion: 1,
     nodes: [
       { id: 'begin', type: 'begin', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Begin' } },
-      { id: 'check', type: 'check', typeVersion: 1, position: { x: 1, y: 0 }, config: { name: 'Check', command, workingDirectory: '.', timeoutMs: 10_000, effectLevel: 'read_only' } },
+      { id: 'check', type: 'check', typeVersion: 1, position: { x: 1, y: 0 }, config: { name: 'Check', command, workingDirectory: '.', timeoutMs: 10_000 } },
       { id: 'done', type: 'result', typeVersion: 1, position: { x: 2, y: 0 }, config: { name: 'Done', category: 'completed' } },
       { id: 'paused', type: 'result', typeVersion: 1, position: { x: 2, y: 1 }, config: { name: 'Paused', category: 'paused' } },
     ],
@@ -64,5 +64,28 @@ describe('persistent execution engine', () => {
     expect(getRun(run.id)?.status).toBe('stopped');
     expect(getTaskWithState(1)?.operational_state).toBe('backlog');
     expect(getDb().query<{ status: string }, []>('SELECT status FROM attempts WHERE run_id=1 ORDER BY sequence DESC LIMIT 1').get()?.status).toBe('cancelled');
+  });
+});
+
+describe('agent prompt resolution at run start', () => {
+  const withAgent = (preset: string): FlowDefinition => ({
+    schemaVersion: 1,
+    nodes: [{ id: 'a', type: 'agent', typeVersion: 1, position: { x: 0, y: 0 }, config: { name: 'Worker', preset } }],
+    connections: [],
+  });
+
+  test('snapshots each referenced agent prompt live from the library', () => {
+    const snapshot = JSON.parse(snapshotAgentPrompts(withAgent('development'))) as Record<string, string>;
+    expect(snapshot.development).toContain('Implement the task');
+  });
+
+  test('reflects a live edit to an agent, without any republish step', () => {
+    getDb().query('UPDATE agent_presets SET system_prompt = ? WHERE preset_key = ?').run('Ship it carefully.', 'development');
+    const snapshot = JSON.parse(snapshotAgentPrompts(withAgent('development'))) as Record<string, string>;
+    expect(snapshot.development).toBe('Ship it carefully.');
+  });
+
+  test('refuses to start a Run that references an agent no longer in the library', () => {
+    expect(() => snapshotAgentPrompts(withAgent('ghost-agent'))).toThrow(/no longer exists/);
   });
 });

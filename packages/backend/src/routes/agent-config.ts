@@ -22,6 +22,7 @@ async function runAgentTest(config: AgentConfig, onOutput: (line: string) => voi
         title: testPrompt,
         description: '',
         acceptance: '',
+        preferred_flow_id: null,
         resolution: 'open',
         sort_order: 0,
         created_at: '',

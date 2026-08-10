@@ -26,10 +26,27 @@ describe('flow validation', () => {
     expect(validateFlow(flow).problems.some((problem) => problem.code === 'fan_out')).toBe(true);
   });
 
-  test('compiles stable Agent instructions', () => {
+  test('compiles a valid Flow, keeping Agent references without baking any prompt', () => {
     const compiled = compileFlow(createMinimalFlow());
     const agent = compiled.nodes.find((node) => node.type === 'agent');
     expect(agent?.type).toBe('agent');
-    if (agent?.type === 'agent') expect(agent.config.compiledInstructions).toContain('Implement the task');
+    if (agent?.type === 'agent') {
+      expect(agent.config.preset).toBe('development');
+      expect('compiledInstructions' in agent.config).toBe(false);
+      expect('systemPrompt' in agent.config).toBe(false);
+    }
+  });
+
+  test('validates Agent blocks against the known agent library', () => {
+    const flow = createMinimalFlow();
+    const agent = flow.nodes.find((node) => node.type === 'agent');
+    if (!agent || agent.type !== 'agent') throw new Error('Expected Agent block');
+    agent.config = { ...agent.config, preset: 'release-engineer' };
+    // An agent that is not in the library is invalid...
+    expect(validateFlow(flow).problems.some((problem) => problem.code === 'agent_preset')).toBe(true);
+    // ...unless the caller supplies the current library keys.
+    expect(validateFlow(flow, new Set(['release-engineer'])).valid).toBe(true);
+    expect(() => compileFlow(flow)).toThrow();
+    expect(compileFlow(flow, new Set(['release-engineer'])).nodes.length).toBe(flow.nodes.length);
   });
 });

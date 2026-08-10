@@ -52,6 +52,7 @@ init.post('/generate-prefix', async (c) => {
           title: prompt,
           description: '',
           acceptance: '',
+          preferred_flow_id: null,
           resolution: 'open',
           sort_order: 0,
           created_at: '',

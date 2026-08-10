@@ -8,6 +8,7 @@ import WorkBoard from './components/WorkBoard.js';
 import TaskPanel from './components/TaskPanel.js';
 import TaskComposer from './components/TaskComposer.js';
 import FlowLibrary from './components/FlowLibrary.js';
+import AgentsLibrary from './components/AgentsLibrary.js';
 import SettingsPanel from './components/SettingsPanel.js';
 import InitScreen from './components/InitScreen.js';
 
@@ -36,6 +37,10 @@ export function sidebarCollapsedForContext(editingFlow: boolean, width: number) 
   return editingFlow || shouldAutoCollapseSidebar(width);
 }
 
+export function canNavigateFromAgents(current: 'work' | 'flows' | 'agents', target: 'work' | 'flows' | 'agents', dirty: boolean, confirmDiscard: () => boolean) {
+  return current !== 'agents' || target === 'agents' || !dirty || confirmDiscard();
+}
+
 export function queueForShortcutCode(code: string): typeof views[number][0] | null {
   const index = Number(code.replace('Digit', '')) - 1;
   return index >= 0 && index < views.length ? views[index][0] : null;
@@ -45,8 +50,15 @@ function AppContent() {
   const store = useAppStore();
   const editingFlow = store.section === 'flows' && store.editingFlowId !== null;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarCollapsedForContext(editingFlow, window.innerWidth));
+  const [agentsDirty, setAgentsDirty] = useState(false);
   const previousViewportWidth = useRef(window.innerWidth);
   useEventSource(!store.loading && !store.bootError);
+  const navigateToSection = (section: 'work' | 'flows' | 'agents') => {
+    if (canNavigateFromAgents(store.section, section, agentsDirty, () => window.confirm('Discard unsaved changes to this Agent preset?'))) store.setSection(section);
+  };
+  const navigateToWorkView = (view: typeof views[number][0]) => {
+    if (canNavigateFromAgents(store.section, 'work', agentsDirty, () => window.confirm('Discard unsaved changes to this Agent preset?'))) store.setWorkView(view);
+  };
   useEffect(() => { void store.bootstrap(); }, [store.bootstrap]);
   useLayoutEffect(() => {
     setSidebarCollapsed(sidebarCollapsedForContext(editingFlow, window.innerWidth));
@@ -65,16 +77,16 @@ function AppContent() {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
       if (!event.altKey || target?.matches('input, textarea, select, [contenteditable="true"]')) return;
-      if (event.code === 'KeyN') { event.preventDefault(); useAppStore.getState().setWorkView('backlog'); useAppStore.getState().setCreateOpen(true); return; }
+      if (event.code === 'KeyN') { event.preventDefault(); if (!canNavigateFromAgents(useAppStore.getState().section, 'work', agentsDirty, () => window.confirm('Discard unsaved changes to this Agent preset?'))) return; useAppStore.getState().setWorkView('backlog'); useAppStore.getState().setCreateOpen(true); return; }
       const queue = queueForShortcutCode(event.code);
       if (queue) {
         event.preventDefault();
-        useAppStore.getState().setWorkView(queue);
+        if (canNavigateFromAgents(useAppStore.getState().section, 'work', agentsDirty, () => window.confirm('Discard unsaved changes to this Agent preset?'))) useAppStore.getState().setWorkView(queue);
       }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, []);
+  }, [agentsDirty]);
 
   if (store.loading) return <div className="boot"><AppMark variant="loading" /><span>Loading workspace…</span></div>;
   if (store.bootError) return <div className="boot boot-error" role="alert"><AppMark /><div><strong>Workspace unavailable</strong><span>{store.bootError}</span><button className="button ghost" onClick={() => { void store.bootstrap(); }}>Retry</button></div></div>;
@@ -96,15 +108,16 @@ function AppContent() {
         </button>
         <div className="brand"><AppMark /><span><strong>Flow</strong><small>local agent control</small></span></div>
         <nav aria-label="Primary navigation">
-          <button className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => store.setSection('work')}><Icon name="grid" /><span>Work</span></button>
+          <button aria-label="Work" className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => navigateToSection('work')}><Icon name="grid" /><span>Work</span></button>
           <div className="rail-views">
             {views.map(([key, label, icon]) => (
-              <button key={key} className={store.section === 'work' && store.workView === key ? 'active' : ''} onClick={() => store.setWorkView(key)} title={`Option ${views.findIndex(([view]) => view === key) + 1}`} aria-label={`${label}, Option ${views.findIndex(([view]) => view === key) + 1}`}>
+              <button key={key} className={store.section === 'work' && store.workView === key ? 'active' : ''} onClick={() => navigateToWorkView(key)} title={`Option ${views.findIndex(([view]) => view === key) + 1}`} aria-label={`${label}, Option ${views.findIndex(([view]) => view === key) + 1}`}>
                 <Icon name={icon} /><span>{label}</span><em>{counts.get(key)}</em>
               </button>
             ))}
           </div>
-          <button className={`rail-primary ${store.section === 'flows' ? 'active' : ''}`} onClick={() => store.setSection('flows')}><Icon name="nodes" /><span>Flows</span></button>
+          <button aria-label="Flows" className={`rail-primary ${store.section === 'flows' ? 'active' : ''}`} onClick={() => navigateToSection('flows')}><Icon name="nodes" /><span>Flows</span></button>
+          <button aria-label="Agents" className={`rail-primary ${store.section === 'agents' ? 'active' : ''}`} onClick={() => navigateToSection('agents')}><Icon name="agent" /><span>Agents</span></button>
         </nav>
         <div className="rail-bottom">
           <button onClick={() => store.setSettingsOpen(true)}><Icon name="settings" /><span>Settings</span></button>
@@ -113,14 +126,14 @@ function AppContent() {
       </aside>
       <main className="workspace">
         <header className="topbar">
-          <div><span className="eyebrow">{store.section === 'work' ? 'OPERATIONAL VIEW' : 'AUTOMATION DESIGN'}</span><h1>{store.section === 'work' ? 'Work control' : store.editingFlowId ? 'Flow editor' : 'Flow library'}</h1></div>
+          <div><span className="eyebrow">{store.section === 'work' ? 'OPERATIONAL VIEW' : store.section === 'flows' ? 'AUTOMATION DESIGN' : 'AGENT CONFIGURATION'}</span><h1>{store.section === 'work' ? 'Work control' : store.section === 'agents' ? 'Agents' : store.editingFlowId ? 'Flow editor' : 'Flow library'}</h1></div>
           <div className="topbar-actions">
-            <span className="capacity"><i style={{ width: `${Math.min(100, store.runner.activeCount / Math.max(1, store.runner.maxConcurrent) * 100)}%` }} />Capacity {store.runner.activeCount}/{store.runner.maxConcurrent}</span>
+            <span className="capacity"><i style={{ transform: `scaleX(${Math.min(1, store.runner.activeCount / Math.max(1, store.runner.maxConcurrent))})` }} />Capacity {store.runner.activeCount}/{store.runner.maxConcurrent}</span>
             {store.section === 'work' && store.workView === 'backlog' && <button className="button primary" onClick={() => store.setCreateOpen(true)} title="Option + N" aria-keyshortcuts="Alt+N"><Icon name="plus" />New task <KeyboardShortcut keys={['⌥', 'N']} /></button>}
           </div>
         </header>
         <div className="workspace-body">
-          {store.section === 'work' ? <WorkBoard /> : store.editingFlowId ? (
+          {store.section === 'work' ? <WorkBoard /> : store.section === 'agents' ? <AgentsLibrary onDirtyChange={setAgentsDirty} focusPresetKey={store.agentsFocusPresetKey} onFocusConsumed={store.clearAgentsFocus} /> : store.editingFlowId ? (
             <Suspense fallback={<div className="boot inline">Loading canvas…</div>}><FlowEditor flowId={store.editingFlowId} versionId={store.viewingFlowVersionId} /></Suspense>
           ) : <FlowLibrary />}
         </div>

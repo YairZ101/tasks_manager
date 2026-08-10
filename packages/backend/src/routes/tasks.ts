@@ -128,7 +128,7 @@ tasks.patch('/:id', async (c) => {
   const active = db.query<{ id: number }, [number]>("SELECT id FROM runs WHERE task_id = ? AND status IN ('queued','running','waiting','attention')").get(id);
   if (active && body.resolution !== undefined) return c.json({ error: 'Stop the active Run before changing task state.' }, 409);
   const updates: string[] = [];
-  const params: unknown[] = [];
+  const params: (string | number | null)[] = [];
   for (const field of ['title', 'description', 'acceptance'] as const) {
     if (body[field] !== undefined) {
       if (typeof body[field] !== 'string') return c.json({ error: `${field} must be a string.` }, 400);
@@ -139,7 +139,7 @@ tasks.patch('/:id', async (c) => {
   }
   if (body.resolution !== undefined) {
     if (!['open', 'completed', 'cancelled'].includes(String(body.resolution))) return c.json({ error: 'Invalid resolution.' }, 400);
-    updates.push('resolution = ?'); params.push(body.resolution);
+    updates.push('resolution = ?'); params.push(String(body.resolution));
   }
   if (body.sort_order !== undefined) {
     if (typeof body.sort_order !== 'number' || !Number.isFinite(body.sort_order)) return c.json({ error: 'sort_order must be a finite number.' }, 400);

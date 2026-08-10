@@ -81,9 +81,10 @@ export class CliAdapter {
       detached: true,
     });
 
-    // Capture spawn errors (e.g. ENOENT) — emitted asynchronously
-    let spawnError: Error | null = null;
-    proc.on('error', (err) => { spawnError = err; });
+    // Capture spawn errors (e.g. ENOENT) — emitted asynchronously. A holder object avoids the
+    // control-flow narrowing that a `let` assigned only inside the callback would trigger.
+    const spawnError: { current: Error | null } = { current: null };
+    proc.on('error', (err) => { spawnError.current = err; });
 
     const pid = proc.pid;
 
@@ -178,8 +179,8 @@ export class CliAdapter {
     if (killTimer) clearTimeout(killTimer);
     signal.removeEventListener('abort', abortHandler);
 
-    if (spawnError) {
-      throw new Error(`Failed to start process "${finalArgv[0]}": ${spawnError.message}`);
+    if (spawnError.current) {
+      throw new Error(`Failed to start process "${finalArgv[0]}": ${spawnError.current.message}`);
     }
 
     if (signal.aborted) {

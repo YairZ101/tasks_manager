@@ -127,6 +127,13 @@ function createSchema(database: Database): void {
       created_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
+    CREATE TABLE IF NOT EXISTS workspace_config (
+      id            INTEGER PRIMARY KEY CHECK (id = 1),
+      setup_command TEXT DEFAULT NULL CHECK (setup_command IS NULL OR length(setup_command) BETWEEN 1 AND 2000),
+      timeout_ms    INTEGER NOT NULL DEFAULT 600000 CHECK (timeout_ms BETWEEN 1000 AND 3600000),
+      updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
     CREATE TABLE IF NOT EXISTS flows (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
       name              TEXT NOT NULL CHECK (length(name) BETWEEN 1 AND 200),
@@ -210,6 +217,35 @@ function createSchema(database: Database): void {
     CREATE INDEX IF NOT EXISTS idx_attempts_queue ON attempts(status, id);
     CREATE INDEX IF NOT EXISTS idx_attempts_run ON attempts(run_id, sequence);
 
+    CREATE TABLE IF NOT EXISTS workspace_preparations (
+      id                 INTEGER PRIMARY KEY AUTOINCREMENT,
+      workspace_id       INTEGER NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+      run_id             INTEGER NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      sequence           INTEGER NOT NULL,
+      command            TEXT NOT NULL CHECK (length(command) BETWEEN 1 AND 2000),
+      status             TEXT NOT NULL CHECK (status IN ('queued', 'running', 'succeeded', 'failed', 'timed_out', 'interrupted', 'cancelled')),
+      exit_code          INTEGER DEFAULT NULL,
+      pid                INTEGER DEFAULT NULL,
+      process_started_at TEXT DEFAULT NULL,
+      created_at         TEXT NOT NULL DEFAULT (datetime('now')),
+      started_at         TEXT DEFAULT NULL,
+      finished_at        TEXT DEFAULT NULL,
+      UNIQUE(run_id, sequence)
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_preparations_queue ON workspace_preparations(status, id);
+    CREATE INDEX IF NOT EXISTS idx_workspace_preparations_run ON workspace_preparations(run_id, sequence);
+
+    CREATE TABLE IF NOT EXISTS workspace_preparation_logs (
+      id             INTEGER PRIMARY KEY AUTOINCREMENT,
+      preparation_id INTEGER NOT NULL REFERENCES workspace_preparations(id) ON DELETE CASCADE,
+      timestamp      TEXT NOT NULL DEFAULT (datetime('now')),
+      level          TEXT NOT NULL CHECK (level IN ('info', 'error')),
+      message        TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_workspace_preparation_logs ON workspace_preparation_logs(preparation_id, id);
+
     CREATE TABLE IF NOT EXISTS logs (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       task_id    INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
@@ -253,7 +289,13 @@ function createSchema(database: Database): void {
       UPDATE agent_presets SET updated_at = datetime('now') WHERE id = NEW.id;
     END;
 
+    CREATE TRIGGER IF NOT EXISTS workspace_config_updated_at AFTER UPDATE ON workspace_config
+    BEGIN
+      UPDATE workspace_config SET updated_at = datetime('now') WHERE id = NEW.id;
+    END;
+
     INSERT INTO agent_config (id) VALUES (1) ON CONFLICT DO NOTHING;
+    INSERT INTO workspace_config (id) VALUES (1) ON CONFLICT DO NOTHING;
     PRAGMA user_version = 1;
   `);
   const presetsSeeded = database.query<{ value: string }, [string]>('SELECT value FROM app_meta WHERE key = ?').get('agent_presets_seeded');

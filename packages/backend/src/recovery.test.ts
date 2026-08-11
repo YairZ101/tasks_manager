@@ -25,4 +25,20 @@ describe('run recovery', () => {
     expect(getDb().query<{ status: string }, []>('SELECT status FROM attempts WHERE id=1').get()?.status).toBe('interrupted');
     expect(getDb().query<{ status: string }, []>('SELECT status FROM attempts WHERE id=2').get()?.status).toBe('queued');
   });
+
+  test('marks a running Workspace preparation interrupted', () => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-preparation-recovery-'));
+    const db = initDb(root);
+    db.exec(`
+      INSERT INTO tasks(task_key,title) VALUES('TST-1','Task');
+      INSERT INTO flows(name,is_default) VALUES('Flow',1);
+      INSERT INTO flow_versions(flow_id,version,state,definition_json,compiled_json) VALUES(1,1,'published','{}','{}');
+      INSERT INTO workspaces(task_id,repo_root,worktree_path,state) VALUES(1,'${root.replaceAll("'", "''")}', '${root.replaceAll("'", "''")}', 'active');
+      INSERT INTO runs(task_id,flow_version_id,workspace_id,status) VALUES(1,1,1,'queued');
+      INSERT INTO workspace_preparations(workspace_id,run_id,sequence,command,status) VALUES(1,1,1,'bun install','running');
+    `);
+    expect(runCrashRecovery()).toBe(1);
+    expect(db.query<{ status: string }, []>('SELECT status FROM runs WHERE id=1').get()?.status).toBe('attention');
+    expect(db.query<{ status: string }, []>('SELECT status FROM workspace_preparations WHERE id=1').get()?.status).toBe('interrupted');
+  });
 });

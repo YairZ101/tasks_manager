@@ -5,7 +5,7 @@ import path from 'path';
 import { compileFlow, type FlowDefinition } from '@flow/core';
 import { closeDb, getDb, initDb } from '../db/database.js';
 import { getRun, getTaskWithState } from './repository.js';
-import { initEngine, shutdownEngine, snapshotAgentPrompts, startRun, stopRun } from './engine.js';
+import { initEngine, retryWorkspaceSetup, shutdownEngine, snapshotAgentPrompts, startRun, stopRun } from './engine.js';
 
 let root = '';
 
@@ -64,6 +64,28 @@ describe('persistent execution engine', () => {
     expect(getRun(run.id)?.status).toBe('stopped');
     expect(getTaskWithState(1)?.operational_state).toBe('backlog');
     expect(getDb().query<{ status: string }, []>('SELECT status FROM attempts WHERE run_id=1 ORDER BY sequence DESC LIMIT 1').get()?.status).toBe('cancelled');
+  });
+
+  test('prepares the Workspace before Begin and preserves failed setup retries', async () => {
+    const flowId = seed("bun -e \"process.exit(await Bun.file('deps-ready').exists() ? 0 : 1)\"");
+    getDb().query('UPDATE workspace_config SET setup_command = ? WHERE id = 1').run("bun -e \"console.error('install failed'); process.exit(7)\"");
+    const run = await startRun(1, flowId);
+
+    await waitFor(() => getRun(run.id)?.status === 'attention');
+    expect(getTaskWithState(1)?.active_block_name).toBe('Workspace setup');
+    expect(getDb().query<{ count: number }, [number]>('SELECT COUNT(*) AS count FROM attempts WHERE run_id = ?').get(run.id)?.count).toBe(0);
+    expect(getDb().query<{ status: string; exit_code: number }, [number]>('SELECT status, exit_code FROM workspace_preparations WHERE run_id = ?').get(run.id)).toEqual({ status: 'failed', exit_code: 7 });
+    expect(getDb().query<{ message: string }, []>('SELECT message FROM workspace_preparation_logs LIMIT 1').get()?.message).toBe('install failed');
+
+    getDb().query('UPDATE workspace_config SET setup_command = ? WHERE id = 1').run("bun -e \"console.log('dependencies ready'); await Bun.write('deps-ready', 'yes')\"");
+    await retryWorkspaceSetup(run.id);
+    await waitFor(() => getRun(run.id)?.status === 'finished');
+
+    expect(getRun(run.id)?.result_category).toBe('completed');
+    expect(getDb().query<{ sequence: number; status: string; command: string }, [number]>('SELECT sequence, status, command FROM workspace_preparations WHERE run_id = ? ORDER BY sequence DESC LIMIT 1').get(run.id)).toEqual({
+      sequence: 2, status: 'succeeded', command: "bun -e \"console.log('dependencies ready'); await Bun.write('deps-ready', 'yes')\"",
+    });
+    expect(getDb().query<{ count: number }, [number]>('SELECT COUNT(*) AS count FROM attempts WHERE run_id = ?').get(run.id)?.count).toBeGreaterThan(0);
   });
 });
 

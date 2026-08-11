@@ -1,7 +1,7 @@
 import type { Database } from 'bun:sqlite';
 import type { FlowDefinition } from '@flow/core';
 import { getDb } from '../db/database.js';
-import type { Flow, FlowVersion, FlowVersionRow, Task, TaskLink, TaskWithState, WorkflowRun } from '../types.js';
+import type { Flow, FlowVersion, FlowVersionRow, Task, TaskLink, TaskWithState, WorkflowRun, WorkspacePreparation, WorkspacePreparationLog } from '../types.js';
 
 export function parseFlowVersion(row: FlowVersionRow): FlowVersion {
   const { definition_json, compiled_json, action_history_json, ...version } = row;
@@ -41,10 +41,15 @@ const TASK_WITH_STATE_SQL = `
     r.status AS active_run_status,
     r.reason AS active_run_reason,
     a.block_id AS active_block_id,
-    (SELECT json_extract(value, '$.config.name')
-      FROM json_each(COALESCE(fv.compiled_json, fv.definition_json), '$.nodes')
-      WHERE json_extract(value, '$.id') = a.block_id LIMIT 1
-    ) AS active_block_name,
+    CASE WHEN EXISTS (
+      SELECT 1 FROM workspace_preparations wp WHERE wp.run_id = r.id AND wp.status IN ('queued', 'running')
+    ) THEN 'Preparing workspace' WHEN (
+      SELECT wp.status FROM workspace_preparations wp WHERE wp.run_id = r.id ORDER BY wp.sequence DESC LIMIT 1
+    ) IN ('failed', 'timed_out', 'interrupted') THEN 'Workspace setup' ELSE (
+      SELECT json_extract(value, '$.config.name')
+        FROM json_each(COALESCE(fv.compiled_json, fv.definition_json), '$.nodes')
+        WHERE json_extract(value, '$.id') = a.block_id LIMIT 1
+    ) END AS active_block_name,
     w.state AS workspace_state
   FROM tasks t
   LEFT JOIN runs r ON r.task_id = t.id AND r.status IN ('queued', 'running', 'waiting', 'attention')
@@ -104,5 +109,10 @@ export function getRunDetail(id: number, database: Database = getDb()) {
   const workspace = run.workspace_id
     ? database.query('SELECT * FROM workspaces WHERE id = ?').get(run.workspace_id)
     : null;
-  return { run, task, flowVersion: version, attempts, workspace };
+  const preparations = database.query<WorkspacePreparation, [number]>('SELECT * FROM workspace_preparations WHERE run_id = ? ORDER BY sequence ASC').all(id)
+    .map((preparation) => ({
+      ...preparation,
+      logs: database.query<WorkspacePreparationLog, [number]>('SELECT * FROM workspace_preparation_logs WHERE preparation_id = ? ORDER BY id ASC').all(preparation.id),
+    }));
+  return { run, task, flowVersion: version, attempts, workspace, preparations };
 }

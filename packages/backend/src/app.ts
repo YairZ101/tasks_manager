@@ -12,6 +12,7 @@ import attemptsRoutes from './routes/attempts.js';
 import workspacesRoutes from './routes/workspaces.js';
 import agentConfigRoutes from './routes/agent-config.js';
 import agentPresetRoutes from './routes/agent-presets.js';
+import workspaceConfigRoutes from './routes/workspace-config.js';
 import initRoutes from './routes/init.js';
 import type { ProjectConfig } from './types.js';
 
@@ -42,6 +43,7 @@ export function createApp(repoRoot = process.cwd()): Hono {
   app.route('/workspaces', workspacesRoutes);
   app.route('/agent-config', agentConfigRoutes);
   app.route('/agent-presets', agentPresetRoutes);
+  app.route('/workspace-config', workspaceConfigRoutes(repoRoot));
   app.route('/init', initRoutes);
   return app;
 }

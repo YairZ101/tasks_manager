@@ -17,7 +17,7 @@ describe('Flow database', () => {
     initDb(root);
     const db = getDb();
     const tables = db.query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'").all().map((row) => row.name);
-    for (const name of ['app_meta', 'tasks', 'flows', 'flow_versions', 'runs', 'attempts', 'workspaces', 'logs', 'events', 'agent_presets']) expect(tables).toContain(name);
+    for (const name of ['app_meta', 'tasks', 'flows', 'flow_versions', 'runs', 'attempts', 'workspaces', 'logs', 'events', 'agent_presets', 'workspace_config', 'workspace_preparations', 'workspace_preparation_logs']) expect(tables).toContain(name);
     const taskColumns = db.query<{ name: string }, []>('PRAGMA table_info(tasks)').all().map((column) => column.name);
     expect(taskColumns).not.toContain('queue_state');
     const runColumns = db.query<{ name: string }, []>('PRAGMA table_info(runs)').all().map((column) => column.name);
@@ -26,6 +26,7 @@ describe('Flow database', () => {
     expect(db.query<{ value: string }, []>("SELECT value FROM app_meta WHERE key='schema_family'").get()?.value).toBe('flow');
     expect(db.query<{ value: string }, []>("SELECT value FROM app_meta WHERE key='schema_version'").get()?.value).toBe('2');
     expect(db.query<{ max_concurrent_executions: number }, []>('SELECT max_concurrent_executions FROM agent_config WHERE id=1').get()?.max_concurrent_executions).toBe(3);
+    expect(db.query<{ setup_command: string | null; timeout_ms: number }, []>('SELECT setup_command, timeout_ms FROM workspace_config WHERE id=1').get()).toEqual({ setup_command: null, timeout_ms: 600000 });
     expect(db.query<{ count: number }, []>('SELECT COUNT(*) AS count FROM agent_presets').get()?.count).toBe(5);
   });
 

@@ -1,6 +1,6 @@
 import { Hono } from 'hono';
 import { getDb } from '../db/database.js';
-import { decide, retryRun, startRun, stopRun } from '../flow/engine.js';
+import { decide, retryRun, retryWorkspaceSetup, startRun, stopRun } from '../flow/engine.js';
 import { getRunDetail } from '../flow/repository.js';
 import type { WorkflowRun } from '../types.js';
 
@@ -28,6 +28,7 @@ runs.get('/:id', (c) => {
 
 runs.post('/:id/stop', async (c) => c.json({ run: await stopRun(Number(c.req.param('id'))) }));
 runs.post('/:id/retry', async (c) => c.json({ run: await retryRun(Number(c.req.param('id'))) }));
+runs.post('/:id/retry-setup', async (c) => c.json({ run: await retryWorkspaceSetup(Number(c.req.param('id'))) }));
 
 runs.post('/:id/decisions/:attemptId', async (c) => {
   const db = getDb();

@@ -12,7 +12,7 @@ function terminateOwnedProcess(pid: number, startedAt: string | null): void {
 export function runCrashRecovery(): number {
   const db = getDb();
   const running = db.query<{ pid: number | null; process_started_at: string | null }, []>(
-    "SELECT pid, process_started_at FROM attempts WHERE status = 'running'"
+    "SELECT pid, process_started_at FROM attempts WHERE status = 'running' UNION ALL SELECT pid, process_started_at FROM workspace_preparations WHERE status = 'running'"
   ).all();
   for (const attempt of running) if (attempt.pid) terminateOwnedProcess(attempt.pid, attempt.process_started_at);
   const count = recoverInterruptedRuns();

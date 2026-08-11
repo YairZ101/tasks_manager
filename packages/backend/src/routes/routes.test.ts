@@ -11,6 +11,14 @@ import { initEngine, shutdownEngine } from '../flow/engine.js';
 let root = '';
 let app: ReturnType<typeof createApp>;
 
+async function waitFor(predicate: () => boolean, timeout = 3000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for route state.');
+    await Bun.sleep(20);
+  }
+}
+
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-routes-'));
   initDb(root);
@@ -392,6 +400,12 @@ describe('Flow routes', () => {
   });
 
   test('detects, saves, and tests Workspace setup in a temporary Git worktree', async () => {
+    const nonGit = await app.request('/workspace-config/test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: "bun -e \"console.log('setup')\"", timeout_ms: 60000 }),
+    });
+    expect(nonGit.status).toBe(409);
+    expect(await nonGit.json()).toEqual({ error: 'Testing workspace setup requires a Git repository.' });
+
     fs.writeFileSync(path.join(root, 'bun.lock'), '');
     fs.writeFileSync(path.join(root, 'README.md'), 'workspace setup test');
     execFileSync('git', ['init'], { cwd: root });
@@ -409,6 +423,11 @@ describe('Flow routes', () => {
     });
     expect(invalid.status).toBe(400);
 
+    const invalidTimeout = await app.request('/workspace-config', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: '', timeout_ms: 999 }),
+    });
+    expect(invalidTimeout.status).toBe(400);
+
     const command = "bun -e \"console.log('isolated setup')\"";
     const tested = await app.request('/workspace-config/test', {
       method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: command, timeout_ms: 60000 }),
@@ -417,11 +436,48 @@ describe('Flow routes', () => {
     expect(await tested.json()).toMatchObject({ success: true, output: 'OUT  isolated setup' });
     expect(fs.readdirSync(path.join(root, '.flow', 'setup-tests'))).toEqual([]);
 
+    const failed = await app.request('/workspace-config/test', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setup_command: "bun -e \"console.error('setup failed'); process.exit(4)\"", timeout_ms: 60000 }),
+    });
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).toMatchObject({ success: false, output: 'ERR  setup failed', error: 'Workspace setup exited with code 4.' });
+    expect(fs.readdirSync(path.join(root, '.flow', 'setup-tests'))).toEqual([]);
+
     const saved = await app.request('/workspace-config', {
       method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: command, timeout_ms: 60000 }),
     });
     expect(saved.status).toBe(200);
     expect(await saved.json()).toMatchObject({ config: { setup_command: command, timeout_ms: 60000 } });
+
+    const disabled = await app.request('/workspace-config', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: '', timeout_ms: 60000 }),
+    });
+    expect(disabled.status).toBe(200);
+    expect(await disabled.json()).toMatchObject({ config: { setup_command: null, timeout_ms: 60000 } });
+  });
+
+  test('returns Workspace preparation history and logs in Run detail', async () => {
+    const command = "bun -e \"console.error('route setup failed'); process.exit(5)\"";
+    getDb().query('UPDATE workspace_config SET setup_command = ?, timeout_ms = ? WHERE id = 1').run(command, 60_000);
+    const taskResponse = await app.request('/tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Prepare workspace' }),
+    });
+    const taskId = (await taskResponse.json() as any).task.id;
+    const runResponse = await app.request('/runs', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: taskId }),
+    });
+    const runId = (await runResponse.json() as any).run.id;
+
+    await waitFor(() => getDb().query<{ status: string }, [number]>('SELECT status FROM runs WHERE id = ?').get(runId)?.status === 'attention');
+    const detail = await app.request(`/runs/${runId}`);
+
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({
+      run: { id: runId, status: 'attention', reason: 'Workspace setup exited with code 5.' },
+      attempts: [],
+      preparations: [{ sequence: 1, status: 'failed', command, exit_code: 5, logs: [{ level: 'error', message: 'route setup failed' }] }],
+    });
   });
 
   test('initializes the agent, project, and selected Flow in one final request', async () => {

@@ -87,6 +87,58 @@ describe('persistent execution engine', () => {
     });
     expect(getDb().query<{ count: number }, [number]>('SELECT COUNT(*) AS count FROM attempts WHERE run_id = ?').get(run.id)?.count).toBeGreaterThan(0);
   });
+
+  test('stops an active Workspace preparation before Begin starts', async () => {
+    const flowId = seed("bun -e \"console.log('check should not run')\"");
+    getDb().query('UPDATE workspace_config SET setup_command = ?, timeout_ms = ? WHERE id = 1')
+      .run("bun -e \"setTimeout(() => {}, 5000)\"", 10_000);
+    const run = await startRun(1, flowId);
+
+    await waitFor(() => getDb().query<{ status: string }, [number]>(
+      'SELECT status FROM workspace_preparations WHERE run_id = ? ORDER BY sequence DESC LIMIT 1',
+    ).get(run.id)?.status === 'running');
+    await stopRun(run.id);
+
+    expect(getRun(run.id)?.status).toBe('stopped');
+    expect(getDb().query<{ status: string }, [number]>(
+      'SELECT status FROM workspace_preparations WHERE run_id = ? ORDER BY sequence DESC LIMIT 1',
+    ).get(run.id)?.status).toBe('cancelled');
+    expect(getDb().query<{ count: number }, [number]>(
+      'SELECT COUNT(*) AS count FROM attempts WHERE run_id = ?',
+    ).get(run.id)?.count).toBe(0);
+
+    await Bun.sleep(100);
+    expect(getRun(run.id)?.status).toBe('stopped');
+    expect(getDb().query<{ count: number }, [number]>(
+      'SELECT COUNT(*) AS count FROM attempts WHERE run_id = ?',
+    ).get(run.id)?.count).toBe(0);
+  });
+
+  test('moves a timed-out Workspace preparation to attention and retries successfully', async () => {
+    const flowId = seed("bun -e \"console.log('check ran')\"");
+    getDb().query('UPDATE workspace_config SET setup_command = ?, timeout_ms = ? WHERE id = 1')
+      .run("bun -e \"setTimeout(() => {}, 5000)\"", 1_000);
+    const run = await startRun(1, flowId);
+
+    await waitFor(() => getRun(run.id)?.status === 'attention', 4_000);
+    expect(getRun(run.id)?.reason).toBe('Workspace setup timed out.');
+    expect(getDb().query<{ status: string }, [number]>(
+      'SELECT status FROM workspace_preparations WHERE run_id = ? ORDER BY sequence DESC LIMIT 1',
+    ).get(run.id)?.status).toBe('timed_out');
+    expect(getDb().query<{ count: number }, [number]>(
+      'SELECT COUNT(*) AS count FROM attempts WHERE run_id = ?',
+    ).get(run.id)?.count).toBe(0);
+
+    getDb().query('UPDATE workspace_config SET setup_command = ?, timeout_ms = ? WHERE id = 1')
+      .run("bun -e \"console.log('dependencies ready')\"", 10_000);
+    await retryWorkspaceSetup(run.id);
+    await waitFor(() => getRun(run.id)?.status === 'finished');
+
+    expect(getRun(run.id)?.result_category).toBe('completed');
+    expect(getDb().query<{ status: string }, [number]>(
+      'SELECT status FROM workspace_preparations WHERE run_id = ? ORDER BY sequence ASC',
+    ).all(run.id).map(({ status }) => status)).toEqual(['timed_out', 'succeeded']);
+  });
 });
 
 describe('agent prompt resolution at run start', () => {

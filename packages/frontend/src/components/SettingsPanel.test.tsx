@@ -34,4 +34,37 @@ describe('SettingsPanel workspace preparation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() => expect(api.updateWorkspaceConfig).toHaveBeenCalledWith({ setup_command: 'bun install --frozen-lockfile', timeout_ms: 600000 }));
   });
+
+  test('shows command output when the temporary worktree test fails', async () => {
+    vi.mocked(api.testWorkspaceConfig).mockResolvedValue({
+      success: false,
+      durationMs: 25,
+      output: 'ERR  install failed',
+      error: 'Workspace setup exited with code 1.',
+    });
+    render(<SettingsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: /Use detected command/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Test setup' }));
+
+    expect(await screen.findByText('Setup test failed')).toBeInTheDocument();
+    expect(screen.getByText('ERR install failed')).toBeInTheDocument();
+  });
+
+  test('shows request errors when the Workspace setup test cannot start', async () => {
+    vi.mocked(api.testWorkspaceConfig).mockRejectedValue(new Error('Testing workspace setup requires a Git repository.'));
+    render(<SettingsPanel />);
+    fireEvent.click(await screen.findByRole('button', { name: /Use detected command/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Test setup' }));
+
+    expect(await screen.findByText('Setup test failed')).toBeInTheDocument();
+    expect(screen.getByText('Testing workspace setup requires a Git repository.')).toBeInTheDocument();
+  });
+
+  test('keeps setup testing disabled until a command is configured', async () => {
+    render(<SettingsPanel />);
+    expect(await screen.findByRole('button', { name: 'Test setup' })).toBeDisabled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(api.updateWorkspaceConfig).toHaveBeenCalledWith({ setup_command: '', timeout_ms: 600000 }));
+  });
 });

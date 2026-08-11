@@ -1,5 +1,5 @@
 import type { FlowDefinition, ValidationResult } from '@flow/core';
-import type { AgentPreset, Attempt, Flow, FlowVersion, FlowVersionAction, RunDetail, Runner, Task, TaskLink, TaskLinkRelationship, TaskLog } from '../domain.js';
+import type { AgentPreset, Attempt, Flow, FlowVersion, FlowVersionAction, RunDetail, Runner, Task, TaskLink, TaskLinkRelationship, TaskLog, WorkspaceConfig } from '../domain.js';
 
 export type AgentSetup = {
   cli_cmd: string;
@@ -8,12 +8,13 @@ export type AgentSetup = {
 };
 
 export type FlowTemplate = 'recommended' | 'minimal' | 'blank';
+export type WorkspaceSetup = { setup_command: string; timeout_ms: number };
 
 const requestTimeoutMs = 10_000;
 
-async function request<T>(path: string, options?: RequestInit): Promise<T> {
+async function request<T>(path: string, options?: RequestInit, timeoutMs = requestTimeoutMs): Promise<T> {
   const controller = new AbortController();
-  const timeout = window.setTimeout(() => controller.abort(), requestTimeoutMs);
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
   let response: Response;
   try {
     response = await fetch(path, { ...options, signal: options?.signal ?? controller.signal, headers: { 'Content-Type': 'application/json', ...options?.headers } });
@@ -78,6 +79,7 @@ export const api = {
   getTask: (id: number) => request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}`),
   updateTask: (id: number, data: Partial<Pick<Task, 'title' | 'description' | 'acceptance' | 'preferred_flow_id' | 'resolution' | 'sort_order'>> & { task_links?: Array<{ task_id: number; relationship: TaskLinkRelationship }> }) =>
     request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  reopenTask: (id: number) => request<{ task: Task; links: TaskLink[] }>(`/tasks/${id}/reopen`, { method: 'POST' }),
   deleteTask: (id: number, force = false) => request<void>(`/tasks/${id}${force ? '?force=true' : ''}`, { method: 'DELETE' }),
   listFlows: () => request<{ flows: Flow[] }>('/flows'),
   getFlow: (flowId: number) => request<{ flow: Flow; versions: FlowVersion[] }>(`/flows/${flowId}`),
@@ -97,16 +99,20 @@ export const api = {
   decide: (runId: number, attemptId: number, outcome_id: string, comment?: string) => request<{ run: RunDetail['run'] }>(`/runs/${runId}/decisions/${attemptId}`, { method: 'POST', body: JSON.stringify({ outcome_id, comment }) }),
   stopRun: (runId: number) => request<{ run: RunDetail['run'] }>(`/runs/${runId}/stop`, { method: 'POST' }),
   retryRun: (runId: number) => request<{ run: RunDetail['run'] }>(`/runs/${runId}/retry`, { method: 'POST' }),
+  retryWorkspaceSetup: (runId: number) => request<{ run: RunDetail['run'] }>(`/runs/${runId}/retry-setup`, { method: 'POST' }),
   getAttempt: (attemptId: number) => request<{ attempt: Attempt; logs: TaskLog[]; hasMore: boolean }>(`/attempts/${attemptId}`),
   getAgentConfig: () => request<{ config: Record<string, unknown> }>('/agent-config'),
   updateAgentConfig: (data: Record<string, unknown>) => request<{ config: Record<string, unknown> }>('/agent-config', { method: 'PUT', body: JSON.stringify(data) }),
   testAgentConfig: (candidate?: AgentSetup) => request<{ success: boolean; durationMs: number; output?: string; error?: string }>('/agent-config/test', { method: 'POST', body: candidate ? JSON.stringify(candidate) : undefined }),
   testAgentConfigStream: (candidate: AgentSetup, onOutput: (line: string) => void) => streamAgentTest(candidate, onOutput),
+  getWorkspaceConfig: () => request<{ config: WorkspaceConfig; suggestedCommand: string }>('/workspace-config'),
+  updateWorkspaceConfig: (data: WorkspaceSetup) => request<{ config: WorkspaceConfig }>('/workspace-config', { method: 'PUT', body: JSON.stringify(data) }),
+  testWorkspaceConfig: (data: WorkspaceSetup) => request<{ success: boolean; durationMs: number; output: string; error?: string }>('/workspace-config/test', { method: 'POST', body: JSON.stringify(data) }, data.timeout_ms + 10_000),
   listAgentPresets: () => request<{ presets: AgentPreset[] }>('/agent-presets'),
   createAgentPreset: (data: Pick<AgentPreset, 'name' | 'description' | 'system_prompt'>) => request<{ preset: AgentPreset }>('/agent-presets', { method: 'POST', body: JSON.stringify(data) }),
   updateAgentPreset: (id: number, data: Pick<AgentPreset, 'name' | 'description' | 'system_prompt'>) => request<{ preset: AgentPreset }>(`/agent-presets/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
   deleteAgentPreset: (id: number) => request<void>(`/agent-presets/${id}`, { method: 'DELETE' }),
   savePrefix: (prefix: string, repoName: string) => request('/init/save-prefix', { method: 'POST', body: JSON.stringify({ prefix, repoName }) }),
-  completeInitialization: (data: { prefix: string; repoName: string; flowTemplate: FlowTemplate; agent: AgentSetup }) =>
+  completeInitialization: (data: { prefix: string; repoName: string; flowTemplate: FlowTemplate; agent: AgentSetup; workspaceSetup: WorkspaceSetup }) =>
     request<{ projectConfig: unknown; flow: { id: number; versionId: number } }>('/init/complete', { method: 'POST', body: JSON.stringify(data) }),
 };

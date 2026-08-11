@@ -4,13 +4,14 @@ import InitScreen from './InitScreen.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
-vi.mock('../api/client.js', () => ({ api: { testAgentConfigStream: vi.fn(), completeInitialization: vi.fn() } }));
+vi.mock('../api/client.js', () => ({ api: { getWorkspaceConfig: vi.fn(), testAgentConfigStream: vi.fn(), completeInitialization: vi.fn() } }));
 
 describe('InitScreen', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
     useAppStore.setState({ repoName: 'flow', bootstrap: vi.fn() });
+    vi.mocked(api.getWorkspaceConfig).mockResolvedValue({ config: { id: 1, setup_command: null, timeout_ms: 600000, updated_at: '' }, suggestedCommand: 'bun install --frozen-lockfile' });
     vi.mocked(api.testAgentConfigStream).mockImplementation(async (_candidate, onOutput) => { onOutput('OK'); return { success: true, durationMs: 42 }; });
     vi.mocked(api.completeInitialization).mockResolvedValue({ projectConfig: {}, flow: { id: 1, versionId: 1 } });
   });
@@ -26,16 +27,19 @@ describe('InitScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     expect(screen.getByRole('heading', { name: 'Name the project' })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
+    expect(screen.getByRole('heading', { name: 'Prepare task workspaces' })).toBeInTheDocument();
+    expect(screen.getByRole('textbox', { name: /Setup command/ })).toHaveValue('bun install --frozen-lockfile');
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     expect(screen.getByRole('heading', { name: 'Choose a starting Flow' })).toBeInTheDocument();
     expect(document.querySelector('[data-flow-template="recommended"] [data-block-icon="decision"] svg')).toHaveAttribute('data-icon', 'question');
     fireEvent.click(screen.getByRole('radio', { name: /Minimal delivery/ }));
     fireEvent.click(screen.getByRole('button', { name: /Finish setup/ }));
     await waitFor(() => expect(api.completeInitialization).toHaveBeenCalledWith(expect.objectContaining({
-      prefix: 'FLOW', flowTemplate: 'minimal', agent: expect.objectContaining({ cli_cmd: 'codex exec --full-auto', cli_prompt_mode: 'stdin' }),
+      prefix: 'FLOW', flowTemplate: 'minimal', agent: expect.objectContaining({ cli_cmd: 'codex exec --full-auto', cli_prompt_mode: 'stdin' }), workspaceSetup: { setup_command: 'bun install --frozen-lockfile', timeout_ms: 600000 },
     })));
     expect(api.testAgentConfigStream).toHaveBeenCalledWith(expect.objectContaining({ cli_cmd: 'codex exec --full-auto' }), expect.any(Function));
     expect(useAppStore.getState().bootstrap).toHaveBeenCalled();
-    expect(window.localStorage.getItem('flow:onboarding:v1')).toBeNull();
+    expect(window.localStorage.getItem('flow:onboarding:v2')).toBeNull();
   });
 
   test('applies the Claude Code preset before testing the Agent', async () => {
@@ -61,13 +65,13 @@ describe('InitScreen', () => {
   });
 
   test('restores unfinished setup from local storage', () => {
-    window.localStorage.setItem('flow:onboarding:v1', JSON.stringify({
-      version: 1, step: 3, prefix: 'FLOW', agent: { cli_cmd: 'agent run', cli_prompt_mode: 'argument', cli_prompt_flag: '' }, flowTemplate: 'blank',
+    window.localStorage.setItem('flow:onboarding:v2', JSON.stringify({
+      version: 2, step: 3, prefix: 'FLOW', agent: { cli_cmd: 'agent run', cli_prompt_mode: 'argument', cli_prompt_flag: '' }, workspaceSetup: { setup_command: 'npm ci', timeout_ms: 300000 }, flowTemplate: 'blank',
     }));
     render(<InitScreen />);
     expect(screen.getByRole('heading', { name: 'Name the project' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /Project key/ })).toHaveValue('FLOW');
-    expect(window.localStorage.getItem('flow:onboarding:v1')).not.toBeNull();
+    expect(window.localStorage.getItem('flow:onboarding:v2')).not.toBeNull();
   });
 
   test('supports arrow-key selection for Flow templates', async () => {
@@ -75,6 +79,7 @@ describe('InitScreen', () => {
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Test Agent' }));
     await screen.findByText('Agent responded');
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
     fireEvent.keyDown(screen.getByRole('radio', { name: /Recommended delivery/ }), { key: 'ArrowRight' });

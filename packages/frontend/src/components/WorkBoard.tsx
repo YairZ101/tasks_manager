@@ -18,17 +18,25 @@ function attentionSummary(task: Task): string | null {
   return null;
 }
 
+function cardContext(task: Task, attention: string | null): string | null {
+  if (task.active_block_name && (!attention || !attention.toLocaleLowerCase().includes(task.active_block_name.toLocaleLowerCase()))) return task.active_block_name;
+  if (task.operational_state === 'backlog') return 'Ready to run';
+  if (task.operational_state === 'finished') return task.resolution === 'completed' ? 'Completed' : 'Cancelled';
+  return null;
+}
+
 function TaskCard({ task }: { task: Task }) {
   const select = useAppStore((state) => state.selectTask);
   const attention = attentionSummary(task);
+  const context = cardContext(task, attention);
   return <button className={`task-card state-${task.operational_state}`} onClick={() => select(task.id)} aria-label={`${task.task_key}: ${task.title}${attention ? `. ${attention}` : ''}`}>
     <div className="task-card-top"><span>{task.task_key}</span>{task.workspace_state === 'cleanup_required' && <i title="Workspace needs cleanup">DIRTY</i>}</div>
     <h3>{task.title}</h3>
     {task.description && <p>{task.description}</p>}
-    {attention && <span className="attention-callout"><Icon name="alert" size={14} />{attention}<b>Review</b></span>}
+    {attention && <span className="attention-callout"><Icon name="alert" size={14} /><span>{attention}</span></span>}
     <div className="task-card-foot">
-      {task.active_block_name ? <span className="block-chip"><span className="signal" />{task.active_block_name}</span> : <span>{task.resolution === 'open' ? 'No active run' : task.resolution}</span>}
-      <Icon name="arrow" size={15} />
+      {context && <span className="task-card-context">{task.operational_state === 'active' && <span className="signal" />}{context}</span>}
+      <span className="task-card-open">Open details <Icon name="arrow" size={15} /></span>
     </div>
   </button>;
 }

@@ -6,14 +6,17 @@ export function useEventSource(enabled: boolean): void {
   const refreshTasks = useAppStore((state) => state.refreshTasks);
   const refreshFlows = useAppStore((state) => state.refreshFlows);
   const bootstrap = useAppStore((state) => state.bootstrap);
+  const markRunChanged = useAppStore((state) => state.markRunChanged);
   useEffect(() => {
     if (!enabled) return;
     const source = new EventSource('/events');
     const tasks = () => { void refreshTasks(); };
+    const runs = () => { markRunChanged(); void refreshTasks(); };
     const flows = () => { void refreshFlows(); };
     source.addEventListener('task:changed', tasks);
     source.addEventListener('task:deleted', tasks);
-    source.addEventListener('run:changed', tasks);
+    source.addEventListener('run:changed', runs);
+    source.addEventListener('preparation:changed', runs);
     source.addEventListener('flow:changed', flows);
     source.addEventListener('flow:published', flows);
     source.addEventListener('stale', () => { void bootstrap(); });
@@ -24,5 +27,5 @@ export function useEventSource(enabled: boolean): void {
       } catch {}
     });
     return () => source.close();
-  }, [bootstrap, enabled, refreshFlows, refreshTasks]);
+  }, [bootstrap, enabled, markRunChanged, refreshFlows, refreshTasks]);
 }

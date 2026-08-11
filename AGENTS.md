@@ -6,9 +6,13 @@ Flow is a local-first task manager that delegates work to configurable CLI agent
 
 The supported V1 blocks are **Begin, Agent, Check, Decision, Result, and Note**. Runtime state belongs to Runs and Attempts, never to canvas columns. The work UI uses four fixed operational views: **Backlog, Active, Needs Attention, and Finished**.
 
-## Database Compatibility Policy
+## Compatibility Policy
 
-Existing local application state is disposable. Do not add database migrations, compatibility columns, data backfills, or preservation work unless the user explicitly asks for them. Schema and state-model changes may be greenfield-only; tell the user that an existing `.flow/` database must be reinitialized when that matters.
+Flow is pre-release: no users, no deployed instances, and all local application state is disposable. Nothing in this repository needs to stay compatible with an older version of itself.
+
+Do not add database migrations, compatibility columns, data backfills, dual-format parsers, or handling that keeps accepting a removed value so existing data still parses — unless the user explicitly asks. When a change invalidates an existing shape, delete the old path outright and tell the user what must be reinitialized (an existing `.flow/` database, a saved draft, persisted history).
+
+This applies to every persisted shape, not only the schema: API payloads, enum members, and JSON stored in columns are all greenfield.
 
 ## Commands
 
@@ -98,7 +102,7 @@ packages/
 - Operational Task state is derived from Task resolution plus its active Run; it is not persisted as a draggable status.
 - Stopping a Run persists `stopped` before aborting its OS process so late completion cannot overwrite user intent.
 - Task deletion is blocked for active Runs. Dirty Workspace deletion needs an explicit force confirmation.
-- Existing `.flow/` databases are disposable. Reinitialize them rather than adding migrations when a schema change requires it.
+- Existing `.flow/` databases and persisted drafts are disposable. Reinitialize them rather than adding migrations or legacy-value handling when a change requires it.
 - `.flow/` self-ignores via its own `.gitignore`.
 
 ## Testing Patterns

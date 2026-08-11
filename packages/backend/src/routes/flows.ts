@@ -12,7 +12,7 @@ function knownAgentKeys(): Set<string> {
   return new Set(getDb().query<{ preset_key: string }, []>('SELECT preset_key FROM agent_presets').all().map((row) => row.preset_key));
 }
 
-const actionKinds = new Set<FlowVersionActionKind>(['initial', 'added', 'removed', 'changed', 'moved', 'connected', 'disconnected']);
+const actionKinds = new Set<FlowVersionActionKind>(['initial', 'added', 'removed', 'changed', 'connected', 'disconnected']);
 const blockTypes = new Set<FlowNode['type']>(['begin', 'agent', 'check', 'decision', 'result', 'note']);
 
 function parseDraftActions(actions: unknown): FlowVersionAction[] | null {
@@ -36,16 +36,6 @@ function parseDraftActions(actions: unknown): FlowVersionAction[] | null {
     });
   }
   return parsed;
-}
-
-function appendDraftActions(history: FlowVersionAction[], actions: FlowVersionAction[]): FlowVersionAction[] {
-  return actions.reduce<FlowVersionAction[]>((next, action) => {
-    const previous = next.at(-1);
-    if (action.kind === 'moved' && previous?.kind === 'moved' && previous.title === action.title && previous.blockType === action.blockType && new Date(action.timestamp).getTime() - new Date(previous.timestamp).getTime() < 750) {
-      return [...next.slice(0, -1), action];
-    }
-    return [...next, action];
-  }, history);
 }
 
 flows.get('/', (c) => {
@@ -146,7 +136,7 @@ flows.put('/:id/draft', async (c) => {
   const existing = db.query<FlowVersionRow, [number]>("SELECT * FROM flow_versions WHERE flow_id = ? AND state = 'draft'").get(id);
   if (!existing || existing.draft_revision !== body.revision) return c.json({ error: 'This draft changed elsewhere. Reload before saving again.', reason: 'revision_conflict' }, 409);
   const existingActions = JSON.parse(existing.action_history_json) as unknown;
-  const actionHistory = appendDraftActions(Array.isArray(existingActions) ? existingActions as FlowVersionAction[] : [], actions).slice(-1_000);
+  const actionHistory = [...(Array.isArray(existingActions) ? existingActions as FlowVersionAction[] : []), ...actions].slice(-1_000);
   const updated = db.query("UPDATE flow_versions SET definition_json = ?, action_history_json = ?, draft_revision = draft_revision + 1 WHERE id = ? AND draft_revision = ?")
     .run(JSON.stringify(body.definition), JSON.stringify(actionHistory), existing.id, body.revision!);
   if (!updated.changes) return c.json({ error: 'This draft changed elsewhere. Reload before saving again.', reason: 'revision_conflict' }, 409);

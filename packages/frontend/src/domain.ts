@@ -14,7 +14,7 @@ export interface Task {
 
 export type TaskLinkRelationship = 'blocks' | 'is_blocked_by' | 'relates_to';
 
-export type FlowVersionActionKind = 'initial' | 'added' | 'removed' | 'changed' | 'moved' | 'connected' | 'disconnected';
+export type FlowVersionActionKind = 'initial' | 'added' | 'removed' | 'changed' | 'connected' | 'disconnected';
 
 export interface FlowVersionAction {
   kind: FlowVersionActionKind;

@@ -359,7 +359,6 @@ kbd { flex: 0 0 auto; border: 1px solid #3a4943; border-bottom-color: #53635c; b
 .version-change-marker { position: absolute; top: 10px; left: 0; width: 31px; height: 31px; display: grid; place-items: center; border: 1px solid #3c5148; background: #121c18; color: #9cb1a7; }
 .change-added .version-change-marker, .change-connected .version-change-marker, .change-initial .version-change-marker { color: #74d4a9; border-color: #35644f; }
 .change-removed .version-change-marker, .change-disconnected .version-change-marker { color: #e58c87; border-color: #64413d; }
-.change-moved .version-change-marker { color: #84b6ff; border-color: #3d5e84; }
 
 /* Agent presets use a split workbench: a compact roster beside the full configuration surface. */
 .agents-library { height: 100%; min-height: 0; padding: 30px clamp(20px, 3vw, 42px) 38px; overflow: hidden; display: flex; flex-direction: column; background: #0b100e; }

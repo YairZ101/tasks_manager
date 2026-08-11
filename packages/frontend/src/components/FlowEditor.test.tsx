@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { createRecommendedFlow, getNodeOutcomes } from '@flow/core';
-import FlowEditor, { agentConfigFromPreset, appendVersionActions, COMPACT_ZOOM_THRESHOLD, DETAIL_ZOOM_THRESHOLD, FLOW_LAYOUT_COLUMN_GAP, FLOW_LAYOUT_NODE_WIDTH, FLOW_NODE_HEIGHTS, MIN_FLOW_ZOOM, createFlowAutoLayout, formatActionTimestamp, getFlowZoomMode, getVersionChanges, toCanvas } from './FlowEditor.js';
+import FlowEditor, { agentConfigFromPreset, COMPACT_ZOOM_THRESHOLD, DETAIL_ZOOM_THRESHOLD, FLOW_LAYOUT_COLUMN_GAP, FLOW_LAYOUT_NODE_WIDTH, FLOW_NODE_HEIGHTS, MIN_FLOW_ZOOM, createFlowAutoLayout, formatActionTimestamp, getFlowZoomMode, getVersionChanges, hasLayoutChange, toCanvas } from './FlowEditor.js';
 import { FLOW_CONNECTOR_CLEARANCE, connectorCrossesRect, connectorSegmentsOverlap, connectorSourcePortTop, createConnectorPath, routeFlowConnectors } from './flowRouting.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
@@ -46,24 +46,32 @@ describe('FlowEditor', () => {
       'Added Note block',
       expect.stringMatching(/^Removed /),
       expect.stringMatching(/^Renamed /),
-      'Moved Implementation',
       'Changed instructions',
       expect.stringMatching(/^Connected /),
       expect.stringMatching(/^Removed connection from /),
     ]));
-    expect(changes).toEqual(expect.arrayContaining([
-      expect.objectContaining({ title: 'Moved Implementation', blockType: 'agent' }),
-    ]));
+    // The edited block also moved, but position is not behaviour and never becomes an entry.
+    expect(changes.some((change) => /^Moved/.test(change.title))).toBe(false);
     expect(getVersionChanges(previous)).toEqual([{ kind: 'initial', title: 'Created the first version', detail: expect.stringMatching(/blocks/) }]);
     expect(formatActionTimestamp('2026-08-03T13:15:00Z')).toMatch(/Aug.*:\d{2}/);
     expect(formatActionTimestamp(undefined)).toBe('Just now');
   });
 
-  test('keeps a separate timestamp for each action while coalescing a continuous move', () => {
-    const firstMove = { kind: 'moved' as const, title: 'Moved Planning', blockType: 'agent' as const, timestamp: '2026-08-04T08:13:00.000Z' };
-    const finalMove = { ...firstMove, timestamp: '2026-08-04T08:13:00.400Z' };
-    const rename = { kind: 'changed' as const, title: 'Renamed Planning to Implementation', blockType: 'agent' as const, timestamp: '2026-08-04T08:14:32.000Z' };
-    expect(appendVersionActions([firstMove], [finalMove, rename])).toEqual([finalMove, rename]);
+  test('reports layout drift as context instead of history entries', () => {
+    const previous = createRecommendedFlow();
+    const nudge = (node: any) => ({ ...node, position: { x: node.position.x + 20, y: node.position.y } });
+
+    // A drag of one block, and an Arrange that moves every block, are both silent in history.
+    const oneMoved = { ...previous, nodes: previous.nodes.map((node, index) => index === 1 ? nudge(node) : node) };
+    const allMoved = { ...previous, nodes: previous.nodes.map(nudge) };
+    expect(getVersionChanges(oneMoved as any, previous)).toEqual([]);
+    expect(getVersionChanges(allMoved as any, previous)).toEqual([]);
+
+    // The panel still needs to know positions drifted, so it can say so in the empty state.
+    expect(hasLayoutChange(oneMoved as any, previous)).toBe(true);
+    expect(hasLayoutChange(allMoved as any, previous)).toBe(true);
+    expect(hasLayoutChange(previous, previous)).toBe(false);
+    expect(hasLayoutChange(previous)).toBe(false);
   });
 
   test('creates a compact deterministic topology and docks notes beneath the graph', () => {
@@ -277,7 +285,7 @@ describe('FlowEditor', () => {
     const version = {
       id: 2, flow_id: 1, version: 1, state: 'published', draft_revision: 0, definition, compiled: definition, published_at: '2026-08-04T12:00:00Z',
       action_history: [
-        { kind: 'moved', title: 'Moved Planning', blockType: 'agent', timestamp: '2026-08-04T08:13:00.000Z' },
+        { kind: 'changed', title: 'Renamed Planning to Implementation', blockType: 'agent', timestamp: '2026-08-04T08:13:00.000Z' },
         { kind: 'changed', title: 'Changed instructions', blockType: 'agent', timestamp: '2026-08-04T08:14:32.000Z' },
       ],
     } as any;
@@ -286,11 +294,71 @@ describe('FlowEditor', () => {
     render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} versionId={2} /></div>);
 
     fireEvent.click(await screen.findByRole('button', { name: 'Version history' }));
-    const movedItem = (await screen.findByText('Moved Planning')).closest('li')!;
-    expect(movedItem).toHaveAttribute('data-block-type', 'agent');
-    expect(movedItem.querySelector('[data-icon="agent"]')).toBeInTheDocument();
-    expect(movedItem).toHaveTextContent(formatActionTimestamp('2026-08-04T08:13:00.000Z'));
+    const renamedItem = (await screen.findByText('Renamed Planning to Implementation')).closest('li')!;
+    expect(renamedItem).toHaveAttribute('data-block-type', 'agent');
+    expect(renamedItem.querySelector('[data-icon="agent"]')).toBeInTheDocument();
+    expect(renamedItem).toHaveTextContent(formatActionTimestamp('2026-08-04T08:13:00.000Z'));
     expect(screen.getByText('Changed instructions').closest('li')).toHaveTextContent(formatActionTimestamp('2026-08-04T08:14:32.000Z'));
+  });
+
+  test('a layout change saves the new positions without recording any history action', async () => {
+    // Arrange is the one way to move blocks without a pointer drag, which happy-dom cannot simulate.
+    const base = createRecommendedFlow();
+    const displaced = { ...base, nodes: base.nodes.map((node, index) => index === 1 ? { ...node, position: { x: node.position.x + 260, y: node.position.y + 180 } } : node) } as any;
+    vi.mocked(api.getDraft).mockResolvedValue({ draft: { id: 3, flow_id: 1, version: 2, state: 'draft', draft_revision: 4, definition: displaced, compiled: null, published_at: null } as any, validation: { valid: true, problems: [] } });
+    vi.mocked(api.getFlow).mockResolvedValue({ flow: { id: 1, name: 'Standard delivery', active_version_id: 2 } as any, versions: [{ id: 2, flow_id: 1, version: 1, state: 'published', draft_revision: 0, definition: displaced, compiled: displaced, published_at: '2026-07-01T12:00:00Z', action_history: [] } as any] });
+    vi.mocked(api.saveDraft).mockImplementation(async (_flowId, definition, _revision, actions) => ({
+      draft: { id: 3, flow_id: 1, version: 2, state: 'draft', draft_revision: 5, definition, compiled: null, published_at: null, action_history: actions } as any,
+      validation: { valid: true, problems: [] },
+    }));
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+    await screen.findByLabelText('Agent block: Planning');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Automatically arrange flow' }));
+    await waitFor(() => expect(api.saveDraft).toHaveBeenCalled(), { timeout: 2_000 });
+
+    const [, savedDefinition, , savedActions] = vi.mocked(api.saveDraft).mock.calls[0]!;
+    const movedNode = savedDefinition!.nodes.find((node) => node.id === displaced.nodes[1].id)!;
+    expect(movedNode.position).not.toEqual(displaced.nodes[1].position);
+    expect(savedActions).toEqual([]);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Version history' }));
+    expect(screen.getByRole('complementary', { name: 'Version history' }).querySelectorAll('li')).toHaveLength(0);
+    expect(screen.getByText('Only block positions differ from the current published version.')).toBeVisible();
+  });
+
+  test('says a published version matches its predecessor when nothing differs', async () => {
+    const definition = createRecommendedFlow();
+    const published = (id: number, version: number) => ({
+      id, flow_id: 1, version, state: 'published', draft_revision: 0, definition, compiled: definition,
+      published_at: `2026-08-0${version}T12:00:00Z`, action_history: [],
+    } as any);
+    vi.mocked(api.getFlow).mockResolvedValue({ flow: { id: 1, name: 'Standard delivery', active_version_id: 3 } as any, versions: [published(2, 2), published(3, 3)] });
+    useAppStore.setState({ flows: [{ id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 3 } as any] });
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} versionId={3} /></div>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Version history' }));
+    expect(await screen.findByText('This version matches the previous version.')).toBeVisible();
+  });
+
+  test('names the version it was actually compared with, not the current one', async () => {
+    const first = createRecommendedFlow();
+    const second = { ...first, nodes: first.nodes.map((node, index) => index === 1 ? { ...node, position: { x: node.position.x + 40, y: node.position.y } } : node) };
+    const published = (id: number, version: number, definition: any) => ({
+      id, flow_id: 1, version, state: 'published', draft_revision: 0, definition, compiled: definition,
+      published_at: `2026-08-0${version}T12:00:00Z`, action_history: [],
+    } as any);
+    // v4 is current, but viewing v3 compares it with v2 — the copy must not claim "current".
+    const versions = [published(2, 2, first), published(3, 3, second), published(4, 4, second)];
+    vi.mocked(api.getFlow).mockResolvedValue({ flow: { id: 1, name: 'Standard delivery', active_version_id: 4 } as any, versions });
+    useAppStore.setState({ flows: [{ id: 1, name: 'Standard delivery', is_default: 1, active_version_id: 4 } as any] });
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} versionId={3} /></div>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Version history' }));
+    // The context line carries the exact version; the sentence stays generic rather than repeat it.
+    expect(await screen.findByText('Compared with v2')).toBeVisible();
+    expect(screen.getByText('Only block positions differ from the previous version.')).toBeVisible();
+    expect(screen.queryByText(/current published version/)).not.toBeInTheDocument();
   });
 
   test('keeps draft editing and published history in the same version picker', async () => {
@@ -313,7 +381,8 @@ describe('FlowEditor', () => {
     expect(draftActions[2]).toBe(publishButton);
     fireEvent.click(historyButton);
     expect(screen.getByText('Draft changes')).toBeVisible();
-    expect(screen.getByText('No graph changes')).toBeVisible();
+    expect(screen.getByText('No changes to how this Flow runs')).toBeVisible();
+    expect(screen.getByText('This draft matches the current published version.')).toBeVisible();
 
     fireEvent.change(picker, { target: { value: '2' } });
     await waitFor(() => expect(useAppStore.getState().viewFlowVersion).toHaveBeenCalledWith(1, 2));

@@ -18,6 +18,8 @@ describe('WorkBoard', () => {
     render(<WorkBoard />);
     expect(screen.getByRole('heading', { name: 'Backlog' })).toBeInTheDocument();
     expect(screen.getByText('Explore graph')).toBeInTheDocument();
+    expect(screen.getByText('Ready to run')).toBeInTheDocument();
+    expect(screen.getByText('Open details')).toBeInTheDocument();
     expect(screen.queryByText('Build graph')).not.toBeInTheDocument();
   });
   test('shows only one queue at a time', () => {
@@ -53,7 +55,9 @@ describe('WorkBoard', () => {
     useAppStore.setState({ tasks: [{ ...task(3, 'attention', 'Approve release'), active_run_id: 9, active_run_status: 'waiting', active_block_name: 'Release approval' }], workView: 'attention' });
     render(<WorkBoard />);
     expect(screen.getByText('Decision required in Release approval')).toBeInTheDocument();
-    expect(screen.getByText('Review')).toBeInTheDocument();
+    expect(screen.getAllByText(/Release approval/)).toHaveLength(1);
+    expect(screen.queryByText('Review')).not.toBeInTheDocument();
+    expect(screen.getByText('Open details')).toBeInTheDocument();
   });
   test('offers task creation from an empty Backlog', () => {
     useAppStore.setState({ tasks: [], workView: 'backlog' });

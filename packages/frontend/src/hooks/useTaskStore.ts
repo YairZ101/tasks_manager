@@ -9,6 +9,7 @@ interface AppState {
   repoName: string;
   isGitRepo: boolean;
   runner: Runner;
+  runRevision: number;
   tasks: Task[];
   flows: Flow[];
   section: 'work' | 'flows' | 'agents';
@@ -31,6 +32,7 @@ interface AppState {
   clearAgentsFocus(): void;
   setCreateOpen(open: boolean): void;
   setSettingsOpen(open: boolean): void;
+  markRunChanged(): void;
 }
 
 const emptyRunner: Runner = { activeCount: 0, queuedCount: 0, maxConcurrent: 1, executions: [] };
@@ -42,6 +44,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   repoName: '',
   isGitRepo: false,
   runner: emptyRunner,
+  runRevision: 0,
   tasks: [],
   flows: [],
   section: 'work',
@@ -85,4 +88,5 @@ export const useAppStore = create<AppState>((set, get) => ({
   clearAgentsFocus: () => set({ agentsFocusPresetKey: null }),
   setCreateOpen: (createOpen) => set({ createOpen }),
   setSettingsOpen: (settingsOpen) => set({ settingsOpen }),
+  markRunChanged: () => set((state) => ({ runRevision: state.runRevision + 1 })),
 }));

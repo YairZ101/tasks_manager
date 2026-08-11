@@ -52,8 +52,15 @@ export interface Attempt {
 }
 
 export interface TaskLog { id: number; attempt_id: number; level: string; message: string; timestamp: string }
-export interface RunDetail { run: Run; task: Task; flowVersion: FlowVersion; attempts: Attempt[]; workspace: { id: number; state: string; worktree_path: string; branch: string | null } | null }
-export interface Runner { activeCount: number; queuedCount: number; maxConcurrent: number; executions: Array<{ attemptId: number; taskKey: string; blockName: string }> }
+export interface WorkspacePreparationLog { id: number; preparation_id: number; level: 'info' | 'error'; message: string; timestamp: string }
+export interface WorkspacePreparation {
+  id: number; workspace_id: number; run_id: number; sequence: number; command: string;
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'interrupted' | 'cancelled';
+  exit_code: number | null; started_at: string | null; finished_at: string | null; logs: WorkspacePreparationLog[];
+}
+export interface WorkspaceConfig { id: number; setup_command: string | null; timeout_ms: number; updated_at: string }
+export interface RunDetail { run: Run; task: Task; flowVersion: FlowVersion; attempts: Attempt[]; workspace: { id: number; state: string; worktree_path: string; branch: string | null } | null; preparations?: WorkspacePreparation[] }
+export interface Runner { activeCount: number; queuedCount: number; maxConcurrent: number; executions: Array<{ attemptId: number | null; preparationId: number | null; taskKey: string; blockName: string }> }
 
 export interface AgentPreset {
   id: number;

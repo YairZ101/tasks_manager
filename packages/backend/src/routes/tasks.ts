@@ -110,6 +110,24 @@ tasks.get('/:id', (c) => {
   return task ? c.json({ task, links: listTaskLinks(id) }) : c.json({ error: 'Task not found.' }, 404);
 });
 
+tasks.post('/:id/reopen', (c) => {
+  const db = getDb();
+  const id = idFrom(c.req.param('id'));
+  if (!id) return c.json({ error: 'Invalid task ID.' }, 400);
+  const current = getTask(id);
+  if (!current) return c.json({ error: 'Task not found.' }, 404);
+  if (current.resolution === 'open') return c.json({ task: getTaskWithState(id), links: listTaskLinks(id) });
+  const active = db.query<{ id: number }, [number]>("SELECT id FROM runs WHERE task_id = ? AND status IN ('queued','running','waiting','attention')").get(id);
+  if (active) return c.json({ error: 'Stop the active Run before reopening this task.' }, 409);
+
+  db.transaction(() => {
+    const order = db.query<{ value: number }, []>("SELECT COALESCE(MAX(sort_order), 0) + 1 AS value FROM tasks WHERE resolution = 'open'").get()!.value;
+    db.query("UPDATE tasks SET resolution = 'open', sort_order = ?, updated_at = datetime('now') WHERE id = ?").run(order, id);
+  })();
+  emitTask(id);
+  return c.json({ task: getTaskWithState(id), links: listTaskLinks(id) });
+});
+
 tasks.patch('/:id', async (c) => {
   const db = getDb();
   const id = idFrom(c.req.param('id'));
@@ -118,6 +136,7 @@ tasks.patch('/:id', async (c) => {
   if (!current) return c.json({ error: 'Task not found.' }, 404);
   const body = await c.req.json().catch(() => null) as Record<string, unknown> | null;
   if (!body) return c.json({ error: 'Invalid JSON.' }, 400);
+  if (current.resolution !== 'open') return c.json({ error: 'Finished tasks are read-only. Reopen the task before editing it.', reason: 'task_finished' }, 409);
   const taskLinks = body.task_links === undefined ? null : parseTaskLinks(body.task_links);
   if (body.task_links !== undefined && !taskLinks) return c.json({ error: 'task_links must be an array of typed task links.' }, 400);
   if (taskLinks?.some((link) => link.task_id === id)) return c.json({ error: 'A task cannot link to itself.' }, 400);

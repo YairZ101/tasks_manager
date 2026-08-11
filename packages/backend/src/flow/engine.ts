@@ -6,12 +6,15 @@ import { getDb } from '../db/database.js';
 import { CliAdapter, sanitizeLine } from '../agents/cli-adapter.js';
 import { isGitRepo } from '../worktree/worktree.js';
 import type { AgentConfig, Attempt, RunnerState, Task, WorkflowRun } from '../types.js';
+import type { WorkspaceConfig, WorkspacePreparation } from '../types.js';
 import { emitEvent, emitRun } from './events.js';
 import { getDefaultFlow, getFlowVersion, getRun, getTask, listTaskLinks } from './repository.js';
 import { ensureWorkspace, finalizeWorkspace } from './workspaces.js';
+import { runWorkspaceCommand } from './workspace-command.js';
 
 type Execution = {
-  attemptId: number;
+  attemptId: number | null;
+  preparationId: number | null;
   runId: number;
   taskId: number;
   taskKey: string;
@@ -23,7 +26,7 @@ type Execution = {
 let repoRoot = process.cwd();
 let queueTimer: ReturnType<typeof setInterval> | null = null;
 let pumping = false;
-const executions = new Map<number, Execution>();
+const executions = new Map<string, Execution>();
 
 function definitionFor(run: WorkflowRun): CompiledFlowDefinition {
   const version = getFlowVersion(run.flow_version_id);
@@ -154,6 +157,38 @@ function createLogWriter(taskId: number, runId: number, attemptId: number) {
     },
     flush,
   };
+}
+
+function createPreparationLogWriter(taskId: number, runId: number, preparationId: number) {
+  const buffer: Array<{ level: 'info' | 'error'; message: string }> = [];
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  const flush = () => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    const rows = buffer.splice(0);
+    if (!rows.length) return;
+    const db = getDb();
+    const insert = db.query('INSERT INTO workspace_preparation_logs (preparation_id, level, message) VALUES (?, ?, ?)');
+    db.transaction(() => {
+      for (const row of rows) insert.run(preparationId, row.level, row.message);
+    })();
+    emitEvent('preparation:changed', { taskId, runId, preparationId }, 'workspace_preparation', preparationId);
+  };
+  return {
+    write(level: 'info' | 'error', message: string) {
+      buffer.push({ level, message: sanitizeLine(message) });
+      if (!timer) timer = setTimeout(flush, 50);
+    },
+    flush,
+  };
+}
+
+function insertPreparation(run: WorkflowRun, command: string): WorkspacePreparation {
+  const db = getDb();
+  const sequence = db.query<{ value: number }, [number]>('SELECT COALESCE(MAX(sequence), 0) + 1 AS value FROM workspace_preparations WHERE run_id = ?').get(run.id)!.value;
+  const result = db.query(`INSERT INTO workspace_preparations (workspace_id, run_id, sequence, command, status)
+    VALUES (?, ?, ?, ?, 'queued')`).run(run.workspace_id!, run.id, sequence, command);
+  return db.query<WorkspacePreparation, [number]>('SELECT * FROM workspace_preparations WHERE id = ?').get(Number(result.lastInsertRowid))!;
 }
 
 /** The agent's system prompt for this Run: the snapshot taken at Run start, or a live lookup as a fallback. */
@@ -297,11 +332,62 @@ async function executeAttempt(attempt: Attempt): Promise<void> {
       await followOutcome(db.query<Attempt, [number]>('SELECT * FROM attempts WHERE id = ?').get(attempt.id)!, node.type === 'agent' && outcome === 'error' ? 'failed' : outcome);
     } finally {
       clearTimeout(timer);
-      executions.delete(attempt.id);
+      executions.delete(`attempt:${attempt.id}`);
       void pumpQueue();
     }
   })();
-  executions.set(attempt.id, { attemptId: attempt.id, runId: run.id, taskId: task.id, taskKey: task.task_key, blockName: node.config.name, controller, promise });
+  executions.set(`attempt:${attempt.id}`, { attemptId: attempt.id, preparationId: null, runId: run.id, taskId: task.id, taskKey: task.task_key, blockName: node.config.name, controller, promise });
+  emitRun(run.id, task.id);
+}
+
+async function executePreparation(preparation: WorkspacePreparation): Promise<void> {
+  const db = getDb();
+  const run = getRun(preparation.run_id);
+  if (!run?.workspace_id) return;
+  const task = getTask(run.task_id);
+  const workspace = db.query<{ worktree_path: string }, [number]>('SELECT worktree_path FROM workspaces WHERE id = ?').get(run.workspace_id);
+  const config = db.query<WorkspaceConfig, []>('SELECT * FROM workspace_config WHERE id = 1').get();
+  if (!task || !workspace || !config) return;
+  const controller = new AbortController();
+  const logger = createPreparationLogWriter(task.id, run.id, preparation.id);
+  const promise = (async () => {
+    try {
+      const result = await runWorkspaceCommand({
+        command: preparation.command,
+        cwd: workspace.worktree_path,
+        timeoutMs: config.timeout_ms,
+        signal: controller.signal,
+        onOutput: (level, line) => logger.write(level, line),
+        onPid: (pid) => db.query("UPDATE workspace_preparations SET pid = ?, process_started_at = datetime('now') WHERE id = ?").run(pid, preparation.id),
+      });
+      const freshRun = getRun(run.id);
+      if (!freshRun || freshRun.status === 'stopped') return;
+      if (result.exitCode === 0 && !result.timedOut) {
+        db.query("UPDATE workspace_preparations SET status = 'succeeded', exit_code = 0, pid = NULL, finished_at = datetime('now') WHERE id = ?").run(preparation.id);
+        const begin = definitionFor(run).nodes.find((node) => node.type === 'begin')!;
+        await enterBlock(run.id, begin.id, null, null);
+      } else {
+        const status = result.timedOut ? 'timed_out' : 'failed';
+        const reason = result.timedOut ? 'Workspace setup timed out.' : `Workspace setup exited with code ${result.exitCode ?? 'unknown'}.`;
+        db.query('UPDATE workspace_preparations SET status = ?, exit_code = ?, pid = NULL, finished_at = datetime(\'now\') WHERE id = ?')
+          .run(status, result.exitCode, preparation.id);
+        db.query("UPDATE runs SET status = 'attention', reason = ? WHERE id = ?").run(reason, run.id);
+      }
+    } catch (error) {
+      const freshRun = getRun(run.id);
+      if (!freshRun || freshRun.status === 'stopped') return;
+      const message = error instanceof Error ? error.message : String(error);
+      logger.write('error', message);
+      db.query("UPDATE workspace_preparations SET status = 'failed', pid = NULL, finished_at = datetime('now') WHERE id = ?").run(preparation.id);
+      db.query("UPDATE runs SET status = 'attention', reason = ? WHERE id = ?").run(`Workspace setup failed: ${message}`, run.id);
+    } finally {
+      logger.flush();
+      executions.delete(`preparation:${preparation.id}`);
+      emitRun(run.id, task.id);
+      void pumpQueue();
+    }
+  })();
+  executions.set(`preparation:${preparation.id}`, { attemptId: null, preparationId: preparation.id, runId: run.id, taskId: task.id, taskKey: task.task_key, blockName: 'Preparing workspace', controller, promise });
   emitRun(run.id, task.id);
 }
 
@@ -326,12 +412,13 @@ export function getRunnerState(): RunnerState {
   const db = getDb();
   const config = db.query<AgentConfig, []>('SELECT * FROM agent_config WHERE id = 1').get();
   const maxConcurrent = isGitRepo(repoRoot) ? (config?.max_concurrent_executions ?? 3) : 1;
-  const queuedCount = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM attempts WHERE status = 'queued'").get()?.count ?? 0;
+  const queuedAttempts = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM attempts WHERE status = 'queued'").get()?.count ?? 0;
+  const queuedPreparations = db.query<{ count: number }, []>("SELECT COUNT(*) AS count FROM workspace_preparations WHERE status = 'queued'").get()?.count ?? 0;
   return {
     activeCount: executions.size,
-    queuedCount,
+    queuedCount: queuedAttempts + queuedPreparations,
     maxConcurrent,
-    executions: [...executions.values()].map(({ attemptId, runId, taskId, taskKey, blockName }) => ({ attemptId, runId, taskId, taskKey, blockName })),
+    executions: [...executions.values()].map(({ attemptId, preparationId, runId, taskId, taskKey, blockName }) => ({ attemptId, preparationId, runId, taskId, taskKey, blockName })),
   };
 }
 
@@ -341,7 +428,21 @@ export async function pumpQueue(): Promise<void> {
   try {
     const db = getDb();
     const state = getRunnerState();
-    const capacity = state.maxConcurrent - state.activeCount;
+    let capacity = state.maxConcurrent - state.activeCount;
+    if (capacity <= 0) return;
+    const preparations = db.query<WorkspacePreparation, [number]>(`
+      SELECT p.* FROM workspace_preparations p JOIN runs r ON r.id = p.run_id
+      WHERE p.status = 'queued' AND r.status = 'queued'
+      ORDER BY p.id ASC LIMIT ?
+    `).all(capacity);
+    for (const preparation of preparations) {
+      const claimed = db.query("UPDATE workspace_preparations SET status = 'running', started_at = datetime('now') WHERE id = ? AND status = 'queued'").run(preparation.id);
+      if (!claimed.changes) continue;
+      db.query("UPDATE runs SET started_at = COALESCE(started_at, datetime('now')) WHERE id = ?").run(preparation.run_id);
+      const fresh = db.query<WorkspacePreparation, [number]>('SELECT * FROM workspace_preparations WHERE id = ?').get(preparation.id)!;
+      await executePreparation(fresh);
+      capacity -= 1;
+    }
     if (capacity <= 0) return;
     const queued = db.query<Attempt, [number]>(`
       SELECT a.* FROM attempts a JOIN runs r ON r.id = a.run_id
@@ -380,8 +481,15 @@ export async function startRun(taskId: number, flowId?: number): Promise<Workflo
   const result = db.query("INSERT INTO runs (task_id, flow_version_id, workspace_id, status, agent_prompts_json) VALUES (?, ?, ?, 'queued', ?)")
     .run(task.id, version.id, workspace.id, agentPrompts);
   const run = getRun(Number(result.lastInsertRowid))!;
-  const begin = version.compiled.nodes.find((node) => node.type === 'begin')!;
-  await enterBlock(run.id, begin.id, null, null);
+  const workspaceConfig = db.query<WorkspaceConfig, []>('SELECT * FROM workspace_config WHERE id = 1').get();
+  if (workspaceConfig?.setup_command) {
+    insertPreparation(run, workspaceConfig.setup_command);
+    emitRun(run.id, task.id);
+    void pumpQueue();
+  } else {
+    const begin = version.compiled.nodes.find((node) => node.type === 'begin')!;
+    await enterBlock(run.id, begin.id, null, null);
+  }
   return getRun(run.id)!;
 }
 
@@ -414,6 +522,7 @@ export async function stopRun(runId: number): Promise<WorkflowRun> {
   db.transaction(() => {
     db.query("UPDATE runs SET status = 'stopped', reason = 'Stopped by user', finished_at = datetime('now') WHERE id = ?").run(run.id);
     db.query("UPDATE attempts SET status = 'cancelled', outcome_id = 'cancelled', pid = NULL, finished_at = datetime('now') WHERE run_id = ? AND status IN ('queued','running','waiting')").run(run.id);
+    db.query("UPDATE workspace_preparations SET status = 'cancelled', pid = NULL, finished_at = datetime('now') WHERE run_id = ? AND status IN ('queued','running')").run(run.id);
     db.query("UPDATE tasks SET resolution = 'open' WHERE id = ?").run(run.task_id);
   })();
   for (const execution of executions.values()) if (execution.runId === run.id) execution.controller.abort();
@@ -434,14 +543,37 @@ export async function retryRun(runId: number): Promise<WorkflowRun> {
   return getRun(run.id)!;
 }
 
+export async function retryWorkspaceSetup(runId: number): Promise<WorkflowRun> {
+  const db = getDb();
+  const run = getRun(runId);
+  if (!run) throw Object.assign(new Error('Run not found'), { status: 404 });
+  if (run.status !== 'attention') throw Object.assign(new Error('Only a Run that needs attention can retry workspace setup.'), { status: 409 });
+  const latest = db.query<WorkspacePreparation, [number]>('SELECT * FROM workspace_preparations WHERE run_id = ? ORDER BY sequence DESC LIMIT 1').get(run.id);
+  if (!latest || !['failed', 'timed_out', 'interrupted'].includes(latest.status)) {
+    throw Object.assign(new Error('This Run has no failed workspace setup to retry.'), { status: 409 });
+  }
+  const config = db.query<WorkspaceConfig, []>('SELECT * FROM workspace_config WHERE id = 1').get();
+  if (!config?.setup_command) throw Object.assign(new Error('Add a workspace setup command in Settings before retrying.'), { status: 409 });
+  db.query("UPDATE runs SET status = 'queued', reason = NULL, finished_at = NULL WHERE id = ?").run(run.id);
+  insertPreparation(run, config.setup_command);
+  emitRun(run.id, run.task_id);
+  void pumpQueue();
+  return getRun(run.id)!;
+}
+
 export function recoverInterruptedRuns(): number {
   const db = getDb();
   const interrupted = db.query<{ id: number; run_id: number }, []>("SELECT id, run_id FROM attempts WHERE status = 'running'").all();
+  const preparations = db.query<{ id: number; run_id: number }, []>("SELECT id, run_id FROM workspace_preparations WHERE status = 'running'").all();
   db.transaction(() => {
     for (const attempt of interrupted) {
       db.query("UPDATE attempts SET status = 'interrupted', outcome_id = 'interrupted', pid = NULL, finished_at = datetime('now') WHERE id = ?").run(attempt.id);
       db.query("UPDATE runs SET status = 'attention', reason = 'Server restarted while this block was running.' WHERE id = ? AND status != 'finished'").run(attempt.run_id);
     }
+    for (const preparation of preparations) {
+      db.query("UPDATE workspace_preparations SET status = 'interrupted', pid = NULL, finished_at = datetime('now') WHERE id = ?").run(preparation.id);
+      db.query("UPDATE runs SET status = 'attention', reason = 'Server restarted while workspace setup was running.' WHERE id = ? AND status != 'finished'").run(preparation.run_id);
+    }
   })();
-  return interrupted.length;
+  return interrupted.length + preparations.length;
 }

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { execFileSync } from 'child_process';
 import { closeDb, getDb, initDb } from '../db/database.js';
 import { createApp } from '../app.js';
 import { compileFlow, createBlankFlow, createMinimalFlow, createRecommendedFlow } from '@flow/core';
@@ -9,6 +10,14 @@ import { initEngine, shutdownEngine } from '../flow/engine.js';
 
 let root = '';
 let app: ReturnType<typeof createApp>;
+
+async function waitFor(predicate: () => boolean, timeout = 3000): Promise<void> {
+  const deadline = Date.now() + timeout;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error('Timed out waiting for route state.');
+    await Bun.sleep(20);
+  }
+}
 
 beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), 'flow-routes-'));
@@ -144,6 +153,37 @@ describe('Flow routes', () => {
     const listed = await app.request('/tasks?state=backlog');
     expect((await listed.json() as any).tasks).toHaveLength(1);
     expect((await app.request('/tasks?state=ready')).status).toBe(400);
+  });
+
+  test('keeps finished tasks read-only and reopens them for a new Run', async () => {
+    const db = getDb();
+    const created = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Recheck the release' }) });
+    const task = (await created.json() as any).task;
+    const later = await app.request('/tasks', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Later backlog work' }) });
+    const laterTask = (await later.json() as any).task;
+    const version = db.query<{ id: number }, []>("SELECT id FROM flow_versions WHERE state = 'published' ORDER BY id LIMIT 1").get()!;
+    const historical = db.query("INSERT INTO runs(task_id,flow_version_id,status,result_category,finished_at) VALUES(?,?,'finished','completed',datetime('now'))")
+      .run(task.id, version.id);
+    db.query("UPDATE tasks SET resolution = 'completed' WHERE id = ?").run(task.id);
+
+    const edited = await app.request(`/tasks/${task.id}`, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Changed after completion' }) });
+    expect(edited.status).toBe(409);
+    expect(await edited.json()).toMatchObject({ reason: 'task_finished' });
+    const blockedRun = await app.request('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: task.id }) });
+    expect(blockedRun.status).toBe(409);
+
+    const reopened = await app.request(`/tasks/${task.id}/reopen`, { method: 'POST' });
+    expect(reopened.status).toBe(200);
+    const reopenedTask = (await reopened.json() as any).task;
+    expect(reopenedTask).toMatchObject({ resolution: 'open', operational_state: 'backlog' });
+    expect(reopenedTask.sort_order).toBeGreaterThan(laterTask.sort_order);
+    const repeated = await app.request(`/tasks/${task.id}/reopen`, { method: 'POST' });
+    expect((await repeated.json() as any).task.sort_order).toBe(reopenedTask.sort_order);
+
+    const started = await app.request('/runs', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: task.id }) });
+    expect(started.status).toBe(201);
+    expect((await started.json() as any).run.id).not.toBe(Number(historical.lastInsertRowid));
+    expect(db.query<{ count: number }, [number]>('SELECT COUNT(*) AS count FROM runs WHERE task_id = ?').get(task.id)?.count).toBe(2);
   });
 
   test('creates a task and starts the selected Flow in one request', async () => {
@@ -359,6 +399,87 @@ describe('Flow routes', () => {
     await expect(response.text()).resolves.toContain('event: complete');
   });
 
+  test('detects, saves, and tests Workspace setup in a temporary Git worktree', async () => {
+    const nonGit = await app.request('/workspace-config/test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: "bun -e \"console.log('setup')\"", timeout_ms: 60000 }),
+    });
+    expect(nonGit.status).toBe(409);
+    expect(await nonGit.json()).toEqual({ error: 'Testing workspace setup requires a Git repository.' });
+
+    fs.writeFileSync(path.join(root, 'bun.lock'), '');
+    fs.writeFileSync(path.join(root, 'README.md'), 'workspace setup test');
+    execFileSync('git', ['init'], { cwd: root });
+    execFileSync('git', ['config', 'user.email', 'flow@example.test'], { cwd: root });
+    execFileSync('git', ['config', 'user.name', 'Flow tests'], { cwd: root });
+    execFileSync('git', ['add', 'bun.lock', 'README.md'], { cwd: root });
+    execFileSync('git', ['commit', '-m', 'test fixture'], { cwd: root });
+
+    const detected = await app.request('/workspace-config');
+    expect(detected.status).toBe(200);
+    expect(await detected.json()).toMatchObject({ suggestedCommand: 'bun install --frozen-lockfile', config: { setup_command: null, timeout_ms: 600000 } });
+
+    const invalid = await app.request('/workspace-config', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: 'bun install && echo unsafe', timeout_ms: 600000 }),
+    });
+    expect(invalid.status).toBe(400);
+
+    const invalidTimeout = await app.request('/workspace-config', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: '', timeout_ms: 999 }),
+    });
+    expect(invalidTimeout.status).toBe(400);
+
+    const command = "bun -e \"console.log('isolated setup')\"";
+    const tested = await app.request('/workspace-config/test', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: command, timeout_ms: 60000 }),
+    });
+    expect(tested.status).toBe(200);
+    expect(await tested.json()).toMatchObject({ success: true, output: 'OUT  isolated setup' });
+    expect(fs.readdirSync(path.join(root, '.flow', 'setup-tests'))).toEqual([]);
+
+    const failed = await app.request('/workspace-config/test', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ setup_command: "bun -e \"console.error('setup failed'); process.exit(4)\"", timeout_ms: 60000 }),
+    });
+    expect(failed.status).toBe(200);
+    expect(await failed.json()).toMatchObject({ success: false, output: 'ERR  setup failed', error: 'Workspace setup exited with code 4.' });
+    expect(fs.readdirSync(path.join(root, '.flow', 'setup-tests'))).toEqual([]);
+
+    const saved = await app.request('/workspace-config', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: command, timeout_ms: 60000 }),
+    });
+    expect(saved.status).toBe(200);
+    expect(await saved.json()).toMatchObject({ config: { setup_command: command, timeout_ms: 60000 } });
+
+    const disabled = await app.request('/workspace-config', {
+      method: 'PUT', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ setup_command: '', timeout_ms: 60000 }),
+    });
+    expect(disabled.status).toBe(200);
+    expect(await disabled.json()).toMatchObject({ config: { setup_command: null, timeout_ms: 60000 } });
+  });
+
+  test('returns Workspace preparation history and logs in Run detail', async () => {
+    const command = "bun -e \"console.error('route setup failed'); process.exit(5)\"";
+    getDb().query('UPDATE workspace_config SET setup_command = ?, timeout_ms = ? WHERE id = 1').run(command, 60_000);
+    const taskResponse = await app.request('/tasks', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ title: 'Prepare workspace' }),
+    });
+    const taskId = (await taskResponse.json() as any).task.id;
+    const runResponse = await app.request('/runs', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ task_id: taskId }),
+    });
+    const runId = (await runResponse.json() as any).run.id;
+
+    await waitFor(() => getDb().query<{ status: string }, [number]>('SELECT status FROM runs WHERE id = ?').get(runId)?.status === 'attention');
+    const detail = await app.request(`/runs/${runId}`);
+
+    expect(detail.status).toBe(200);
+    expect(await detail.json()).toMatchObject({
+      run: { id: runId, status: 'attention', reason: 'Workspace setup exited with code 5.' },
+      attempts: [],
+      preparations: [{ sequence: 1, status: 'failed', command, exit_code: 5, logs: [{ level: 'error', message: 'route setup failed' }] }],
+    });
+  });
+
   test('initializes the agent, project, and selected Flow in one final request', async () => {
     const db = getDb();
     db.exec('DELETE FROM flow_versions; DELETE FROM flows; DELETE FROM project_config;');
@@ -370,11 +491,13 @@ describe('Flow routes', () => {
         repoName: 'flow',
         flowTemplate: 'blank',
         agent: { cli_cmd: 'codex exec --full-auto', cli_prompt_mode: 'stdin', cli_prompt_flag: '' },
+        workspaceSetup: { setup_command: 'bun install --frozen-lockfile', timeout_ms: 300000 },
       }),
     });
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({ projectConfig: { task_prefix: 'FLOW', repo_name: 'flow' } });
     expect(db.query<{ cli_cmd: string }, []>('SELECT cli_cmd FROM agent_config WHERE id = 1').get()?.cli_cmd).toBe('codex exec --full-auto');
+    expect(db.query<{ setup_command: string; timeout_ms: number }, []>('SELECT setup_command, timeout_ms FROM workspace_config WHERE id = 1').get()).toEqual({ setup_command: 'bun install --frozen-lockfile', timeout_ms: 300000 });
     const version = db.query<{ definition_json: string }, []>("SELECT definition_json FROM flow_versions WHERE state = 'published'").get()!;
     expect(JSON.parse(version.definition_json).nodes.map((node: { type: string }) => node.type)).toEqual(['begin', 'result']);
     expect((await app.request('/status')).json()).resolves.toMatchObject({ initialized: true });

@@ -1,10 +1,11 @@
 import { Hono } from 'hono';
 import path from 'path';
 import { getDb } from '../db/database.js';
-import type { AgentConfig, ProjectConfig } from '../types.js';
+import type { AgentConfig, ProjectConfig, WorkspaceConfig } from '../types.js';
 import { CliAdapter } from '../agents/cli-adapter.js';
 import { compileFlow, createBlankFlow, createMinimalFlow, createRecommendedFlow } from '@flow/core';
 import { parseAgentSetup } from '../agents/config.js';
+import { parseWorkspaceConfig, suggestWorkspaceSetupCommand } from '../flow/workspace-config.js';
 
 const init = new Hono();
 
@@ -115,6 +116,7 @@ init.post('/save-prefix', async (c) => {
   const compiled = compileFlow(definition);
   db.transaction(() => {
     db.query(`INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, ?, ?)`).run(prefix, repoName);
+    db.query('UPDATE workspace_config SET setup_command = ? WHERE id = 1').run(suggestWorkspaceSetupCommand(process.cwd()) || null);
     const flow = db.query("INSERT INTO flows (name, is_default) VALUES ('Standard delivery', 1)").run();
     const flowId = Number(flow.lastInsertRowid);
     const version = db.query(`INSERT INTO flow_versions
@@ -138,6 +140,7 @@ init.post('/complete', async (c) => {
     repoName?: string;
     flowTemplate?: FlowTemplate;
     agent?: unknown;
+    workspaceSetup?: unknown;
   } | null;
   if (!body || typeof body.prefix !== 'string') return c.json({ error: 'prefix is required' }, 400);
 
@@ -149,6 +152,9 @@ init.post('/complete', async (c) => {
   if (!currentAgent) return c.json({ error: 'Agent configuration is unavailable.' }, 500);
   const setup = parseAgentSetup(body.agent, currentAgent);
   if ('error' in setup) return c.json({ error: setup.error }, 400);
+  const currentWorkspace = db.query<WorkspaceConfig, []>('SELECT * FROM workspace_config WHERE id = 1').get()!;
+  const workspaceSetup = parseWorkspaceConfig((body.workspaceSetup ?? {}) as Record<string, unknown>, currentWorkspace);
+  if ('error' in workspaceSetup) return c.json({ error: workspaceSetup.error }, 400);
 
   const existing = db.query<ProjectConfig, []>('SELECT * FROM project_config WHERE id = 1').get();
   if (existing) return c.json({ error: 'Project already initialized. Open Settings to change the Agent configuration.' }, 409);
@@ -160,6 +166,8 @@ init.post('/complete', async (c) => {
   const result = db.transaction(() => {
     db.query(`UPDATE agent_config SET cli_cmd = ?, cli_prompt_mode = ?, cli_prompt_flag = ?, updated_at = datetime('now') WHERE id = 1`)
       .run(setup.config.cli_cmd, setup.config.cli_prompt_mode, setup.config.cli_prompt_flag);
+    db.query('UPDATE workspace_config SET setup_command = ?, timeout_ms = ? WHERE id = 1')
+      .run(workspaceSetup.config.setup_command, workspaceSetup.config.timeout_ms);
     db.query(`INSERT INTO project_config (id, task_prefix, repo_name) VALUES (1, ?, ?)`).run(prefix, repoName);
     const flow = db.query("INSERT INTO flows (name, is_default) VALUES (?, 1)").run(template.name);
     const flowId = Number(flow.lastInsertRowid);

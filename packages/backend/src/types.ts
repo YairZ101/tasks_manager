@@ -4,6 +4,7 @@ export type TaskResolution = 'open' | 'completed' | 'cancelled';
 export type RunStatus = 'queued' | 'running' | 'waiting' | 'attention' | 'finished' | 'stopped';
 export type AttemptStatus = 'queued' | 'running' | 'waiting' | 'succeeded' | 'failed' | 'timed_out' | 'interrupted' | 'cancelled';
 export type WorkspaceState = 'active' | 'retained' | 'cleanup_required' | 'removed' | 'orphaned';
+export type WorkspacePreparationStatus = 'queued' | 'running' | 'succeeded' | 'failed' | 'timed_out' | 'interrupted' | 'cancelled';
 
 export interface Task {
   id: number;
@@ -67,6 +68,13 @@ export interface ProjectConfig {
   next_task_number: number;
   repo_name: string;
   created_at: string;
+}
+
+export interface WorkspaceConfig {
+  id: number;
+  setup_command: string | null;
+  timeout_ms: number;
+  updated_at: string;
 }
 
 export interface Flow {
@@ -154,6 +162,29 @@ export interface Workspace {
   updated_at: string;
 }
 
+export interface WorkspacePreparation {
+  id: number;
+  workspace_id: number;
+  run_id: number;
+  sequence: number;
+  command: string;
+  status: WorkspacePreparationStatus;
+  exit_code: number | null;
+  pid: number | null;
+  process_started_at: string | null;
+  created_at: string;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface WorkspacePreparationLog {
+  id: number;
+  preparation_id: number;
+  timestamp: string;
+  level: 'info' | 'error';
+  message: string;
+}
+
 export interface TaskLog {
   id: number;
   task_id: number;
@@ -177,5 +208,5 @@ export interface RunnerState {
   activeCount: number;
   queuedCount: number;
   maxConcurrent: number;
-  executions: Array<{ attemptId: number; runId: number; taskId: number; taskKey: string; blockName: string }>;
+  executions: Array<{ attemptId: number | null; preparationId: number | null; runId: number; taskId: number; taskKey: string; blockName: string }>;
 }

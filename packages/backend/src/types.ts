@@ -91,7 +91,7 @@ export interface FlowVersionRow {
   published_at: string | null;
 }
 
-export type FlowVersionActionKind = 'initial' | 'added' | 'removed' | 'changed' | 'moved' | 'connected' | 'disconnected';
+export type FlowVersionActionKind = 'initial' | 'added' | 'removed' | 'changed' | 'connected' | 'disconnected';
 
 export interface FlowVersionAction {
   kind: FlowVersionActionKind;

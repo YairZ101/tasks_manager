@@ -234,7 +234,7 @@ describe('Flow routes', () => {
     const draftResponse = await app.request(`/flows/${flow.id}/draft`);
     const draft = (await draftResponse.json() as any).draft;
     const actions = [
-      { kind: 'moved', title: 'Moved Begin', blockType: 'begin', timestamp: '2026-08-04T08:13:00.000Z' },
+      { kind: 'added', title: 'Added Check block', blockType: 'check', timestamp: '2026-08-04T08:13:00.000Z' },
       { kind: 'changed', title: 'Changed instructions', blockType: 'agent', timestamp: '2026-08-04T08:14:32.000Z' },
     ];
 
@@ -251,28 +251,35 @@ describe('Flow routes', () => {
     expect((await published.json() as any).version.action_history).toEqual(actions);
   });
 
-  test('rejects malformed history actions and coalesces a continuous move', async () => {
+  test('rejects malformed history actions and appends each saved batch', async () => {
     const flow = getDb().query<{ id: number }, []>("SELECT id FROM flows WHERE name = 'Default'").get()!;
     const draft = (await (await app.request(`/flows/${flow.id}/draft`)).json() as any).draft;
     const malformed = await app.request(`/flows/${flow.id}/draft`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions: [{ kind: 'moved', title: 'Moved Begin', blockType: 'begin', timestamp: 'not-a-timestamp' }] }),
+      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions: [{ kind: 'changed', title: 'Changed instructions', blockType: 'agent', timestamp: 'not-a-timestamp' }] }),
     });
     expect(malformed.status).toBe(400);
 
-    const firstMove = { kind: 'moved', title: 'Moved Begin', blockType: 'begin', timestamp: '2026-08-04T08:13:00.000Z' };
+    // Layout is not behaviour: 'moved' is not a kind the route accepts.
+    const layout = await app.request(`/flows/${flow.id}/draft`, {
+      method: 'PUT', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions: [{ kind: 'moved', title: 'Moved Begin', blockType: 'begin', timestamp: '2026-08-04T08:13:00.000Z' }] }),
+    });
+    expect(layout.status).toBe(400);
+
+    const firstEdit = { kind: 'changed', title: 'Renamed Begin to Start', blockType: 'begin', timestamp: '2026-08-04T08:13:00.000Z' };
     const firstSave = await app.request(`/flows/${flow.id}/draft`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions: [firstMove] }),
+      body: JSON.stringify({ definition: draft.definition, revision: draft.draft_revision, actions: [firstEdit] }),
     });
     const savedDraft = (await firstSave.json() as any).draft;
-    const finalMove = { ...firstMove, timestamp: '2026-08-04T08:13:00.400Z' };
+    const laterEdit = { kind: 'connected', title: 'Connected Start', detail: 'completed → Planning', timestamp: '2026-08-04T08:19:12.000Z' };
     const secondSave = await app.request(`/flows/${flow.id}/draft`, {
       method: 'PUT', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ definition: draft.definition, revision: savedDraft.draft_revision, actions: [finalMove] }),
+      body: JSON.stringify({ definition: draft.definition, revision: savedDraft.draft_revision, actions: [laterEdit] }),
     });
     expect(secondSave.status).toBe(200);
-    expect((await secondSave.json() as any).draft.action_history).toEqual([finalMove]);
+    expect((await secondSave.json() as any).draft.action_history).toEqual([firstEdit, laterEdit]);
   });
 
   test('publishes an immutable version and immediately prepares the next draft', async () => {

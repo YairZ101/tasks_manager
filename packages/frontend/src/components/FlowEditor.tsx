@@ -18,7 +18,7 @@ type CanvasNode = Node<{ flowNode: FlowNode }, 'flowBlock'>;
 type EditorViewport = NonNullable<FlowDefinition['viewport']>;
 type EditorPanel = 'palette' | 'inspector' | 'history' | null;
 type SaveStatus = 'saved' | 'unsaved' | 'saving' | 'error';
-export type VersionChangeKind = 'initial' | 'added' | 'removed' | 'changed' | 'moved' | 'connected' | 'disconnected';
+export type VersionChangeKind = 'initial' | 'added' | 'removed' | 'changed' | 'connected' | 'disconnected';
 export type VersionChange = { kind: VersionChangeKind; title: string; detail?: string; blockType?: FlowNode['type']; timestamp?: string };
 export type FlowZoomMode = 'overview' | 'compact' | 'detail';
 export const MIN_FLOW_ZOOM = 0.2;
@@ -119,9 +119,6 @@ export function getVersionChanges(current: FlowDefinition, previous?: FlowDefini
     if ('name' in before.config && 'name' in node.config && beforeName !== afterName) {
       changes.push({ kind: 'changed', title: `Renamed ${beforeName} to ${afterName}`, blockType: node.type });
     }
-    if (before.position.x !== node.position.x || before.position.y !== node.position.y) {
-      changes.push({ kind: 'moved', title: `Moved ${afterName}`, detail: `${typeMeta[node.type].label} block`, blockType: node.type });
-    }
     const beforeConfig = before.config as Record<string, unknown>;
     const afterConfig = node.config as Record<string, unknown>;
     const fields = new Set([...Object.keys(beforeConfig), ...Object.keys(afterConfig)]);
@@ -158,21 +155,20 @@ export function getVersionChanges(current: FlowDefinition, previous?: FlowDefini
   return changes;
 }
 
+// Layout is not behaviour, so moving a block is never a history entry. The panel still reports it as
+// context when a draft differs from the published version by position alone.
+export function hasLayoutChange(current: FlowDefinition, previous?: FlowDefinition): boolean {
+  if (!previous) return false;
+  const previousNodes = new Map(previous.nodes.map((node) => [node.id, node]));
+  return current.nodes.some((node) => {
+    const before = previousNodes.get(node.id);
+    return before !== undefined && (before.position.x !== node.position.x || before.position.y !== node.position.y);
+  });
+}
+
 export function formatActionTimestamp(timestamp: string | undefined) {
   if (!timestamp || Number.isNaN(new Date(timestamp).getTime())) return 'Just now';
   return new Intl.DateTimeFormat(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit', second: '2-digit' }).format(new Date(timestamp));
-}
-
-export function appendVersionActions(history: VersionChange[], incoming: VersionChange[]): VersionChange[] {
-  return incoming.reduce<VersionChange[]>((next, action) => {
-    const previous = next.at(-1);
-    const actionTime = action.timestamp ? new Date(action.timestamp).getTime() : Number.NaN;
-    const previousTime = previous?.timestamp ? new Date(previous.timestamp).getTime() : Number.NaN;
-    if (action.kind === 'moved' && previous?.kind === 'moved' && previous.title === action.title && previous.blockType === action.blockType && actionTime - previousTime < 750) {
-      return [...next.slice(0, -1), action];
-    }
-    return [...next, action];
-  }, history);
 }
 
 function SemanticSummary({ type, name }: { type: FlowNode['type']; name: string }) {
@@ -429,13 +425,12 @@ function VersionChangeIcon({ change }: { change: VersionChange }) {
   const icon = change.kind === 'added' ? 'plus'
     : change.kind === 'removed' ? 'trash'
       : change.kind === 'connected' || change.kind === 'disconnected' ? 'branch'
-        : change.kind === 'moved' ? 'nodes'
-          : change.kind === 'changed' ? 'edit'
-            : 'history';
+        : change.kind === 'changed' ? 'edit'
+          : 'history';
   return <Icon name={icon} size={15} />;
 }
 
-function VersionHistoryPanel({ open, title, comparisonLabel, changes, close }: { open: boolean; title: string; comparisonLabel: string; changes: VersionChange[]; close: () => void }) {
+function VersionHistoryPanel({ open, title, comparisonLabel, comparisonName, subject, changes, layoutOnly, close }: { open: boolean; title: string; comparisonLabel: string; comparisonName: string; subject: string; changes: VersionChange[]; layoutOnly: boolean; close: () => void }) {
   return <aside id="flow-version-history" className={`version-history-panel editor-panel ${open ? 'panel-open' : ''}`} aria-label="Version history">
     <header><div><span className="block-glyph history"><Icon name="history" size={18} /></span><div><span className="eyebrow">VERSION HISTORY</span><h3>{title}</h3></div></div><PanelCloseButton label="Close version history" onClick={close} /></header>
     <div className="version-history-scroll">
@@ -445,7 +440,10 @@ function VersionHistoryPanel({ open, title, comparisonLabel, changes, close }: {
           <span className="version-change-marker"><VersionChangeIcon change={change} /></span>
           <div><strong>{change.title}</strong><small>{formatActionTimestamp(change.timestamp)}</small></div>
         </li>)}
-      </ol> : <div className="version-history-empty"><Icon name="check" size={19} /><strong>No graph changes</strong><p>This draft matches the current published version.</p></div>}
+      </ol> : <div className="version-history-empty"><Icon name="check" size={19} />
+        <strong>No changes to how this Flow runs</strong>
+        <p>{layoutOnly ? `Only block positions differ from ${comparisonName}.` : `${subject} matches ${comparisonName}.`}</p>
+      </div>}
     </div>
   </aside>;
 }
@@ -595,8 +593,8 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     const timestamp = new Date().toISOString();
     const actions = getVersionChanges(definition, previous).map((change) => ({ ...change, timestamp }));
     if (!actions.length) return;
-    setActionHistory((current) => appendVersionActions(current, actions));
-    pendingActionsRef.current = appendVersionActions(pendingActionsRef.current, actions);
+    setActionHistory((current) => [...current, ...actions]);
+    pendingActionsRef.current = [...pendingActionsRef.current, ...actions];
   }, [definition, readOnly]);
 
   useEffect(() => {
@@ -682,7 +680,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     const request = api.saveDraft(flowId, definitionToSave, revisionToSave, actionsToSave as FlowVersionAction[]).then((result) => {
       revisionRef.current = result.draft.draft_revision;
       setRevision(result.draft.draft_revision);
-      setActionHistory(appendVersionActions((result.draft.action_history ?? []) as VersionChange[], pendingActionsRef.current));
+      setActionHistory([...(result.draft.action_history ?? []) as VersionChange[], ...pendingActionsRef.current]);
       savedViewport.current = definitionToSave.viewport ?? defaultViewport;
       if (changeSequence.current === savingSequence) {
         dirtyRef.current = false;
@@ -693,7 +691,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
       }
       return true;
     }).catch((error: any) => {
-      pendingActionsRef.current = appendVersionActions(actionsToSave, pendingActionsRef.current);
+      pendingActionsRef.current = [...actionsToSave, ...pendingActionsRef.current];
       setSaveStatus('error');
       toast.error(error.data?.reason === 'revision_conflict' ? 'This draft changed elsewhere. Reload before editing again.' : `Autosave failed: ${error.message}`);
       return false;
@@ -757,10 +755,15 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
     ?? versions.slice().sort((a, b) => b.version - a.version)[0];
   const comparisonVersion = readOnly ? previousVersion : currentPublishedVersion;
   const versionChanges = useMemo(() => getVersionChanges(definition, comparisonVersion?.definition), [comparisonVersion, definition]);
+  const layoutOnly = useMemo(() => hasLayoutChange(definition, comparisonVersion?.definition), [comparisonVersion, definition]);
   const historyTitle = readOnly && displayedVersion ? `Changes in v${displayedVersion.version}` : 'Draft changes';
   const historyComparisonLabel = readOnly
     ? previousVersion ? `Compared with v${previousVersion.version}` : 'Initial published version'
     : currentPublishedVersion ? `Since current v${currentPublishedVersion.version}` : 'Before the first publication';
+  // A published version is compared with the one before it. A draft is compared with whatever is
+  // active, which is not necessarily its predecessor once an older version has been reactivated.
+  const historySubject = readOnly ? 'This version' : 'This draft';
+  const historyComparisonName = readOnly ? 'the previous version' : 'the current published version';
   const persistedHistory = readOnly ? (displayedVersion?.action_history ?? []) : actionHistory;
   const historyChanges = persistedHistory.length
     ? [...persistedHistory].reverse()
@@ -820,7 +823,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
         {!readOnly && !validation.valid && <div className="validation-popover"><strong>Flow needs attention</strong>{validation.problems.slice(0, 4).map((problem) => <button key={`${problem.code}-${problem.nodeId}-${problem.connectionId}`} onClick={() => { if (problem.nodeId) { setSelectedId(problem.nodeId); setOpenPanel('inspector'); } }}><Icon name="alert" size={14} />{problem.message}</button>)}</div>}
       </div>
       {!readOnly && inspectorVisible && <Inspector node={selected} nodes={nodes} edges={edges} presets={agentPresets} open update={updateSelected} connectOutcome={connectOutcome} remove={removeSelected} close={() => setOpenPanel(null)} openAgent={openAgentInLibrary} />}
-      <VersionHistoryPanel open={openPanel === 'history'} title={historyTitle} comparisonLabel={historyComparisonLabel} changes={historyChanges} close={() => setOpenPanel(null)} />
+      <VersionHistoryPanel open={openPanel === 'history'} title={historyTitle} comparisonLabel={historyComparisonLabel} changes={historyChanges} layoutOnly={layoutOnly} comparisonName={historyComparisonName} subject={historySubject} close={() => setOpenPanel(null)} />
     </div>
   </div>;
 }

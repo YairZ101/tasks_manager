@@ -1,9 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import type { TaskLinkRelationship } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { Icon } from './Icon.js';
+import SelectionMenu from './SelectionMenu.js';
 import TaskDetailsFields from './TaskDetailsFields.js';
 import { buildRunPreflight } from './runPreflight.js';
 
@@ -13,7 +14,7 @@ export default function TaskComposer() {
   const [description, setDescription] = useState('');
   const [acceptance, setAcceptance] = useState('');
   const [links, setLinks] = useState<Array<{ task_id: number; relationship: TaskLinkRelationship }>>([]);
-  const publishedFlows = flows.filter((flow) => flow.activeVersion);
+  const publishedFlows = useMemo(() => flows.filter((flow) => flow.activeVersion), [flows]);
   const defaultFlow = publishedFlows.find((flow) => flow.is_default);
   const [action, setAction] = useState<'create' | 'run'>('create');
   const [selectedFlowId, setSelectedFlowId] = useState<number | null>(() => defaultFlow?.id ?? publishedFlows[0]?.id ?? null);
@@ -21,6 +22,7 @@ export default function TaskComposer() {
   const [saving, setSaving] = useState(false);
   const actionsRef = useRef<HTMLDivElement>(null);
   const selectedFlow = publishedFlows.find((flow) => flow.id === selectedFlowId) ?? defaultFlow ?? publishedFlows[0];
+  const flowOptions = useMemo(() => publishedFlows.map((flow) => ({ value: String(flow.id), label: `${flow.is_default ? 'Project default · ' : ''}${flow.name} · v${flow.activeVersion!.version}` })), [publishedFlows]);
   const preflight = buildRunPreflight(selectedFlow);
   const incompleteDependencies = links.flatMap((link) => {
     if (link.relationship !== 'is_blocked_by') return [];
@@ -70,7 +72,7 @@ export default function TaskComposer() {
     <form className="composer" role="dialog" aria-modal="true" aria-labelledby="new-task-title" onSubmit={submit}>
       <header><div><span className="eyebrow">NEW WORK</span><h2 id="new-task-title">Frame the outcome</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={() => setCreateOpen(false)}><Icon name="close" /></button></header>
       <TaskDetailsFields value={{ title, description, acceptance }} onChange={(next) => { setTitle(next.title); setDescription(next.description); setAcceptance(next.acceptance); }} links={links} onLinksChange={setLinks} tasks={tasks} candidateTasks={tasks.filter((task) => task.resolution === 'open')} autoFocus />
-      <footer className={action === 'run' ? 'composer-run-footer' : ''}>{action === 'run' && preflight ? <div className="composer-flow-control"><label htmlFor="task-flow">Flow</label><select id="task-flow" aria-label="Flow to run" value={String(selectedFlow?.id ?? '')} onChange={(event) => setSelectedFlowId(Number(event.target.value))}>{publishedFlows.map((flow) => <option key={flow.id} value={flow.id}>{flow.is_default ? 'Project default · ' : ''}{flow.name} · v{flow.activeVersion!.version}</option>)}</select></div> : null}<button type="button" className="button ghost" onClick={() => setCreateOpen(false)}>Cancel</button><div className="composer-create-actions" ref={actionsRef}><button className="button primary" disabled={saving || !title.trim()}>{saving ? 'Creating…' : action === 'run' ? 'Create & start run' : 'Create task'}</button>{preflight ? <><button type="button" className="button primary composer-more-actions" aria-label="More create actions" aria-haspopup="menu" aria-expanded={actionsOpen} onClick={() => setActionsOpen((open) => !open)} disabled={saving || !title.trim()}><Icon name="arrow" size={15} /></button>{actionsOpen ? <div className="composer-action-menu" role="menu" aria-label="Create task actions"><button type="button" role="menuitem" aria-current={action === 'create' ? 'true' : undefined} onClick={() => selectAction('create')}><Icon name="plus" size={16} /><span><strong>Create task</strong><small>Add it to Backlog.</small></span></button><button type="button" role="menuitem" aria-current={action === 'run' ? 'true' : undefined} onClick={() => selectAction('run')}><Icon name="play" size={16} /><span><strong>Create & start run</strong><small>Choose a Flow before starting.</small></span></button></div> : null}</> : null}</div></footer>
+      <footer className={action === 'run' ? 'composer-run-footer' : ''}>{action === 'run' && preflight ? <div className="composer-flow-control"><SelectionMenu label="Flow" ariaLabel="Flow to run" value={String(selectedFlow?.id ?? '')} options={flowOptions} onChange={(value) => setSelectedFlowId(Number(value))} inlineLabel className="composer-flow-selection menu-top" /></div> : null}<button type="button" className="button ghost" onClick={() => setCreateOpen(false)}>Cancel</button><div className="composer-create-actions" ref={actionsRef}><button className="button primary" disabled={saving || !title.trim()}>{saving ? 'Creating…' : action === 'run' ? 'Create & start run' : 'Create task'}</button>{preflight ? <><button type="button" className="button primary composer-more-actions" aria-label="More create actions" aria-haspopup="menu" aria-expanded={actionsOpen} onClick={() => setActionsOpen((open) => !open)} disabled={saving || !title.trim()}><Icon name="arrow" size={15} /></button>{actionsOpen ? <div className="composer-action-menu" role="menu" aria-label="Create task actions"><button type="button" role="menuitem" aria-current={action === 'create' ? 'true' : undefined} onClick={() => selectAction('create')}><Icon name="plus" size={16} /><span><strong>Create task</strong><small>Add it to Backlog.</small></span></button><button type="button" role="menuitem" aria-current={action === 'run' ? 'true' : undefined} onClick={() => selectAction('run')}><Icon name="play" size={16} /><span><strong>Create & start run</strong><small>Choose a Flow before starting.</small></span></button></div> : null}</> : null}</div></footer>
     </form>
   </div>;
 }

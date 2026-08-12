@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import type { Task, TaskLinkRelationship } from '../domain.js';
 import { Icon } from './Icon.js';
+import SelectionMenu from './SelectionMenu.js';
 import TaskLinkPicker from './TaskLinkPicker.js';
 
 type DetailSection = 'context' | 'acceptance' | 'links';
@@ -10,6 +11,7 @@ export type TaskDetailLink = { task_id: number; relationship: TaskLinkRelationsh
 
 const detailLabels: Record<DetailSection, string> = { context: 'Context', acceptance: 'Done when', links: 'Linked tasks' };
 const relationshipLabels: Record<TaskLinkRelationship, string> = { is_blocked_by: 'Is blocked by', blocks: 'Blocks', relates_to: 'Relates to' };
+const relationshipOptions = (Object.keys(relationshipLabels) as TaskLinkRelationship[]).map((value) => ({ value, label: relationshipLabels[value] }));
 
 export default function TaskDetailsFields({ value, onChange, links, onLinksChange, tasks, candidateTasks = tasks, excludeTaskId, autoFocus = false }: {
   value: TaskDetailValues;
@@ -50,7 +52,7 @@ export default function TaskDetailsFields({ value, onChange, links, onLinksChang
     {sections.includes('context') ? <section className="task-detail-field"><header><strong>Context</strong><button type="button" onClick={() => removeSection('context')}>Remove</button></header><textarea value={value.description} onChange={(event) => onChange({ ...value, description: event.target.value })} placeholder="Why this matters, constraints, useful links…" /></section> : null}
     {sections.includes('acceptance') ? <section className="task-detail-field"><header><strong>Done when</strong><button type="button" onClick={() => removeSection('acceptance')}>Remove</button></header><textarea value={value.acceptance} onChange={(event) => onChange({ ...value, acceptance: event.target.value })} placeholder="Observable conditions for success and how to verify them" /></section> : null}
     {sections.includes('links') ? <section className="task-detail-field"><header><strong>Linked tasks</strong><button type="button" onClick={() => removeSection('links')}>Remove</button></header>
-      <div className="link-picker"><label>Relationship<select value={relationship} onChange={(event) => setRelationship(event.target.value as TaskLinkRelationship)}>{(Object.keys(relationshipLabels) as TaskLinkRelationship[]).map((candidate) => <option key={candidate} value={candidate}>{relationshipLabels[candidate]}</option>)}</select></label>
+      <div className="link-picker"><SelectionMenu<TaskLinkRelationship> label="Relationship" value={relationship} options={relationshipOptions} onChange={setRelationship} className="form-selection relationship-selection" />
         <TaskLinkPicker tasks={availableTasks} onSelect={(task) => onLinksChange([...links, { task_id: task.id, relationship }])} />
       </div>
       {links.length > 0 ? <div className="dependency-list">{links.map((link) => {

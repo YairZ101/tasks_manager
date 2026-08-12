@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { createElement } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import App, { canNavigateFromAgents, queueForShortcutCode, sidebarCollapsedForContext, shouldAutoCollapseSidebar, shouldCollapseSidebarOnResize, shouldExpandSidebarOnResize } from './App.js';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import App, { canNavigateFromAgents, sidebarCollapsedForContext, shouldAutoCollapseSidebar, shouldCollapseSidebarOnResize, shouldExpandSidebarOnResize } from './App.js';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
 
@@ -32,25 +32,13 @@ beforeEach(() => {
     tasks: [],
     flows: [],
     section: 'work',
-    workView: 'backlog',
+    workView: 'open',
     editingFlowId: null,
     viewingFlowVersionId: null,
     selectedTaskId: null,
     createOpen: false,
     settingsOpen: false,
     bootstrap: vi.fn(),
-  });
-});
-
-describe('queueForShortcutCode', () => {
-  test('uses physical digit keys so Option shortcuts work with macOS keyboard layouts', () => {
-    expect(queueForShortcutCode('Digit1')).toBe('backlog');
-    expect(queueForShortcutCode('Digit3')).toBe('attention');
-    expect(queueForShortcutCode('Digit4')).toBe('finished');
-  });
-  test('ignores unrelated keys', () => {
-    expect(queueForShortcutCode('KeyN')).toBeNull();
-    expect(queueForShortcutCode('Digit5')).toBeNull();
   });
 });
 
@@ -62,10 +50,34 @@ test('guards unsaved Agent preset edits when leaving the tab', () => {
   expect(canNavigateFromAgents('work', 'flows', true, confirmDiscard)).toBe(true);
 });
 
-test('does not expose a Ready operational view', () => {
+test('uses one task destination instead of separate state destinations', () => {
   render(createElement(App));
-  expect(screen.queryByRole('button', { name: 'Ready, Option 2' })).not.toBeInTheDocument();
-  expect(screen.getByRole('button', { name: 'Active, Option 2' })).toBeInTheDocument();
+  const tasks = screen.getByRole('button', { name: 'Tasks' });
+  expect(tasks).toBeInTheDocument();
+  expect(tasks.querySelector('[data-icon="tasks"]')).toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Open work/ })).not.toBeInTheDocument();
+  expect(screen.queryByRole('button', { name: /Finished, Option/ })).not.toBeInTheDocument();
+});
+
+test('opens task creation from any section with Option N', () => {
+  useAppStore.setState({ section: 'flows', createOpen: false });
+  render(createElement(App));
+  fireEvent.keyDown(window, { altKey: true, code: 'KeyN' });
+  expect(useAppStore.getState().section).toBe('work');
+  expect(useAppStore.getState().createOpen).toBe(true);
+});
+
+test('does not run the task shortcut while a combobox has focus', () => {
+  useAppStore.setState({ section: 'flows', createOpen: false });
+  render(createElement(App));
+  const combobox = document.createElement('button');
+  combobox.setAttribute('role', 'combobox');
+  document.body.append(combobox);
+  combobox.focus();
+  fireEvent.keyDown(combobox, { altKey: true, code: 'KeyN' });
+  expect(useAppStore.getState().section).toBe('flows');
+  expect(useAppStore.getState().createOpen).toBe(false);
+  combobox.remove();
 });
 
 test('opens the Agents tab from the primary navigation', () => {
@@ -143,9 +155,9 @@ describe('App sidebar behavior', () => {
     render(createElement(App));
     const shell = document.querySelector('.app-shell');
 
-    setViewportWidth(1159);
+    act(() => setViewportWidth(1159));
     await waitFor(() => expect(shell).toHaveClass('sidebar-collapsed'));
-    setViewportWidth(1160);
+    act(() => setViewportWidth(1160));
     await waitFor(() => expect(shell).not.toHaveClass('sidebar-collapsed'));
   });
 
@@ -153,9 +165,9 @@ describe('App sidebar behavior', () => {
     render(createElement(App));
     const shell = document.querySelector('.app-shell');
 
-    useAppStore.setState({ section: 'flows', editingFlowId: 1 });
+    act(() => useAppStore.setState({ section: 'flows', editingFlowId: 1 }));
     await waitFor(() => expect(shell).toHaveClass('sidebar-collapsed'));
-    useAppStore.setState({ editingFlowId: null });
+    act(() => useAppStore.setState({ editingFlowId: null }));
     await waitFor(() => expect(shell).not.toHaveClass('sidebar-collapsed'));
   });
 });

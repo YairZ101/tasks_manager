@@ -9,7 +9,8 @@ describe('application store', () => {
     vi.mocked(api.status).mockResolvedValue({ initialized: true, repoName: 'demo', isGitRepo: true, runner: { activeCount: 1, queuedCount: 2, maxConcurrent: 3, executions: [] } });
     vi.mocked(api.listTasks).mockResolvedValue({ tasks: [{ id: 1, title: 'Task' } as any] });
     vi.mocked(api.listFlows).mockResolvedValue({ flows: [{ id: 1, name: 'Flow' } as any] });
-    useAppStore.setState({ loading: true, bootError: null, initialized: false, tasks: [], flows: [] });
+    window.localStorage.clear();
+    useAppStore.setState({ loading: true, bootError: null, initialized: false, tasks: [], flows: [], workView: 'open' });
   });
   test('bootstraps status, tasks, and flows together', async () => {
     await useAppStore.getState().bootstrap();
@@ -17,20 +18,15 @@ describe('application store', () => {
     expect(useAppStore.getState().tasks).toHaveLength(1);
     expect(useAppStore.getState().flows).toHaveLength(1);
   });
-  test('opens Needs attention first when a task requires intervention', async () => {
+  test('preserves the selected task view while refreshing task data', async () => {
+    useAppStore.setState({ workView: 'all' });
     vi.mocked(api.listTasks).mockResolvedValueOnce({ tasks: [{ id: 1, operational_state: 'attention' } as any] });
     await useAppStore.getState().bootstrap();
-    expect(useAppStore.getState().workView).toBe('attention');
+    expect(useAppStore.getState().workView).toBe('all');
   });
-  test('opens Backlog first for an empty workspace', async () => {
-    vi.mocked(api.listTasks).mockResolvedValueOnce({ tasks: [] });
-    await useAppStore.getState().bootstrap();
-    expect(useAppStore.getState().workView).toBe('backlog');
-  });
-  test('opens Backlog for open tasks without an active Run', async () => {
-    vi.mocked(api.listTasks).mockResolvedValueOnce({ tasks: [{ id: 1, operational_state: 'backlog' } as any] });
-    await useAppStore.getState().bootstrap();
-    expect(useAppStore.getState().workView).toBe('backlog');
+  test('persists the selected task view', () => {
+    useAppStore.getState().setWorkView('finished');
+    expect(JSON.parse(window.localStorage.getItem('flow.task-view.v1') ?? '{}')).toEqual({ version: 1, workView: 'finished' });
   });
   test('surfaces a startup failure instead of leaving the workspace loading', async () => {
     vi.mocked(api.status).mockRejectedValueOnce(new Error('The server did not respond.'));

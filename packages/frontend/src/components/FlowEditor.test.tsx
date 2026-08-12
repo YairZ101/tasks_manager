@@ -255,19 +255,22 @@ describe('FlowEditor', () => {
     expect(historyButton).toHaveAttribute('aria-expanded', 'false');
     const historicalActions = Array.from(historyButton.parentElement!.children);
     expect(historicalActions[0]).toBe(historyButton);
-    expect(historicalActions[1]).toBe(picker.parentElement);
+    expect(historicalActions[1]).toBe(picker.closest('.version-picker'));
     expect(historicalActions[2]).toBe(activateButton);
     fireEvent.click(historyButton);
     expect(historyButton).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('complementary', { name: 'Version history' })).toHaveClass('panel-open');
     expect(screen.getByText('Changes in v1')).toBeVisible();
     expect(screen.getByText('Created the first version')).toBeVisible();
+    fireEvent.click(picker);
     expect(screen.getByRole('option', { name: /v2 · current/ })).toBeInTheDocument();
+    fireEvent.click(picker);
     fireEvent.click(activateButton);
     await waitFor(() => expect(api.activateFlowVersion).toHaveBeenCalledWith(1, 2));
     const editButton = await screen.findByRole('button', { name: /Edit latest draft/ });
     expect(editButton).toBeVisible();
     expect(editButton.querySelector('[data-icon="edit"]')).toBeInTheDocument();
+    fireEvent.click(picker);
     expect(screen.getByRole('option', { name: /v1 · current/ })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /^v2 ·/ })).toBeInTheDocument();
     expect(useAppStore.getState().refreshFlows).toHaveBeenCalled();
@@ -366,8 +369,10 @@ describe('FlowEditor', () => {
 
     const picker = await screen.findByRole('combobox', { name: 'Flow version' });
     expect(picker).toHaveValue('draft');
+    fireEvent.click(picker);
     expect(screen.getByRole('option', { name: 'Draft v2 · edit' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: /v1 · current/ })).toBeInTheDocument();
+    fireEvent.click(picker);
     const historyButton = screen.getByRole('button', { name: 'Version history' });
     const publishButton = screen.getByRole('button', { name: 'Publish version' });
     expect(historyButton.querySelector('[data-icon="history"]')).toHaveAttribute('width', '18');
@@ -377,14 +382,15 @@ describe('FlowEditor', () => {
     expect(arrangeButton.parentElement).toHaveClass('canvas-edit-actions');
     const draftActions = Array.from(historyButton.parentElement!.children);
     expect(draftActions[0]).toBe(historyButton);
-    expect(draftActions[1]).toBe(picker.parentElement);
+    expect(draftActions[1]).toBe(picker.closest('.version-picker'));
     expect(draftActions[2]).toBe(publishButton);
     fireEvent.click(historyButton);
     expect(screen.getByText('Draft changes')).toBeVisible();
     expect(screen.getByText('No changes to how this Flow runs')).toBeVisible();
     expect(screen.getByText('This draft matches the current published version.')).toBeVisible();
 
-    fireEvent.change(picker, { target: { value: '2' } });
+    fireEvent.click(picker);
+    fireEvent.click(screen.getByRole('option', { name: /v1 · current/ }));
     await waitFor(() => expect(useAppStore.getState().viewFlowVersion).toHaveBeenCalledWith(1, 2));
   });
 
@@ -515,13 +521,14 @@ describe('FlowEditor', () => {
     const planning = await screen.findByLabelText('Agent block: Planning');
     fireEvent.click(planning);
     const agent = await screen.findByLabelText('Agent');
-    await waitFor(() => expect(within(agent).getByRole('option', { name: 'Development' })).toBeInTheDocument());
+    fireEvent.click(agent);
+    await waitFor(() => expect(screen.getByRole('option', { name: 'Development' })).toBeInTheDocument());
     // The block is a pure reference — no prompt, effect level, or drift affordance.
     expect(screen.queryByLabelText('System prompt')).not.toBeInTheDocument();
     expect(screen.queryByLabelText('Effect level')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /update block/i })).not.toBeInTheDocument();
-    fireEvent.change(agent, { target: { value: 'development' } });
-    await waitFor(() => expect((agent as HTMLSelectElement).value).toBe('development'));
+    fireEvent.click(screen.getByRole('option', { name: 'Development' }));
+    await waitFor(() => expect(agent).toHaveValue('development'));
     expect(screen.getByText('Build work')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Edit agent/ })).toBeInTheDocument();
   });

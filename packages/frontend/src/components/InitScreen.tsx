@@ -4,6 +4,7 @@ import { api, type AgentSetup, type FlowTemplate, type WorkspaceSetup } from '..
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { AgentPresetPicker, type AgentCliPreset } from './AgentPresetPicker.js';
 import { AppMark, BlockIcon, Icon, type BlockIconType } from './Icon.js';
+import SelectionMenu from './SelectionMenu.js';
 
 type SetupStep = 1 | 2 | 3 | 4 | 5;
 type AgentTestState = 'idle' | 'testing' | 'success' | 'failure';
@@ -23,6 +24,11 @@ const templateOptions: Array<{ key: FlowTemplate; title: string; detail: string;
   { key: 'recommended', title: 'Recommended delivery', detail: 'Planning, checks, decisions, and an explicit finish path.', nodes: ['begin', 'agent', 'decision', 'agent', 'check', 'result'] },
   { key: 'minimal', title: 'Minimal delivery', detail: 'One Development Agent between Begin and Completed.', nodes: ['begin', 'agent', 'result'] },
   { key: 'blank', title: 'Blank Flow', detail: 'A valid Begin-to-Completed shell, ready for your own blocks.', nodes: ['begin', 'result'] },
+];
+const promptDeliveryOptions = [
+  { value: 'stdin', label: 'Standard input' },
+  { value: 'argument', label: 'Final argument' },
+  { value: 'flag', label: 'Named flag' },
 ];
 
 function suggestedPrefix(repoName: string): string {
@@ -181,7 +187,7 @@ export default function InitScreen() {
         <AgentPresetPicker value={draft.agent} onSelect={applyPreset} />
         <label htmlFor="init-agent-command">Agent CLI command<input id="init-agent-command" autoFocus required value={draft.agent.cli_cmd} onChange={(event) => updateAgent({ cli_cmd: event.target.value })} placeholder="codex exec --full-auto" /></label>
         <div className="field-grid">
-          <label htmlFor="init-prompt-delivery">Prompt delivery<select id="init-prompt-delivery" value={draft.agent.cli_prompt_mode} onChange={(event) => updateAgent({ cli_prompt_mode: event.target.value as AgentSetup['cli_prompt_mode'] })}><option value="stdin">Standard input</option><option value="argument">Final argument</option><option value="flag">Named flag</option></select></label>
+          <SelectionMenu label="Prompt delivery" value={draft.agent.cli_prompt_mode} options={promptDeliveryOptions} onChange={(value) => updateAgent({ cli_prompt_mode: value as AgentSetup['cli_prompt_mode'] })} className="form-selection init-selection" />
           <label htmlFor="init-prompt-flag">Prompt flag<input id="init-prompt-flag" value={draft.agent.cli_prompt_flag ?? ''} disabled={draft.agent.cli_prompt_mode !== 'flag'} onChange={(event) => updateAgent({ cli_prompt_flag: event.target.value })} placeholder="--prompt" /></label>
         </div>
         {draft.agent.cli_prompt_mode === 'flag' && !draft.agent.cli_prompt_flag?.trim() && <p className="field-error">Add the flag your CLI expects before continuing.</p>}

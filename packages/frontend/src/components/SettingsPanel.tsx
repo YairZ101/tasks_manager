@@ -4,7 +4,14 @@ import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { AgentPresetPicker, type AgentCliPreset } from './AgentPresetPicker.js';
 import { Icon } from './Icon.js';
+import SelectionMenu from './SelectionMenu.js';
 import type { WorkspaceSetup } from '../api/client.js';
+
+const promptDeliveryOptions = [
+  { value: 'stdin', label: 'Standard input' },
+  { value: 'argument', label: 'Final argument' },
+  { value: 'flag', label: 'Named flag' },
+];
 
 export default function SettingsPanel() {
   const close = useAppStore((state) => state.setSettingsOpen);
@@ -43,7 +50,7 @@ export default function SettingsPanel() {
     <p className="lead">One CLI agent powers every Agent block. Each block contributes its own compiled instructions.</p>
     <AgentPresetPicker value={config} onSelect={applyPreset} />
     <label>CLI command<input value={config.cli_cmd ?? ''} onChange={(e) => setConfig({ ...config, cli_cmd: e.target.value })} placeholder="codex exec --full-auto" /></label>
-    <div className="field-grid"><label>Prompt delivery<select value={config.cli_prompt_mode} onChange={(e) => setConfig({ ...config, cli_prompt_mode: e.target.value })}><option value="stdin">Standard input</option><option value="argument">Final argument</option><option value="flag">Named flag</option></select></label><label>Prompt flag<input value={config.cli_prompt_flag ?? ''} disabled={config.cli_prompt_mode !== 'flag'} onChange={(e) => setConfig({ ...config, cli_prompt_flag: e.target.value })} placeholder="--prompt" /></label></div>
+    <div className="field-grid"><SelectionMenu label="Prompt delivery" value={config.cli_prompt_mode} options={promptDeliveryOptions} onChange={(value) => setConfig({ ...config, cli_prompt_mode: value })} className="form-selection" /><label>Prompt flag<input value={config.cli_prompt_flag ?? ''} disabled={config.cli_prompt_mode !== 'flag'} onChange={(e) => setConfig({ ...config, cli_prompt_flag: e.target.value })} placeholder="--prompt" /></label></div>
     <div className="field-grid"><label>Timeout (minutes)<input type="number" min="1" value={Math.round(config.timeout_ms / 60000)} onChange={(e) => setConfig({ ...config, timeout_ms: Number(e.target.value) * 60000 })} /></label><label>Concurrent executions<input type="number" min="1" max="10" value={config.max_concurrent_executions} onChange={(e) => setConfig({ ...config, max_concurrent_executions: Number(e.target.value) })} /></label></div>
     <div className="settings-note"><Icon name="branch" /><div><strong>One shared capacity pool</strong><p>Agent and Check blocks count against the same limit. Non-Git projects safely fall back to one execution.</p></div></div>
     <section className="workspace-setup-settings">

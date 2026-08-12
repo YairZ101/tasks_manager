@@ -54,6 +54,19 @@ describe('InitScreen', () => {
     expect(api.testAgentConfigStream).toHaveBeenCalledWith(expect.objectContaining({ cli_cmd: 'claude -p --dangerously-skip-permissions', cli_prompt_mode: 'argument' }), expect.any(Function));
   });
 
+  test('requires and tests a named prompt flag selected from the shared menu', async () => {
+    render(<InitScreen />);
+    fireEvent.click(screen.getByRole('combobox', { name: 'Prompt delivery' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Named flag' }));
+    expect(screen.getByText('Add the flag your CLI expects before continuing.')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Continue/ })).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Prompt flag' }), { target: { value: '--message' } });
+    fireEvent.click(screen.getByRole('button', { name: /Continue/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Test Agent' }));
+    await screen.findByText('Agent responded');
+    expect(api.testAgentConfigStream).toHaveBeenCalledWith(expect.objectContaining({ cli_prompt_mode: 'flag', cli_prompt_flag: '--message' }), expect.any(Function));
+  });
+
   test('keeps the next step locked until the Agent test succeeds', async () => {
     vi.mocked(api.testAgentConfigStream).mockImplementation(async (_candidate, onOutput) => { onOutput('missing binary'); return { success: false, durationMs: 12, error: 'Command was not found' }; });
     render(<InitScreen />);
@@ -64,7 +77,7 @@ describe('InitScreen', () => {
     expect(screen.getByText('missing binary')).toBeInTheDocument();
   });
 
-  test('restores unfinished setup from local storage', () => {
+  test('restores unfinished setup from local storage', async () => {
     window.localStorage.setItem('flow:onboarding:v2', JSON.stringify({
       version: 2, step: 3, prefix: 'FLOW', agent: { cli_cmd: 'agent run', cli_prompt_mode: 'argument', cli_prompt_flag: '' }, workspaceSetup: { setup_command: 'npm ci', timeout_ms: 300000 }, flowTemplate: 'blank',
     }));
@@ -72,6 +85,7 @@ describe('InitScreen', () => {
     expect(screen.getByRole('heading', { name: 'Name the project' })).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: /Project key/ })).toHaveValue('FLOW');
     expect(window.localStorage.getItem('flow:onboarding:v2')).not.toBeNull();
+    await waitFor(() => expect(api.getWorkspaceConfig).toHaveBeenCalled());
   });
 
   test('supports arrow-key selection for Flow templates', async () => {

@@ -67,4 +67,17 @@ describe('SettingsPanel workspace preparation', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
     await waitFor(() => expect(api.updateWorkspaceConfig).toHaveBeenCalledWith({ setup_command: '', timeout_ms: 600000 }));
   });
+
+  test('saves a manually selected prompt delivery mode and flag', async () => {
+    render(<SettingsPanel />);
+    const delivery = await screen.findByRole('combobox', { name: 'Prompt delivery' });
+    const flag = screen.getByRole('textbox', { name: 'Prompt flag' });
+    expect(flag).toBeDisabled();
+    fireEvent.click(delivery);
+    fireEvent.click(screen.getByRole('option', { name: 'Named flag' }));
+    expect(flag).toBeEnabled();
+    fireEvent.change(flag, { target: { value: '--prompt' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save settings' }));
+    await waitFor(() => expect(api.updateAgentConfig).toHaveBeenCalledWith(expect.objectContaining({ cli_prompt_mode: 'flag', cli_prompt_flag: '--prompt' })));
+  });
 });

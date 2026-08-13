@@ -7,6 +7,8 @@ import { useAppStore } from '../hooks/useTaskStore.js';
 import ConfirmDialog from './ConfirmDialog.js';
 import FlowComposer from './FlowComposer.js';
 import { FlowPreviewSvg, Icon } from './Icon.js';
+import PageHeader from './PageHeader.js';
+import PageHeaderAction from './PageHeaderAction.js';
 
 const PREVIEW_NODE_SIZE = 54;
 const PREVIEW_ICON_SIZE = 30;
@@ -263,9 +265,11 @@ export default function FlowLibrary() {
       setRenaming(false);
     }
   };
-  return <div className="flow-library">
-    <div className="library-intro"><div><span className="eyebrow">VERSIONED AUTOMATION</span><h2>Design how outcomes happen.</h2><p>Tasks stay simple. Flows hold the logic—agents, checks, human decisions, and explicit results.</p></div><button className="button primary" onClick={() => setCreateOpen(true)}><Icon name="plus" />New Flow</button></div>
-    <div className="flow-grid">
+  return <section className="flow-library" aria-labelledby="flow-library-title">
+    <PageHeader title="Flow library" titleId="flow-library-title" description="Create and publish reusable Flows.">
+      <PageHeaderAction label="New flow" onClick={() => setCreateOpen(true)} />
+    </PageHeader>
+    <div className="flow-library-scroll"><div className="flow-grid">
       {flows.map((flow) => {
         const previewVersion = flow.activeVersion ?? flow.draftVersion;
         return <article key={flow.id} className="flow-card">
@@ -277,8 +281,8 @@ export default function FlowLibrary() {
       </article>;
       })}
       <button className="flow-card add-flow" onClick={() => setCreateOpen(true)}><span><Icon name="plus" size={25} /></span><strong>Create another Flow</strong><small>Start from the recommended delivery graph</small></button>
-    </div>
+    </div></div>
     {createOpen && <FlowComposer onClose={() => setCreateOpen(false)} onCreate={create} />}
     {deleteTarget && <ConfirmDialog title={`Delete ${deleteTarget.name}?`} message="This permanently deletes the Flow and its versions. Flows with run history cannot be deleted." confirmLabel="Delete flow" destructive disabled={deleting} onConfirm={() => void remove()} onCancel={() => !deleting && setDeleteTarget(null)} />}
-  </div>;
+  </section>;
 }

@@ -35,14 +35,15 @@ describe('WorkBoard', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.localStorage.clear();
-    useAppStore.setState({ tasks: [task(1, 'backlog', 'Explore graph'), task(2, 'active', 'Build graph')], flows: [], selectedTaskId: null, workView: 'open' });
+    useAppStore.setState({ tasks: [task(1, 'backlog', 'Explore graph'), task(2, 'active', 'Build graph')], flows: [], selectedTaskId: null, workView: 'open', createOpen: false });
     vi.mocked(api.listTasks).mockImplementation(async () => ({ tasks: useAppStore.getState().tasks }));
     vi.mocked(api.startRun).mockResolvedValue({ run: { id: 99 } });
   });
 
   test('starts as one open task list grouped by operational state', () => {
     render(<WorkBoard />);
-    expect(screen.getByRole('region', { name: 'Task explorer' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Tasks' })).toBeInTheDocument();
+    expect(screen.getByRole('heading', { level: 1, name: 'Tasks' })).toBeVisible();
     expect(screen.queryByRole('group', { name: 'Task view' })).not.toBeInTheDocument();
     openFilters();
     expect(screen.getByRole('combobox', { name: 'Resolution' })).toHaveTextContent('Open');
@@ -51,6 +52,18 @@ describe('WorkBoard', () => {
     expect(screen.queryByRole('heading', { name: 'Needs attention' })).not.toBeInTheDocument();
     expect(screen.getByText('Explore graph')).toBeInTheDocument();
     expect(screen.getByText('Build graph')).toBeInTheDocument();
+  });
+
+  test('opens task creation from the shared page action', () => {
+    render(<WorkBoard />);
+    const header = document.querySelector('.page-header');
+    expect(header).not.toBeNull();
+    const newTask = within(header as HTMLElement).getByRole('button', { name: 'New task' });
+    expect(newTask).toHaveClass('page-header-action');
+
+    fireEvent.click(newTask);
+
+    expect(useAppStore.getState().createOpen).toBe(true);
   });
 
   test('moves between open, all, and finished from the Resolution filter', () => {
@@ -274,7 +287,9 @@ describe('WorkBoard', () => {
     useAppStore.setState({ tasks: [] });
     render(<WorkBoard />);
     expect(screen.getByText('Start with one task')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /new task/i })).toBeInTheDocument();
+    const newTaskButtons = screen.getAllByRole('button', { name: /new task/i });
+    expect(newTaskButtons).toHaveLength(2);
+    expect(newTaskButtons.every((button) => button.querySelector('.button-shortcut') === null)).toBe(true);
   });
 
   test('resets a search with no results', () => {

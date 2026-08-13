@@ -23,7 +23,11 @@ describe('FlowLibrary', () => {
     vi.mocked(api.createFlow).mockResolvedValue({ flow: { id: 42 } as any, draft: {} as any });
     render(<FlowLibrary />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'New Flow' }));
+    expect(screen.getByRole('heading', { level: 1, name: 'Flow library' })).toBeVisible();
+
+    const newFlow = screen.getByRole('button', { name: 'New flow' });
+    expect(newFlow).toHaveClass('page-header-action');
+    fireEvent.click(newFlow);
     expect(screen.getByRole('dialog', { name: 'Name the workflow' })).toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('Flow name'), { target: { value: 'Release delivery' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Flow' }));
@@ -37,7 +41,7 @@ describe('FlowLibrary', () => {
     vi.mocked(api.createFlow).mockRejectedValue(new Error('Flow name is required.'));
     render(<FlowLibrary />);
 
-    fireEvent.click(screen.getByRole('button', { name: 'New Flow' }));
+    fireEvent.click(screen.getByRole('button', { name: 'New flow' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create Flow' }));
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Flow name is required.');

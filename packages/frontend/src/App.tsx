@@ -3,7 +3,6 @@ import { Toaster } from 'sonner';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
 import { AppMark, Icon } from './components/Icon.js';
-import { KeyboardShortcut } from './components/KeyboardShortcut.js';
 import WorkBoard from './components/WorkBoard.js';
 import TaskPanel from './components/TaskPanel.js';
 import TaskComposer from './components/TaskComposer.js';
@@ -100,13 +99,6 @@ function AppContent() {
         </div>
       </aside>
       <main className="workspace">
-        <header className="topbar">
-          <div>{store.section !== 'work' && <span className="eyebrow">{store.section === 'flows' ? 'AUTOMATION DESIGN' : 'AGENT CONFIGURATION'}</span>}<h1 id={store.section === 'work' ? 'tasks-heading' : undefined}>{store.section === 'work' ? 'Tasks' : store.section === 'agents' ? 'Agents' : store.editingFlowId ? 'Flow editor' : 'Flow library'}</h1></div>
-          <div className="topbar-actions">
-            <span className="capacity"><i style={{ transform: `scaleX(${Math.min(1, store.runner.activeCount / Math.max(1, store.runner.maxConcurrent))})` }} />Capacity {store.runner.activeCount}/{store.runner.maxConcurrent}</span>
-            {store.section === 'work' && <button className="button primary" onClick={() => store.setCreateOpen(true)} title="Option + N" aria-keyshortcuts="Alt+N"><Icon name="plus" />New task <KeyboardShortcut keys={['⌥', 'N']} /></button>}
-          </div>
-        </header>
         <div className="workspace-body">
           {store.section === 'work' ? <WorkBoard /> : store.section === 'agents' ? <AgentsLibrary onDirtyChange={setAgentsDirty} focusPresetKey={store.agentsFocusPresetKey} onFocusConsumed={store.clearAgentsFocus} /> : store.editingFlowId ? (
             <Suspense fallback={<div className="boot inline">Loading canvas…</div>}><FlowEditor flowId={store.editingFlowId} versionId={store.viewingFlowVersionId} /></Suspense>

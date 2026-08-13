@@ -3,6 +3,8 @@ import { toast } from 'sonner';
 import type { AgentPreset } from '../domain.js';
 import { api } from '../api/client.js';
 import { Icon } from './Icon.js';
+import PageHeader from './PageHeader.js';
+import PageHeaderAction from './PageHeaderAction.js';
 
 type PresetDraft = Pick<AgentPreset, 'name' | 'description' | 'system_prompt'>;
 
@@ -123,16 +125,11 @@ export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focus
   };
 
   return <section className="agents-library" aria-labelledby="agents-library-title">
-    <header className="agents-intro">
-      <div>
-        <span className="eyebrow">REUSABLE OPERATORS</span>
-        <h2 id="agents-library-title">Build the bench behind every Flow.</h2>
-        <p>Define each Agent once, then select it from any Agent block. The block receives a stable copy of the preset configuration.</p>
-      </div>
-      <button className="button primary" type="button" onClick={startNew}><Icon name="plus" size={15} />New Agent</button>
-    </header>
+    <PageHeader title="Agents" titleId="agents-library-title" description="Create reusable Agent presets.">
+      <PageHeaderAction label="New agent" onClick={startNew} />
+    </PageHeader>
 
-    <div className="agent-studio">
+    <div className="agents-library-content"><div className="agent-studio">
       <aside className="agent-roster" aria-label="Agent presets">
         <div className="agent-roster-head"><strong>Preset roster</strong><span>{presets.length.toString().padStart(2, '0')}</span></div>
         <div className="agent-roster-list">
@@ -172,6 +169,6 @@ export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focus
           <button type="submit" className="button primary" disabled={saving || !dirty}>{saving ? 'Saving…' : selected ? 'Save changes' : 'Create Agent'}</button>
         </footer>
       </form>
-    </div>
+    </div></div>
   </section>;
 }

@@ -1,6 +1,8 @@
 import { create } from 'zustand';
 import { api } from '../api/client.js';
-import type { Flow, OperationalState, Runner, Task } from '../domain.js';
+import type { Flow, Runner, Task } from '../domain.js';
+
+export type WorkView = 'open' | 'all' | 'finished';
 
 interface AppState {
   initialized: boolean;
@@ -13,7 +15,7 @@ interface AppState {
   tasks: Task[];
   flows: Flow[];
   section: 'work' | 'flows' | 'agents';
-  workView: OperationalState;
+  workView: WorkView;
   selectedTaskId: number | null;
   editingFlowId: number | null;
   viewingFlowVersionId: number | null;
@@ -24,7 +26,7 @@ interface AppState {
   refreshTasks(): Promise<void>;
   refreshFlows(): Promise<void>;
   setSection(section: 'work' | 'flows' | 'agents'): void;
-  setWorkView(view: OperationalState): void;
+  setWorkView(view: WorkView): void;
   selectTask(id: number | null): void;
   editFlow(id: number | null): void;
   viewFlowVersion(flowId: number, versionId: number): void;
@@ -37,6 +39,17 @@ interface AppState {
 
 const emptyRunner: Runner = { activeCount: 0, queuedCount: 0, maxConcurrent: 1, executions: [] };
 
+function persistWorkView(workView: WorkView) {
+  try { window.localStorage.setItem('flow.task-view.v1', JSON.stringify({ version: 1, workView })); } catch { /* Storage is optional. */ }
+}
+
+function initialWorkView(): WorkView {
+  try {
+    const saved = JSON.parse(window.localStorage.getItem('flow.task-view.v1') ?? 'null') as { version?: number; workView?: string } | null;
+    return saved?.version === 1 && (saved.workView === 'open' || saved.workView === 'all' || saved.workView === 'finished') ? saved.workView : 'open';
+  } catch { return 'open'; }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   initialized: false,
   loading: true,
@@ -48,7 +61,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   tasks: [],
   flows: [],
   section: 'work',
-  workView: 'backlog',
+  workView: initialWorkView(),
   selectedTaskId: null,
   editingFlowId: null,
   viewingFlowVersionId: null,
@@ -62,11 +75,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ initialized: status.initialized, repoName: status.repoName, runner: status.runner, isGitRepo: status.isGitRepo });
       if (status.initialized) {
         const [{ tasks }, { flows }] = await Promise.all([api.listTasks(), api.listFlows()]);
-        set({
-          tasks,
-          flows,
-          workView: tasks.some((task) => task.operational_state === 'attention') ? 'attention' : 'backlog',
-        });
+        set({ tasks, flows });
       }
     } catch (error) {
       set({ bootError: error instanceof Error ? error.message : 'Unable to load the workspace.' });
@@ -80,7 +89,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     viewingFlowVersionId: section === 'flows' ? get().viewingFlowVersionId : null,
     agentsFocusPresetKey: section === 'agents' ? get().agentsFocusPresetKey : null,
   }),
-  setWorkView: (workView) => set({ workView, section: 'work', agentsFocusPresetKey: null }),
+  setWorkView: (workView) => { persistWorkView(workView); set({ workView, section: 'work', agentsFocusPresetKey: null }); },
   selectTask: (selectedTaskId) => set({ selectedTaskId }),
   editFlow: (editingFlowId) => set({ editingFlowId, viewingFlowVersionId: null, section: 'flows' }),
   viewFlowVersion: (editingFlowId, viewingFlowVersionId) => set({ editingFlowId, viewingFlowVersionId, section: 'flows' }),

@@ -21,7 +21,7 @@ describe('TaskComposer', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(api.createTask).mockResolvedValue({ task: { id: 7 } as any, links: [] });
-    useAppStore.setState({ workView: 'backlog', createOpen: true, tasks: [], flows: [], refreshTasks: vi.fn(), selectTask: vi.fn(), setCreateOpen: vi.fn() });
+    useAppStore.setState({ workView: 'open', createOpen: true, tasks: [], flows: [], refreshTasks: vi.fn(), selectTask: vi.fn(), setCreateOpen: vi.fn() });
   });
   test('creates a task in Backlog by default', async () => {
     render(<TaskComposer />);
@@ -53,7 +53,8 @@ describe('TaskComposer', () => {
     fireEvent.change(screen.getByPlaceholderText('What should be different when this is done?'), { target: { value: 'Ship graph editor' } });
     fireEvent.click(screen.getByRole('button', { name: 'More create actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: /Create & start run/ }));
-    fireEvent.change(screen.getByRole('combobox', { name: 'Flow to run' }), { target: { value: '6' } });
+    fireEvent.click(screen.getByRole('combobox', { name: 'Flow to run' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Focused delivery · v4' }));
     fireEvent.click(screen.getByRole('button', { name: 'Create & start run' }));
     await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ run: true, flow_id: 6 })));
   });
@@ -116,5 +117,18 @@ describe('TaskComposer', () => {
     fireEvent.click(screen.getByRole('option', { name: /TST-4 Publish the API contract/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ task_links: [{ task_id: 4, relationship: 'is_blocked_by' }] })));
+  });
+
+  test('uses the relationship selected for a linked task', async () => {
+    useAppStore.setState({ tasks: [{ id: 4, task_key: 'TST-4', title: 'Publish the API contract', resolution: 'open' } as any] });
+    render(<TaskComposer />);
+    fireEvent.change(screen.getByPlaceholderText('What should be different when this is done?'), { target: { value: 'Link work' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Linked tasks' }));
+    fireEvent.click(screen.getByRole('combobox', { name: 'Relationship' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Blocks' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search tasks by title or key' }), { target: { value: 'contract' } });
+    fireEvent.click(screen.getByRole('option', { name: /TST-4 Publish the API contract/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+    await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ task_links: [{ task_id: 4, relationship: 'blocks' }] })));
   });
 });

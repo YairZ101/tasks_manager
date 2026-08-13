@@ -53,7 +53,7 @@ describe('TaskPanel task links', () => {
     expect(await screen.findByText('Dependency not completed')).toBeInTheDocument();
     expect(screen.getByText(/TST-3\. You can still start this Flow/)).toBeInTheDocument();
     expect(screen.queryByText('RUN SETUP')).not.toBeInTheDocument();
-    expect(screen.getByRole('combobox', { name: 'Flow to run' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('combobox', { name: 'Flow to run' }));
     expect(screen.getByRole('option', { name: 'Project default · Delivery · v4' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Start run/ })).toBeInTheDocument();
     expect(screen.getByTitle('Option + Enter')).toHaveAttribute('aria-keyshortcuts', 'Alt+Enter');
@@ -105,7 +105,7 @@ describe('TaskPanel task links', () => {
 
     await waitFor(() => expect(api.reopenTask).toHaveBeenCalledWith(7));
     expect(confirm).toHaveBeenCalledWith(expect.stringContaining('TST-3 · Publish the client'));
-    expect(useAppStore.getState().workView).toBe('backlog');
+    expect(useAppStore.getState().workView).toBe('open');
     expect(await screen.findByRole('button', { name: /Start run/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Delivery · v4/ })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Run history' })).not.toBeInTheDocument();
@@ -132,6 +132,7 @@ describe('TaskPanel task links', () => {
     render(createElement(TaskPanel, { taskId: 7 }));
 
     const history = await screen.findByRole('combobox', { name: 'Run history' });
+    fireEvent.click(history);
     expect(screen.getByRole('option', { name: '#10 · Completed' })).toBeInTheDocument();
     expect(screen.getByRole('option', { name: '#9 · Completed' })).toBeInTheDocument();
     expect(history).toHaveValue('10');
@@ -140,7 +141,7 @@ describe('TaskPanel task links', () => {
     expect(screen.queryByText('Latest run output')).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Delivery · v4/ })).toBeInTheDocument();
 
-    fireEvent.change(history, { target: { value: '9' } });
+    fireEvent.click(screen.getByRole('option', { name: '#9 · Completed' }));
 
     await waitFor(() => expect(api.getRun).toHaveBeenCalledWith(9));
     await waitFor(() => expect(history).toHaveValue('9'));
@@ -268,7 +269,8 @@ describe('TaskPanel task links', () => {
     render(createElement(TaskPanel, { taskId: 7 }));
 
     const history = await screen.findByRole('combobox', { name: 'Run history' });
-    fireEvent.change(history, { target: { value: String(historicalRun.id) } });
+    fireEvent.click(history);
+    fireEvent.click(screen.getByRole('option', { name: `#${historicalRun.id} · Completed` }));
 
     await waitFor(() => expect(history).toHaveValue(String(historicalRun.id)));
     expect(screen.queryByText('Latest run needs attention')).not.toBeInTheDocument();
@@ -316,19 +318,28 @@ describe('TaskPanel task links', () => {
     expect(screen.getByRole('heading', { name: 'Run steps' }).closest('.run-card')).not.toBeNull();
 
     fireEvent.click(screen.getByRole('button', { name: 'Edit task' }));
-    expect(dialog).not.toHaveClass('task-panel-split');
+    expect(screen.getByRole('dialog', { name: 'Refine the outcome' })).toHaveClass('composer');
+    expect(screen.queryByRole('dialog', { name: 'Task TST-7' })).not.toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveValue('Build the client');
+    expect(screen.queryByRole('heading', { name: 'Run steps' })).not.toBeInTheDocument();
+    expect(screen.queryByText('TST-7')).not.toBeInTheDocument();
   });
 
-  test('uses the shared details fields while editing', async () => {
+  test('uses the create-task window structure while editing', async () => {
     render(createElement(TaskPanel, { taskId: 7 }));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit task' }));
+    expect(screen.getByRole('dialog', { name: 'Refine the outcome' })).toHaveClass('composer');
+    expect(screen.getByText('EDIT TASK')).toBeInTheDocument();
     expect(screen.getByRole('textbox', { name: 'Task title' })).toHaveValue('Build the client');
     expect(screen.getByRole('combobox', { name: 'Search tasks by title or key' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Start run/ })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /Delete task/ })).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Save' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByRole('textbox', { name: 'Task title' }), { target: { value: 'Build the polished client' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(api.updateTask).toHaveBeenCalledWith(7, expect.objectContaining({ title: 'Build the polished client' })));
   });
 
   test('renders an unbroken task title in the detail heading', async () => {
@@ -343,7 +354,8 @@ describe('TaskPanel task links', () => {
     const selectedFlow = { ...flow(), id: 2, name: 'Focused delivery', is_default: 0 };
     useAppStore.setState({ flows: [flow(), selectedFlow] });
     render(createElement(TaskPanel, { taskId: 7 }));
-    fireEvent.change(await screen.findByRole('combobox', { name: 'Flow to run' }), { target: { value: '2' } });
+    fireEvent.click(await screen.findByRole('combobox', { name: 'Flow to run' }));
+    fireEvent.click(screen.getByRole('option', { name: 'Focused delivery · v4' }));
     await waitFor(() => expect(api.updateTask).toHaveBeenCalledWith(7, { preferred_flow_id: 2 }));
   });
 

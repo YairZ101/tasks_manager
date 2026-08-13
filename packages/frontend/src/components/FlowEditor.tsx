@@ -13,6 +13,7 @@ import type { FlowVersion, FlowVersionAction } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { connectorSourcePortTop, routeFlowConnectors } from './flowRouting.js';
 import { BlockIcon, Icon } from './Icon.js';
+import SelectionMenu from './SelectionMenu.js';
 
 type CanvasNode = Node<{ flowNode: FlowNode }, 'flowBlock'>;
 type EditorViewport = NonNullable<FlowDefinition['viewport']>;
@@ -36,6 +37,17 @@ export const FLOW_LAYOUT_COLUMN_GAP = 148;
 export const FLOW_LAYOUT_ROW_GAP = 84;
 const FLOW_LAYOUT_MARGIN = 80;
 const FLOW_LAYOUT_NOTE_GAP = 28;
+const resultCategoryOptions = [
+  { value: 'completed', label: 'Completed' },
+  { value: 'paused', label: 'Paused' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
+const noteColorOptions = [
+  { value: 'slate', label: 'Slate' },
+  { value: 'blue', label: 'Blue' },
+  { value: 'amber', label: 'Amber' },
+  { value: 'rose', label: 'Rose' },
+];
 
 const defaultViewport: EditorViewport = { x: 30, y: 120, zoom: 0.86 };
 
@@ -390,12 +402,20 @@ function Inspector({ node, nodes, edges, presets, open, update, connectOutcome, 
   const selectedPreset = flowNode.type === 'agent' ? presets.find((preset) => preset.preset_key === config.preset) : undefined;
   const presetMissing = flowNode.type === 'agent' && presets.length > 0 && !selectedPreset;
   const executableTargets = nodes.filter((candidate) => candidate.id !== node.id && candidate.data.flowNode.type !== 'note' && candidate.data.flowNode.type !== 'begin');
+  const agentOptions = [
+    ...(presetMissing ? [{ value: config.preset as string, label: `${config.preset} · not in library` }] : []),
+    ...presets.map((preset) => ({ value: preset.preset_key, label: preset.name })),
+  ];
+  const connectionOptions = [
+    { value: '', label: 'Not connected' },
+    ...executableTargets.map((target) => ({ value: target.id, label: 'name' in target.data.flowNode.config ? target.data.flowNode.config.name : target.id })),
+  ];
   return <aside id="flow-block-inspector" className={`inspector editor-panel ${open ? 'panel-open' : ''}`} aria-label="Block inspector">
     <header><div><span className={`block-glyph ${flowNode.type}`}><BlockIcon type={flowNode.type} /></span><div><span className="eyebrow">{typeMeta[flowNode.type].label.toUpperCase()} BLOCK</span><h3>{config.name || typeMeta[flowNode.type].label}</h3></div></div><PanelCloseButton label="Close block inspector" onClick={close} /></header>
     <div className="inspector-scroll">
       {flowNode.type !== 'note' && <label>Name<input value={config.name} onChange={(e) => patch({ name: e.target.value })} /></label>}
       {flowNode.type === 'agent' && <>
-        <label>Agent<select aria-label="Agent" value={config.preset} onChange={(e) => patch({ preset: e.target.value })}>{presetMissing && <option value={config.preset}>{config.preset} · not in library</option>}{presets.map((preset) => <option key={preset.id} value={preset.preset_key}>{preset.name}</option>)}</select></label>
+        <SelectionMenu label="Agent" value={config.preset} options={agentOptions} onChange={(value) => patch({ preset: value })} className="form-selection inspector-selection" />
         <div className="agent-block-summary">
           {selectedPreset?.description ? <p>{selectedPreset.description}</p> : presetMissing
             ? <p className="agent-block-note">This agent is no longer in the library. Pick another so the block can run.</p>
@@ -412,9 +432,9 @@ function Inspector({ node, nodes, edges, presets, open, update, connectOutcome, 
         <label>Review prompt<textarea value={config.instructions ?? ''} onChange={(e) => patch({ instructions: e.target.value })} /></label>
         <fieldset><legend>Choices</legend>{config.choices.map((choice: any, index: number) => <div className="choice-editor" key={choice.id}><input value={choice.label} onChange={(e) => patch({ choices: config.choices.map((item: any, i: number) => i === index ? { ...item, label: e.target.value } : item) })} /><label className="mini-check"><input type="checkbox" checked={choice.commentRequired} onChange={(e) => patch({ choices: config.choices.map((item: any, i: number) => i === index ? { ...item, commentRequired: e.target.checked } : item) })} />Require comment</label></div>)}{config.choices.length < 5 && <button className="text-button" onClick={() => patch({ choices: [...config.choices, { id: uniqueId('choice'), label: 'Another choice', commentRequired: false, tone: 'neutral' }] })}>+ Add choice</button>}</fieldset>
       </>}
-      {flowNode.type === 'result' && <><label>Result category<select value={config.category} onChange={(e) => patch({ category: e.target.value })}><option value="completed">Completed</option><option value="paused">Paused</option><option value="cancelled">Cancelled</option></select></label><label>Message<textarea value={config.message ?? ''} onChange={(e) => patch({ message: e.target.value })} /></label></>}
-      {flowNode.type === 'note' && <><label>Note<textarea value={config.text} onChange={(e) => patch({ text: e.target.value })} /></label><label>Color<select value={config.color} onChange={(e) => patch({ color: e.target.value })}><option value="slate">Slate</option><option value="blue">Blue</option><option value="amber">Amber</option><option value="rose">Rose</option></select></label></>}
-      {flowNode.type !== 'result' && flowNode.type !== 'note' && <fieldset className="connections"><legend>Outcome connections</legend><p>Keyboard-accessible alternative to drawing wires.</p>{getNodeOutcomes(flowNode).map((outcome) => <label key={outcome}><span>{outcome.replace('_', ' ')}</span><select aria-label={`Connect ${outcome}`} value={edges.find((edge) => edge.source === node.id && edge.sourceHandle === outcome)?.target ?? ''} onChange={(e) => connectOutcome(outcome, e.target.value)}><option value="">Not connected</option>{executableTargets.map((target) => <option key={target.id} value={target.id}>{'name' in target.data.flowNode.config ? target.data.flowNode.config.name : target.id}</option>)}</select></label>)}</fieldset>}
+      {flowNode.type === 'result' && <><SelectionMenu label="Result category" value={config.category} options={resultCategoryOptions} onChange={(value) => patch({ category: value })} className="form-selection inspector-selection" /><label>Message<textarea value={config.message ?? ''} onChange={(e) => patch({ message: e.target.value })} /></label></>}
+      {flowNode.type === 'note' && <><label>Note<textarea value={config.text} onChange={(e) => patch({ text: e.target.value })} /></label><SelectionMenu label="Color" value={config.color} options={noteColorOptions} onChange={(value) => patch({ color: value })} className="form-selection inspector-selection" /></>}
+      {flowNode.type !== 'result' && flowNode.type !== 'note' && <fieldset className="connections"><legend>Outcome connections</legend><p>Keyboard-accessible alternative to drawing wires.</p>{getNodeOutcomes(flowNode).map((outcome) => <div className="connection-field" key={outcome}><span>{outcome.replace('_', ' ')}</span><SelectionMenu label={`Connect ${outcome}`} value={edges.find((edge) => edge.source === node.id && edge.sourceHandle === outcome)?.target ?? ''} options={connectionOptions} onChange={(value) => connectOutcome(outcome, value)} hideLabel className="inspector-selection" /></div>)}</fieldset>}
     </div>
     {flowNode.type !== 'begin' && <footer><button className="text-danger" onClick={remove}><Icon name="trash" size={15} />Delete block</button></footer>}
   </aside>;
@@ -756,6 +776,10 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
   const comparisonVersion = readOnly ? previousVersion : currentPublishedVersion;
   const versionChanges = useMemo(() => getVersionChanges(definition, comparisonVersion?.definition), [comparisonVersion, definition]);
   const layoutOnly = useMemo(() => hasLayoutChange(definition, comparisonVersion?.definition), [comparisonVersion, definition]);
+  const versionOptions = useMemo(() => [
+    { value: 'draft', label: `${draftVersionNumber ? `Draft v${draftVersionNumber}` : 'Latest draft'} · edit` },
+    ...versions.map((version) => ({ value: String(version.id), label: `v${version.version}${flow?.active_version_id === version.id ? ' · current' : ''}${version.published_at ? ` · ${new Date(version.published_at).toLocaleDateString()}` : ''}` })),
+  ], [draftVersionNumber, flow?.active_version_id, versions]);
   const historyTitle = readOnly && displayedVersion ? `Changes in v${displayedVersion.version}` : 'Draft changes';
   const historyComparisonLabel = readOnly
     ? previousVersion ? `Compared with v${previousVersion.version}` : 'Initial published version'
@@ -805,7 +829,7 @@ function EditorCanvas({ flowId, versionId }: { flowId: number; versionId: number
       </div>
       <div className="editor-toolbar-actions">
         <button type="button" className={`button ghost editor-history-toggle ${openPanel === 'history' ? 'active' : ''}`} aria-label="Version history" title="Version history" aria-expanded={openPanel === 'history'} aria-controls="flow-version-history" onClick={() => setOpenPanel((current) => current === 'history' ? null : 'history')}><Icon name="history" size={18} /><span className="toolbar-history-label">History</span></button>
-        <label className="version-picker"><span className="sr-only">Flow version</span><select aria-label="Flow version" value={readOnly ? String(versionId) : 'draft'} onChange={(event) => void selectVersion(event.target.value)}><option value="draft">{draftVersionNumber ? `Draft v${draftVersionNumber}` : 'Latest draft'} · edit</option>{versions.map((version) => <option key={version.id} value={version.id}>v{version.version}{flow?.active_version_id === version.id ? ' · current' : ''}{version.published_at ? ` · ${new Date(version.published_at).toLocaleDateString()}` : ''}</option>)}</select></label>
+        <SelectionMenu label="Flow version" value={readOnly ? String(versionId) : 'draft'} options={versionOptions} onChange={(value) => void selectVersion(value)} hideLabel className="version-picker" />
         {readOnly ? !displayedVersion
           ? <button className="button primary editor-toolbar-action" data-toolbar-action="loading" disabled><Icon name="history" size={15} /><span className="toolbar-action-label">Loading…</span></button>
           : selectedVersionIsCurrent

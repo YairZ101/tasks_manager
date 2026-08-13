@@ -1,6 +1,7 @@
 const paths = {
   grid: <><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></>,
   inbox: <><path d="M4 4h16v16H4z"/><path d="M4 14h5l2 3h2l2-3h5"/></>,
+  tasks: <><rect x="4" y="3" width="16" height="18" rx="2"/><path d="m7.5 9 1.4 1.4 2.6-2.8M14 9h3M8 15h2M13 15h4"/></>,
   play: <path d="m9 7 8 5-8 5z"/>, pulse: <path d="M3 12h4l2-6 4 12 2-6h6"/>,
   alert: <><path d="M12 3 2.8 20h18.4z"/><path d="M12 9v4M12 17h.01"/></>,
   check: <path d="m5 12 4 4L19 6"/>,
@@ -21,6 +22,8 @@ const paths = {
   question: <><path d="M9.7 9a2.5 2.5 0 1 1 3.7 2.2c-.9.5-1.4 1.2-1.4 2.3"/><path d="M12 17h.01"/></>,
   flag: <><path d="M5 21V4"/><path d="M5 5h11l-2 4 2 4H5"/></>,
   note: <><path d="M5 3h10l4 4v14H5z"/><path d="M15 3v5h4M8 12h8M8 16h6"/></>,
+  search: <><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></>,
+  filter: <path d="M4 6h16l-6 7v5l-4 2v-7z"/>,
 } satisfies Record<string, React.ReactNode>;
 
 export type IconName = keyof typeof paths;

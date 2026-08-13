@@ -6,6 +6,7 @@ import type { Attempt, Flow, Run, RunDetail, Task, TaskLink, TaskLog } from '../
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { Icon } from './Icon.js';
 import { KeyboardShortcut } from './KeyboardShortcut.js';
+import SelectionMenu from './SelectionMenu.js';
 import TaskDetailsFields, { type TaskDetailLink } from './TaskDetailsFields.js';
 import { buildRunPreflight } from './runPreflight.js';
 
@@ -99,6 +100,13 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   const defaultFlow = flows.find((flow) => flow.is_default);
   const selectedFlow = useMemo(() => task?.preferred_flow_id ? flows.find((flow) => flow.id === task.preferred_flow_id) : defaultFlow, [defaultFlow, flows, task?.preferred_flow_id]);
   const customFlows = useMemo(() => flows.filter((flow) => flow.activeVersion && flow.id !== defaultFlow?.id), [defaultFlow?.id, flows]);
+  const runOptions = useMemo(() => runs.map((run) => ({ value: String(run.id), label: `#${run.id} · ${runLabel(run)}` })), [runs]);
+  const runFlowOptions = useMemo(() => [
+    defaultFlow
+      ? { value: '', label: `Project default · ${defaultFlow.name} · v${defaultFlow.activeVersion?.version ?? '—'}` }
+      : { value: '', label: 'Choose a published Flow', disabled: true },
+    ...customFlows.map((flow) => ({ value: String(flow.id), label: `${flow.name} · v${flow.activeVersion!.version}` })),
+  ], [customFlows, defaultFlow]);
   const preflight = useMemo(() => buildRunPreflight(selectedFlow), [selectedFlow]);
   const latest = detail?.attempts.at(-1);
   const latestPreparation = detail?.preparations?.at(-1);
@@ -176,7 +184,16 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
     setLogs([]);
     setSelectedAttempt((current) => current === attemptId ? null : attemptId);
   };
-  const save = async () => { setBusy(true); try { const result = await api.updateTask(task.id, { ...draft, task_links: links.map((link) => ({ task_id: link.linked_task_id, relationship: link.relationship })) }); setLinks(result.links); await refreshTasks(); setEditing(false); } finally { setBusy(false); } };
+  const save = async () => {
+    setBusy(true);
+    try {
+      const result = await api.updateTask(task.id, { ...draft, task_links: links.map((link) => ({ task_id: link.linked_task_id, relationship: link.relationship })) });
+      setLinks(result.links);
+      await refreshTasks();
+      setEditing(false);
+    } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not update task.'); }
+    finally { setBusy(false); }
+  };
   const updateEditableLinks = (nextLinks: TaskDetailLink[]) => setLinks(nextLinks.flatMap((link) => {
     const existing = links.find((candidate) => candidate.linked_task_id === link.task_id);
     if (existing) return [{ ...existing, relationship: link.relationship, link_type: link.relationship === 'relates_to' ? 'relates_to' : 'blocks' }];
@@ -193,7 +210,7 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
       const result = await api.reopenTask(task.id);
       setLinks(result.links);
       await refreshTasks();
-      setWorkView('backlog');
+      setWorkView('open');
       toast.success(`${task.task_key} reopened in Backlog.`);
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not reopen the task.'); }
     finally { setBusy(false); }
@@ -210,7 +227,7 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (!event.altKey || target?.matches('input, textarea, select, [contenteditable="true"]')) return;
+      if (!event.altKey || target?.matches('input, textarea, select, [role="combobox"], [contenteditable="true"]')) return;
       if (event.code === 'Enter' && canStartRun) { event.preventDefault(); void start(); }
       if (event.code === 'Period' && detail && ['queued', 'running', 'waiting', 'attention'].includes(detail.run.status)) { event.preventDefault(); void stop(); }
     };
@@ -218,29 +235,31 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [canStartRun, detail, start]);
 
+  if (editing) return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setEditing(false)}>
+    <form className="composer" role="dialog" aria-modal="true" aria-labelledby="edit-task-title" onSubmit={(event) => { event.preventDefault(); void save(); }}>
+      <header><div><span className="eyebrow">EDIT TASK</span><h2 id="edit-task-title">Refine the outcome</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={() => setEditing(false)}><Icon name="close" /></button></header>
+      <TaskDetailsFields key={task.id} value={draft} onChange={setDraft} links={editableLinks} onLinksChange={updateEditableLinks} tasks={tasks} excludeTaskId={task.id} autoFocus />
+      <footer><button type="button" className="button ghost" onClick={() => setEditing(false)}>Cancel</button><button className="button primary" disabled={busy || !draft.title.trim()}>{busy ? 'Saving…' : 'Save changes'}</button></footer>
+    </form>
+  </div>;
+
   return <div className="panel-layer" onMouseDown={(e) => e.target === e.currentTarget && selectTask(null)}>
     <aside className={`task-panel${isTitleOnly ? ' task-panel-compact' : ''}${splitPanel ? ' task-panel-split' : ''}`} role="dialog" aria-modal="true" aria-label={`Task ${task.task_key}`}>
-      <header className="panel-head"><div className="panel-head-identity">{!editing && <><h2 title={task.title}>{task.title}</h2><span className="panel-head-separator" aria-hidden="true">·</span></>}<div className="panel-head-meta"><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div></div><div className="panel-head-actions">
-        {!editing && <>{!isFinished && <button className="icon-button" aria-label="Edit task" onClick={() => setEditing(true)}><Icon name="edit" size={16} /></button>}<button className="icon-button danger" aria-label="Delete task" onClick={remove}><Icon name="trash" size={16} /></button></>}
+      <header className="panel-head"><div className="panel-head-identity"><h2 title={task.title}>{task.title}</h2><span className="panel-head-separator" aria-hidden="true">·</span><div className="panel-head-meta"><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div></div><div className="panel-head-actions">
+        {!isFinished && <button className="icon-button" aria-label="Edit task" onClick={() => setEditing(true)}><Icon name="edit" size={16} /></button>}<button className="icon-button danger" aria-label="Delete task" onClick={remove}><Icon name="trash" size={16} /></button>
         <button className="icon-button" aria-label="Close task" onClick={() => selectTask(null)}><Icon name="close" /></button>
       </div></header>
       <div className={`panel-scroll${splitPanel ? ' task-panel-body-split' : ''}`}>
-        {(editing || hasTaskBrief) && <section className="task-summary task-brief">
-          {editing ? <>
-            <TaskDetailsFields key={task.id} value={draft} onChange={setDraft} links={editableLinks} onLinksChange={updateEditableLinks} tasks={tasks} excludeTaskId={task.id} />
-          </> : <>
-            {task.description && <div className="task-copy"><span>Context</span><p>{task.description}</p></div>}
-            {task.acceptance && <div className="acceptance"><span>Done when</span><p>{task.acceptance}</p></div>}
-            {currentLinks.length > 0 && <div className="task-dependencies"><span>Linked tasks</span>{currentLinks.map((link) => <div key={link.id}><Icon name="link" size={14} /><strong>{relationshipLabels[link.relationship]} · {link.task_key}</strong><p>{link.title}</p><em className={link.operational_state}>{link.operational_state.replace('_', ' ')}</em></div>)}</div>}
-          </>}
+        {hasTaskBrief && <section className="task-summary task-brief">
+          {task.description && <div className="task-copy"><span>Context</span><p>{task.description}</p></div>}
+          {task.acceptance && <div className="acceptance"><span>Done when</span><p>{task.acceptance}</p></div>}
+          {currentLinks.length > 0 && <div className="task-dependencies"><span>Linked tasks</span>{currentLinks.map((link) => <div key={link.id}><Icon name="link" size={14} /><strong>{relationshipLabels[link.relationship]} · {link.task_key}</strong><p>{link.title}</p><em className={link.operational_state}>{link.operational_state.replace('_', ' ')}</em></div>)}</div>}
         </section>}
 
         {canStartRun && incompleteDependencies.length > 0 && <div className="task-run-warning"><div className="dependency-warning"><Icon name="alert" size={16} /><div><strong>Dependency not completed</strong><span>{incompleteDependencies.map((dependency) => dependency.task_key).join(', ')}. You can still start this Flow.</span></div></div></div>}
 
         {detail && <section className="run-card">
-          {runs.length > 1 ? <label className="run-history-picker"><span><Icon name="history" size={15} />Run history</span><select aria-label="Run history" value={selectedRunId ?? detail.run.id} onChange={(event) => void selectRun(Number(event.target.value))} disabled={loadingRun}>
-            {runs.map((run) => <option key={run.id} value={run.id}>#{run.id} · {runLabel(run)}</option>)}
-          </select></label> : <div className="run-head"><div><span className="eyebrow">RUN #{detail.run.id}</span><h3>{displayedRunLabel}</h3></div><span className={`run-light ${preparationActive ? 'running' : detail.run.status}`} /></div>}
+          {runs.length > 1 ? <div className="run-history-picker"><span><Icon name="history" size={15} />Run history</span><SelectionMenu label="Run history" value={String(selectedRunId ?? detail.run.id)} options={runOptions} onChange={(value) => void selectRun(Number(value))} hideLabel disabled={loadingRun} className="run-history-selection" /></div> : <div className="run-head"><div><span className="eyebrow">RUN #{detail.run.id}</span><h3>{displayedRunLabel}</h3></div><span className={`run-light ${preparationActive ? 'running' : detail.run.status}`} /></div>}
           {detail.workspace && <div className="run-workspace-meta"><span><Icon name="branch" size={14} />Workspace</span><strong title={detail.workspace.worktree_path}>{detail.workspace.branch ?? 'project workspace'} · {detail.workspace.state}</strong></div>}
           {latestPreparation && (preparationActive || preparationFailed) && <div className={`workspace-preparation ${latestPreparation.status}`}>
             <div className="workspace-preparation-head"><span className={`attempt-dot ${latestPreparation.status}`} /><div><strong>{preparationFailed ? 'Workspace setup failed' : 'Preparing workspace'}</strong>{latestPreparation.sequence > 1 && <small>Retry {latestPreparation.sequence - 1}</small>}</div></div>
@@ -275,15 +294,11 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
           </div>
         </section>}
       </div>
-      {(editing || canStartRun || isFinished || historicalActiveRun || activeRunDetail) && <footer className={`panel-footer${isFinished ? ' finished-task-controls' : editing ? '' : historicalActiveRun ? ' latest-run-controls' : activeRunDetail ? ' active-run-controls' : ' run-controls'}`}>
-        {editing ? <><button className="button ghost" onClick={() => setEditing(false)}>Cancel</button><button className="button primary" onClick={save} disabled={busy}>Save</button></>
-          : isFinished ? <><div className="finished-task-note"><Icon name="lock" size={17} /><small>History stays intact.</small></div><button className="button primary" onClick={reopen} disabled={busy || !linksLoaded}><Icon name="back" size={15} />Reopen task</button></>
+      {(canStartRun || isFinished || historicalActiveRun || activeRunDetail) && <footer className={`panel-footer${isFinished ? ' finished-task-controls' : historicalActiveRun ? ' latest-run-controls' : activeRunDetail ? ' active-run-controls' : ' run-controls'}`}>
+        {isFinished ? <><div className="finished-task-note"><Icon name="lock" size={17} /><small>History stays intact.</small></div><button className="button primary" onClick={reopen} disabled={busy || !linksLoaded}><Icon name="back" size={15} />Reopen task</button></>
           : historicalActiveRun ? <button className="button primary" onClick={() => void selectRun(historicalActiveRun.id)} disabled={loadingRun}>View latest run</button>
           : activeRunDetail ? <><button className="button danger ghost" onClick={stop} disabled={busy} title="Option + ." aria-keyshortcuts="Alt+."><Icon name="stop" size={15} />Stop Run <KeyboardShortcut keys={['⌥', '.']} /></button>{activeRunDetail.run.status === 'attention' && preparationFailed && <button className="button primary" onClick={retrySetup} disabled={busy}>Retry setup</button>}{activeRunDetail.run.status === 'attention' && !preparationFailed && <button className="button primary" onClick={retry} disabled={busy}>Retry block</button>}</>
-          : preflight ? <><label className="run-footer-flow"><span className="sr-only">Flow to run</span><select aria-label="Flow to run" value={task.preferred_flow_id && task.preferred_flow_id !== defaultFlow?.id ? String(task.preferred_flow_id) : ''} onChange={(event) => void selectRunFlow(event.target.value)} disabled={busy || (!defaultFlow && !customFlows.length)}>
-            {defaultFlow ? <option value="">Project default · {defaultFlow.name} · v{defaultFlow.activeVersion?.version ?? '—'}</option> : <option value="" disabled>Choose a published Flow</option>}
-            {customFlows.map((flow) => <option key={flow.id} value={flow.id}>{flow.name} · v{flow.activeVersion!.version}</option>)}
-          </select></label><button className="button primary start-run-action" onClick={start} disabled={busy} title="Option + Enter" aria-keyshortcuts="Alt+Enter">Start run <KeyboardShortcut keys={['⌥', '↩']} /></button></>
+          : preflight ? <><SelectionMenu label="Flow to run" value={task.preferred_flow_id && task.preferred_flow_id !== defaultFlow?.id ? String(task.preferred_flow_id) : ''} options={runFlowOptions} onChange={(value) => void selectRunFlow(value)} hideLabel disabled={busy || (!defaultFlow && !customFlows.length)} className="run-footer-flow menu-top" /><button className="button primary start-run-action" onClick={start} disabled={busy} title="Option + Enter" aria-keyshortcuts="Alt+Enter">Start run <KeyboardShortcut keys={['⌥', '↩']} /></button></>
             : <button className="button primary" onClick={() => useAppStore.getState().setSection('flows')}>Open Flows</button>}
       </footer>}
     </aside>

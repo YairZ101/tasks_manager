@@ -109,6 +109,20 @@ packages/
 
 Every behavior change must include tests in the same change.
 
+## Git Delivery
+
+Before staging work for a commit or pull request, create a commit map with one row per independently reviewable outcome:
+
+| Outcome | Files | Tests | Commit message |
+|---|---|---|---|
+
+- Keep each behavior change and its tests in the same row and commit.
+- A single commit is allowed only when the map has exactly one row and its purpose can be described precisely in one sentence.
+- Treat a diff as large when it changes more than 10 files, more than 500 total lines, or three or more product areas. For a large diff, share the commit map before staging. Do not use one commit when the map has multiple rows.
+- Before every commit, compare `git diff --cached --stat` and `git diff --cached --name-status` with the map. Split staged work that crosses row boundaries.
+- After every commit, inspect `git show --stat --oneline HEAD` and `git status --short`. Fix an incorrectly scoped commit before pushing it.
+- Do not add unrelated delivery-policy changes to a product PR. Give them their own branch and review path.
+
 ### Backend
 
 - Use `bun:test`; keep tests co-located.

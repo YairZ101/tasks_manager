@@ -10,7 +10,7 @@ vi.mock('./components/WorkBoard.js', () => ({ default: () => null }));
 vi.mock('./components/TaskPanel.js', () => ({ default: () => null }));
 vi.mock('./components/TaskComposer.js', () => ({ default: () => null }));
 vi.mock('./components/FlowLibrary.js', () => ({ default: () => null }));
-vi.mock('./components/AgentsLibrary.js', () => ({ default: () => 'Agents library content' }));
+vi.mock('./components/AgentsLibrary.js', () => ({ default: () => createElement('h1', null, 'Agents') }));
 vi.mock('./components/SettingsPanel.js', () => ({ default: () => null }));
 vi.mock('./components/InitScreen.js', () => ({ default: () => null }));
 vi.mock('./components/FlowEditor.js', () => ({ default: () => null }));
@@ -86,7 +86,6 @@ test('opens the Agents tab from the primary navigation', () => {
   expect(agents.querySelector('[data-icon="agent"]')).toBeInTheDocument();
   expect(agents.querySelector('[data-icon="agent"] rect[x="4"][y="7"]')).toBeInTheDocument();
   fireEvent.click(agents);
-  expect(screen.getByText('Agents library content')).toBeVisible();
   expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible();
 });
 

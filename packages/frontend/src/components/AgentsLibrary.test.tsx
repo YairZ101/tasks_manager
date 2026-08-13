@@ -32,6 +32,7 @@ describe('AgentsLibrary', () => {
   test('loads and edits the full Agent preset configuration', async () => {
     vi.mocked(api.updateAgentPreset).mockResolvedValue({ preset: { ...development, system_prompt: 'Implement the task and verify every change.' } });
     render(<AgentsLibrary />);
+    expect(screen.getByRole('heading', { level: 1, name: 'Agents' })).toBeVisible();
     expect(await screen.findByRole('button', { name: /Development/ })).toHaveAttribute('aria-pressed', 'true');
     expect(screen.queryByLabelText('Permission level')).not.toBeInTheDocument();
     const prompt = screen.getByLabelText('System prompt');
@@ -46,7 +47,9 @@ describe('AgentsLibrary', () => {
     vi.mocked(api.createAgentPreset).mockResolvedValue({ preset: created });
     render(<AgentsLibrary />);
     await screen.findByRole('button', { name: /Development/ });
-    fireEvent.click(screen.getByRole('button', { name: 'New Agent' }));
+    const newAgent = screen.getByRole('button', { name: 'New agent' });
+    expect(newAgent).toHaveClass('page-header-action');
+    fireEvent.click(newAgent);
     fireEvent.change(screen.getByLabelText('Agent name'), { target: { value: 'Release engineer' } });
     fireEvent.change(screen.getByLabelText('System prompt'), { target: { value: 'Prepare the release.' } });
     fireEvent.click(screen.getByRole('button', { name: 'Create Agent' }));

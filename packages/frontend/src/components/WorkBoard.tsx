@@ -4,7 +4,8 @@ import { api } from '../api/client.js';
 import { useAppStore, type WorkView } from '../hooks/useTaskStore.js';
 import type { Flow, OperationalState, Task } from '../domain.js';
 import { Icon } from './Icon.js';
-import { KeyboardShortcut } from './KeyboardShortcut.js';
+import PageHeader from './PageHeader.js';
+import PageHeaderAction from './PageHeaderAction.js';
 import SelectionMenu, { type SelectionOption } from './SelectionMenu.js';
 
 type GroupBy = 'state' | 'flow' | 'resolution' | 'none';
@@ -291,7 +292,10 @@ export default function WorkBoard() {
     }
   };
 
-  return <section className="board queue-board" aria-label="Task explorer">
+  return <section className="board queue-board" aria-labelledby="tasks-heading">
+    <PageHeader title="Tasks" titleId="tasks-heading" description="Search, filter, and start work.">
+      <PageHeaderAction label="New task" onClick={() => setCreate(true)} ariaKeyShortcuts="Alt+N" />
+    </PageHeader>
     <div className="queue-content">
       <div className="task-explorer-controls">
         <div className="task-explorer-toolbar">
@@ -330,7 +334,7 @@ export default function WorkBoard() {
           {!collapsed && <TaskList label={group.label} tasks={group.tasks} flows={flows} startingTaskId={startingTaskId} onStart={(task) => void startTask(task)} />}
         </section>;
       })}</div>
-        : <div className={`empty-queue ${tasks.length === 0 ? 'first-use' : ''}`}><span className="empty-queue-mark"><Icon name={tasks.length === 0 ? 'plus' : 'search'} size={25} /></span><h3>{tasks.length === 0 ? 'Start with one task' : 'No tasks match this view'}</h3><p>{tasks.length === 0 ? 'Add the outcome and context. Flow will place it in the open queue.' : 'Try a broader search or reset the current filters.'}</p>{tasks.length === 0 ? <button type="button" className="button primary" onClick={() => setCreate(true)} title="Option + N" aria-keyshortcuts="Alt+N"><Icon name="plus" size={16} />New task <KeyboardShortcut keys={['⌥', 'N']} /></button> : hasNarrowing && <button type="button" className="button ghost" onClick={resetView}>Reset view</button>}</div>}
+        : <div className={`empty-queue ${tasks.length === 0 ? 'first-use' : ''}`}><span className="empty-queue-mark"><Icon name={tasks.length === 0 ? 'plus' : 'search'} size={25} /></span><h3>{tasks.length === 0 ? 'Start with one task' : 'No tasks match this view'}</h3><p>{tasks.length === 0 ? 'Add the outcome and context. Flow will place it in the open queue.' : 'Try a broader search or reset the current filters.'}</p>{tasks.length === 0 ? <button type="button" className="button primary" onClick={() => setCreate(true)} aria-keyshortcuts="Alt+N"><Icon name="plus" size={16} />New task</button> : hasNarrowing && <button type="button" className="button ghost" onClick={resetView}>Reset view</button>}</div>}
     </div>
   </section>;
 }

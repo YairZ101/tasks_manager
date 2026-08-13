@@ -3,6 +3,7 @@ import { Toaster } from 'sonner';
 import { useAppStore } from './hooks/useTaskStore.js';
 import { useEventSource } from './hooks/useEventSource.js';
 import { AppMark, Icon } from './components/Icon.js';
+import Button from './components/Button.js';
 import WorkBoard from './components/WorkBoard.js';
 import TaskPanel from './components/TaskPanel.js';
 import TaskComposer from './components/TaskComposer.js';
@@ -71,7 +72,7 @@ function AppContent() {
   }, [agentsDirty]);
 
   if (store.loading) return <div className="boot"><AppMark variant="loading" /><span>Loading workspace…</span></div>;
-  if (store.bootError) return <div className="boot boot-error" role="alert"><AppMark /><div><strong>Workspace unavailable</strong><span>{store.bootError}</span><button className="button ghost" onClick={() => { void store.bootstrap(); }}>Retry</button></div></div>;
+  if (store.bootError) return <div className="boot boot-error" role="alert"><AppMark /><div><strong>Workspace unavailable</strong><span>{store.bootError}</span><Button variant="ghost" onClick={() => { void store.bootstrap(); }}>Retry</Button></div></div>;
   if (!store.initialized) return <InitScreen />;
 
   return (

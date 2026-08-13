@@ -89,7 +89,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .button { min-height: 34px; border: 1px solid #33413b; border-radius: 4px; background: #141b18; padding: 0 13px; display: inline-flex; align-items: center; justify-content: center; gap: 7px; font-size: 11px; font-weight: 700; cursor: pointer; transition: background .15s, border-color .15s, color .15s; }
 .button:hover:not(:disabled) { border-color: #56665f; background: #1b2521; }.button:disabled { opacity: .42; cursor: not-allowed; }
 .button.primary { background: var(--color-accent); border-color: var(--color-accent); color: #07110d; }.button.primary:hover:not(:disabled) { background: #92edc9; border-color: #92edc9; }
-.button.ghost { background: transparent; }.button.danger { color: var(--color-danger); border-color: #58312f; }.button.wide { width: 100%; min-height: 42px; }
+.button.ghost { background: transparent; }
+.button.danger { color: var(--color-danger); border-color: #58312f; }
+.button.primary.danger { background: #b84f49; border-color: #c75a53; color: #fff; }
+.button.primary.danger:hover:not(:disabled) { background: #cb5d56; border-color: #dc6b63; }
+.button.wide { width: 100%; min-height: 42px; }
 .workspace-body { min-height: 0; flex: 1; position: relative; overflow: hidden; }
 
 .board { height: 100%; display: grid; grid-template-columns: repeat(5, minmax(210px, 1fr)); overflow-x: auto; background-color: #0b100e; background-image: linear-gradient(#111815 1px, transparent 1px), linear-gradient(90deg, #111815 1px, transparent 1px); background-size: 24px 24px; }
@@ -103,7 +107,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 .composer, .settings-panel { width: min(580px, 100%); max-height: calc(100vh - 40px); overflow: auto; background: #111815; border: 1px solid #34443d; box-shadow: 0 24px 70px rgba(0,0,0,.55); padding: 23px; }
 .composer header, .settings-panel header { display: flex; justify-content: space-between; margin-bottom: 23px; }.composer h2, .settings-panel h2 { margin: 4px 0 0; font-size: 22px; letter-spacing: -.04em; }
-.icon-button { width: 31px; height: 31px; border: 1px solid transparent; background: transparent; color: #798780; display: grid; place-items: center; cursor: pointer; border-radius: 3px; }.icon-button:hover { color: white; border-color: #34413c; background: #19211e; }
+.icon-button { width: 31px; height: 31px; border: 1px solid transparent; background: transparent; color: #798780; display: grid; place-items: center; cursor: pointer; border-radius: 3px; }.icon-button:hover:not(:disabled) { color: white; border-color: #34413c; background: #19211e; }.icon-button:disabled { opacity: .42; cursor: not-allowed; }
 label { display: flex; flex-direction: column; gap: 7px; margin-bottom: 17px; color: #9eaba5; font-size: 10px; font-weight: 700; }
 input, textarea, select { width: 100%; border: 1px solid #314039; border-radius: 3px; background: #0b110f; color: #eaf3ef; padding: 10px 11px; font-size: 11px; resize: vertical; }
 textarea { min-height: 83px; line-height: 1.55; } input::placeholder, textarea::placeholder { color: #46524d; } input:disabled { opacity: .5; }

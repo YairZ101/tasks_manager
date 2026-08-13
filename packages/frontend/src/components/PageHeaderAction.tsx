@@ -1,5 +1,5 @@
 import type { MouseEventHandler } from 'react';
-import { Icon } from './Icon.js';
+import Button from './Button.js';
 
 interface PageHeaderActionProps {
   label: string;
@@ -8,13 +8,14 @@ interface PageHeaderActionProps {
 }
 
 export default function PageHeaderAction({ label, onClick, ariaKeyShortcuts }: PageHeaderActionProps) {
-  return <button
-    type="button"
-    className="button primary page-header-action"
+  return <Button
+    variant="primary"
+    className="page-header-action"
+    icon="plus"
+    iconSize={16}
     onClick={onClick}
     aria-keyshortcuts={ariaKeyShortcuts}
   >
-    <Icon name="plus" size={16} />
     <span>{label}</span>
-  </button>;
+  </Button>;
 }

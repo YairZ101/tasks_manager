@@ -1,3 +1,5 @@
+import Button from './Button.js';
+
 interface ConfirmDialogProps {
   title: string;
   message: string;
@@ -27,24 +29,21 @@ export default function ConfirmDialog({
         <p className="text-sm text-text-muted mb-5">{message}</p>
         {children}
         <div className="flex justify-end gap-2">
-          <button
+          <Button
+            variant="ghost"
             onClick={onCancel}
             disabled={disabled}
-            className="px-3 py-1.5 text-xs font-medium text-text-muted hover:text-text hover:bg-bg-hover rounded-lg transition-colors"
           >
             Cancel
-          </button>
-          <button
+          </Button>
+          <Button
+            variant="primary"
+            tone={destructive ? 'danger' : 'default'}
             onClick={onConfirm}
             disabled={disabled}
-            className={`px-3 py-1.5 text-xs font-medium text-white rounded-lg transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${
-              destructive
-                ? 'bg-danger hover:bg-danger/80'
-                : 'bg-accent hover:bg-accent-hover'
-            }`}
           >
             {confirmLabel}
-          </button>
+          </Button>
         </div>
       </div>
     </div>

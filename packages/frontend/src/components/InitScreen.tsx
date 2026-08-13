@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { api, type AgentSetup, type FlowTemplate, type WorkspaceSetup } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { AgentPresetPicker, type AgentCliPreset } from './AgentPresetPicker.js';
+import Button from './Button.js';
 import { AppMark, BlockIcon, Icon, type BlockIconType } from './Icon.js';
 import SelectionMenu from './SelectionMenu.js';
 
@@ -195,7 +196,7 @@ export default function InitScreen() {
 
       {draft.step === 2 && <section className="setup-step">
         <header><span>02 / 05</span><h2>Verify the Agent</h2><p>We send a short prompt to the exact command you just entered. Nothing in your project is changed.</p></header>
-        <div className={`agent-test ${agentTestState}`}><div><span className="test-signal" /><strong>{agentTestState === 'success' ? 'Agent responded' : agentTestState === 'failure' ? 'Test failed' : 'Ready to test'}</strong><small>{agentTestState === 'success' ? 'You can continue to project setup.' : 'The command runs from this workspace.'}</small></div><button type="button" className="button ghost" disabled={!validAgent || agentTestState === 'testing'} onClick={() => void testAgent()}>{agentTestState === 'testing' ? 'Testing…' : agentTestState === 'failure' ? 'Retry test' : 'Test Agent'}</button></div>
+        <div className={`agent-test ${agentTestState}`}><div><span className="test-signal" /><strong>{agentTestState === 'success' ? 'Agent responded' : agentTestState === 'failure' ? 'Test failed' : 'Ready to test'}</strong><small>{agentTestState === 'success' ? 'You can continue to project setup.' : 'The command runs from this workspace.'}</small></div><Button variant="ghost" loading={agentTestState === 'testing'} loadingLabel="Testing…" disabled={!validAgent} onClick={() => void testAgent()}>{agentTestState === 'failure' ? 'Retry test' : 'Test Agent'}</Button></div>
         {(agentTestOutput || agentTestError) && <div className={`agent-test-output ${agentTestState === 'failure' ? 'failure' : ''}`} role="status"><span>{agentTestState === 'failure' ? 'ERROR' : 'OUTPUT'}</span><pre>{agentTestOutput || agentTestError}</pre>{agentTestOutput && agentTestError && <p>{agentTestError}</p>}</div>}
       </section>}
 
@@ -221,8 +222,8 @@ export default function InitScreen() {
       </section>}
 
       <footer className="setup-actions">
-        <button type="button" className="button ghost" onClick={back} disabled={draft.step === 1 || saving}>Back</button>
-        {draft.step === 5 ? <button className="button primary" disabled={saving}>{saving ? 'Publishing…' : <>Finish setup <Icon name="arrow" /></>}</button> : <button className="button primary" disabled={(draft.step === 1 && !validAgent) || (draft.step === 2 && agentTestState !== 'success') || (draft.step === 3 && !validPrefix)}>{draft.step === 2 && agentTestState !== 'success' ? 'Test to continue' : <>Continue <Icon name="arrow" /></>}</button>}
+        <Button variant="ghost" onClick={back} disabled={draft.step === 1 || saving}>Back</Button>
+        {draft.step === 5 ? <Button type="submit" variant="primary" icon="arrow" iconPosition="end" iconSize={18} loading={saving} loadingLabel="Publishing…">Finish setup</Button> : <Button type="submit" variant="primary" icon="arrow" iconPosition="end" iconSize={18} disabled={(draft.step === 1 && !validAgent) || (draft.step === 2 && agentTestState !== 'success') || (draft.step === 3 && !validPrefix)}>{draft.step === 2 && agentTestState !== 'success' ? 'Test to continue' : 'Continue'}</Button>}
       </footer>
       <p className="fine-print">Your setup progress stays in this browser until you finish. Existing legacy databases are never changed.</p>
     </form>

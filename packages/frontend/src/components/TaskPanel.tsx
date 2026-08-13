@@ -4,7 +4,9 @@ import type { DecisionNode, FlowNode } from '@flow/core';
 import { api } from '../api/client.js';
 import type { Attempt, Flow, Run, RunDetail, Task, TaskLink, TaskLog } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
+import Button from './Button.js';
 import { Icon } from './Icon.js';
+import IconButton from './IconButton.js';
 import { KeyboardShortcut } from './KeyboardShortcut.js';
 import SelectionMenu from './SelectionMenu.js';
 import TaskDetailsFields, { type TaskDetailLink } from './TaskDetailsFields.js';
@@ -237,17 +239,17 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
 
   if (editing) return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setEditing(false)}>
     <form className="composer" role="dialog" aria-modal="true" aria-labelledby="edit-task-title" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-      <header><div><span className="eyebrow">EDIT TASK</span><h2 id="edit-task-title">Refine the outcome</h2></div><button type="button" className="icon-button" aria-label="Close" onClick={() => setEditing(false)}><Icon name="close" /></button></header>
+      <header><div><span className="eyebrow">EDIT TASK</span><h2 id="edit-task-title">Refine the outcome</h2></div><IconButton label="Close task editor" icon="close" onClick={() => setEditing(false)} /></header>
       <TaskDetailsFields key={task.id} value={draft} onChange={setDraft} links={editableLinks} onLinksChange={updateEditableLinks} tasks={tasks} excludeTaskId={task.id} autoFocus />
-      <footer><button type="button" className="button ghost" onClick={() => setEditing(false)}>Cancel</button><button className="button primary" disabled={busy || !draft.title.trim()}>{busy ? 'Saving…' : 'Save changes'}</button></footer>
+      <footer><Button variant="ghost" onClick={() => setEditing(false)}>Cancel</Button><Button type="submit" variant="primary" loading={busy} loadingLabel="Saving…" disabled={!draft.title.trim()}>Save changes</Button></footer>
     </form>
   </div>;
 
   return <div className="panel-layer" onMouseDown={(e) => e.target === e.currentTarget && selectTask(null)}>
     <aside className={`task-panel${isTitleOnly ? ' task-panel-compact' : ''}${splitPanel ? ' task-panel-split' : ''}`} role="dialog" aria-modal="true" aria-label={`Task ${task.task_key}`}>
       <header className="panel-head"><div className="panel-head-identity"><h2 title={task.title}>{task.title}</h2><span className="panel-head-separator" aria-hidden="true">·</span><div className="panel-head-meta"><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div></div><div className="panel-head-actions">
-        {!isFinished && <button className="icon-button" aria-label="Edit task" onClick={() => setEditing(true)}><Icon name="edit" size={16} /></button>}<button className="icon-button danger" aria-label="Delete task" onClick={remove}><Icon name="trash" size={16} /></button>
-        <button className="icon-button" aria-label="Close task" onClick={() => selectTask(null)}><Icon name="close" /></button>
+        {!isFinished && <IconButton label="Edit task" icon="edit" iconSize={16} onClick={() => setEditing(true)} />}<IconButton label="Delete task" icon="trash" iconSize={16} tone="danger" onClick={remove} />
+        <IconButton label="Close task" icon="close" onClick={() => selectTask(null)} />
       </div></header>
       <div className={`panel-scroll${splitPanel ? ' task-panel-body-split' : ''}`}>
         {hasTaskBrief && <section className="task-summary task-brief">
@@ -273,7 +275,7 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
           {decision?.type === 'decision' && <div className="decision-box">
             <span className="eyebrow">DECISION REQUIRED</span><h3>{decision.config.name}</h3>{decision.config.instructions && <p>{decision.config.instructions}</p>}
             <textarea value={comment} onChange={(e) => setComment(e.target.value)} placeholder="Add context for the next block (optional unless required)" />
-            <div className="decision-actions">{decision.config.choices.map((choice) => <button key={choice.id} className={`button choice ${choice.tone}`} disabled={busy || (choice.commentRequired && !comment.trim())} onClick={() => decide(choice.id)}>{choice.label}</button>)}</div>
+            <div className="decision-actions">{decision.config.choices.map((choice) => <Button key={choice.id} className={`choice ${choice.tone}`} disabled={busy || (choice.commentRequired && !comment.trim())} onClick={() => decide(choice.id)}>{choice.label}</Button>)}</div>
           </div>}
           <h4 className="run-section-title">Run steps</h4>
           {detail.attempts.length === 0 ? <p className="run-steps-empty">{preparationActive ? 'The Flow starts after the workspace is ready.' : 'The Flow did not start.'}</p> : <div className="timeline">
@@ -295,11 +297,11 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
         </section>}
       </div>
       {(canStartRun || isFinished || historicalActiveRun || activeRunDetail) && <footer className={`panel-footer${isFinished ? ' finished-task-controls' : historicalActiveRun ? ' latest-run-controls' : activeRunDetail ? ' active-run-controls' : ' run-controls'}`}>
-        {isFinished ? <><div className="finished-task-note"><Icon name="lock" size={17} /><small>History stays intact.</small></div><button className="button primary" onClick={reopen} disabled={busy || !linksLoaded}><Icon name="back" size={15} />Reopen task</button></>
-          : historicalActiveRun ? <button className="button primary" onClick={() => void selectRun(historicalActiveRun.id)} disabled={loadingRun}>View latest run</button>
-          : activeRunDetail ? <><button className="button danger ghost" onClick={stop} disabled={busy} title="Option + ." aria-keyshortcuts="Alt+."><Icon name="stop" size={15} />Stop Run <KeyboardShortcut keys={['⌥', '.']} /></button>{activeRunDetail.run.status === 'attention' && preparationFailed && <button className="button primary" onClick={retrySetup} disabled={busy}>Retry setup</button>}{activeRunDetail.run.status === 'attention' && !preparationFailed && <button className="button primary" onClick={retry} disabled={busy}>Retry block</button>}</>
-          : preflight ? <><SelectionMenu label="Flow to run" value={task.preferred_flow_id && task.preferred_flow_id !== defaultFlow?.id ? String(task.preferred_flow_id) : ''} options={runFlowOptions} onChange={(value) => void selectRunFlow(value)} hideLabel disabled={busy || (!defaultFlow && !customFlows.length)} className="run-footer-flow menu-top" /><button className="button primary start-run-action" onClick={start} disabled={busy} title="Option + Enter" aria-keyshortcuts="Alt+Enter">Start run <KeyboardShortcut keys={['⌥', '↩']} /></button></>
-            : <button className="button primary" onClick={() => useAppStore.getState().setSection('flows')}>Open Flows</button>}
+        {isFinished ? <><div className="finished-task-note"><Icon name="lock" size={17} /><small>History stays intact.</small></div><Button variant="primary" icon="back" onClick={reopen} disabled={busy || !linksLoaded}>Reopen task</Button></>
+          : historicalActiveRun ? <Button variant="primary" loading={loadingRun} loadingLabel="Loading…" onClick={() => void selectRun(historicalActiveRun.id)}>View latest run</Button>
+          : activeRunDetail ? <><Button variant="ghost" tone="danger" icon="stop" onClick={stop} disabled={busy} title="Option + ." aria-keyshortcuts="Alt+.">Stop Run <KeyboardShortcut keys={['⌥', '.']} /></Button>{activeRunDetail.run.status === 'attention' && preparationFailed && <Button variant="primary" onClick={retrySetup} disabled={busy}>Retry setup</Button>}{activeRunDetail.run.status === 'attention' && !preparationFailed && <Button variant="primary" onClick={retry} disabled={busy}>Retry block</Button>}</>
+          : preflight ? <><SelectionMenu label="Flow to run" value={task.preferred_flow_id && task.preferred_flow_id !== defaultFlow?.id ? String(task.preferred_flow_id) : ''} options={runFlowOptions} onChange={(value) => void selectRunFlow(value)} hideLabel disabled={busy || (!defaultFlow && !customFlows.length)} className="run-footer-flow menu-top" /><Button variant="primary" className="start-run-action" onClick={start} disabled={busy} title="Option + Enter" aria-keyshortcuts="Alt+Enter">Start run <KeyboardShortcut keys={['⌥', '↩']} /></Button></>
+            : <Button variant="primary" onClick={() => useAppStore.getState().setSection('flows')}>Open Flows</Button>}
       </footer>}
     </aside>
   </div>;

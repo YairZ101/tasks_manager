@@ -3,7 +3,9 @@ import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { AgentPresetPicker, type AgentCliPreset } from './AgentPresetPicker.js';
+import Button from './Button.js';
 import { Icon } from './Icon.js';
+import IconButton from './IconButton.js';
 import SelectionMenu from './SelectionMenu.js';
 import type { WorkspaceSetup } from '../api/client.js';
 
@@ -46,7 +48,7 @@ export default function SettingsPanel() {
   };
   const applyPreset = (preset: AgentCliPreset) => setConfig({ ...config, cli_cmd: preset.cli_cmd, cli_prompt_mode: preset.cli_prompt_mode, cli_prompt_flag: preset.cli_prompt_flag ?? '' });
   return <div className="modal-layer" onMouseDown={(e) => e.target === e.currentTarget && close(false)}><div className="settings-panel">
-    <header><div><span className="eyebrow">RUNTIME</span><h2>Execution settings</h2></div><button className="icon-button" aria-label="Close settings" onClick={() => close(false)}><Icon name="close" /></button></header>
+    <header><div><span className="eyebrow">RUNTIME</span><h2>Execution settings</h2></div><IconButton label="Close settings" icon="close" onClick={() => close(false)} /></header>
     <p className="lead">One CLI agent powers every Agent block. Each block contributes its own compiled instructions.</p>
     <AgentPresetPicker value={config} onSelect={applyPreset} />
     <label>CLI command<input value={config.cli_cmd ?? ''} onChange={(e) => setConfig({ ...config, cli_cmd: e.target.value })} placeholder="codex exec --full-auto" /></label>
@@ -54,12 +56,12 @@ export default function SettingsPanel() {
     <div className="field-grid"><label>Timeout (minutes)<input type="number" min="1" value={Math.round(config.timeout_ms / 60000)} onChange={(e) => setConfig({ ...config, timeout_ms: Number(e.target.value) * 60000 })} /></label><label>Concurrent executions<input type="number" min="1" max="10" value={config.max_concurrent_executions} onChange={(e) => setConfig({ ...config, max_concurrent_executions: Number(e.target.value) })} /></label></div>
     <div className="settings-note"><Icon name="branch" /><div><strong>One shared capacity pool</strong><p>Agent and Check blocks count against the same limit. Non-Git projects safely fall back to one execution.</p></div></div>
     <section className="workspace-setup-settings">
-      <header><div><h3>Workspace preparation</h3><p>Runs in the task worktree before every Run. Leave the command empty to disable it.</p></div><button type="button" className="button ghost" onClick={() => void testWorkspace()} disabled={testingWorkspace || !workspace.setup_command.trim()}>{testingWorkspace ? 'Testing setup…' : 'Test setup'}</button></header>
+      <header><div><h3>Workspace preparation</h3><p>Runs in the task worktree before every Run. Leave the command empty to disable it.</p></div><Button variant="ghost" loading={testingWorkspace} loadingLabel="Testing setup…" onClick={() => void testWorkspace()} disabled={!workspace.setup_command.trim()}>Test setup</Button></header>
       <label>Setup command<input value={workspace.setup_command} onChange={(event) => { setWorkspace({ ...workspace, setup_command: event.target.value }); setWorkspaceTest(null); }} placeholder={workspaceSuggestion || 'bun install --frozen-lockfile'} /></label>
       {!workspace.setup_command && workspaceSuggestion ? <button type="button" className="suggested-setup" onClick={() => setWorkspace({ ...workspace, setup_command: workspaceSuggestion })}>Use detected command · <code>{workspaceSuggestion}</code></button> : null}
       <label>Setup timeout (minutes)<input type="number" min="1" max="60" value={Math.round(workspace.timeout_ms / 60000)} onChange={(event) => setWorkspace({ ...workspace, timeout_ms: Number(event.target.value) * 60000 })} /></label>
       {workspaceTest ? <div className={`workspace-test-output ${workspaceTest.success ? 'success' : 'failure'}`} role="status"><strong>{workspaceTest.success ? 'Temporary worktree passed' : 'Setup test failed'}</strong>{(workspaceTest.output || workspaceTest.error) ? <pre>{workspaceTest.output || workspaceTest.error}</pre> : null}</div> : null}
     </section>
-    <footer><button className="button ghost" onClick={test} disabled={testing || !config.cli_cmd}>{testing ? 'Testing…' : 'Test agent'}</button><button className="button primary" onClick={save}>Save settings</button></footer>
+    <footer><Button variant="ghost" loading={testing} loadingLabel="Testing…" onClick={test} disabled={!config.cli_cmd}>Test agent</Button><Button variant="primary" onClick={save}>Save settings</Button></footer>
   </div></div>;
 }

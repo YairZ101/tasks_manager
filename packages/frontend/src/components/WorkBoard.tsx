@@ -3,6 +3,7 @@ import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import { useAppStore, type WorkView } from '../hooks/useTaskStore.js';
 import type { Flow, OperationalState, Task } from '../domain.js';
+import Button from './Button.js';
 import { Icon } from './Icon.js';
 import PageHeader from './PageHeader.js';
 import PageHeaderAction from './PageHeaderAction.js';
@@ -334,7 +335,7 @@ export default function WorkBoard() {
           {!collapsed && <TaskList label={group.label} tasks={group.tasks} flows={flows} startingTaskId={startingTaskId} onStart={(task) => void startTask(task)} />}
         </section>;
       })}</div>
-        : <div className={`empty-queue ${tasks.length === 0 ? 'first-use' : ''}`}><span className="empty-queue-mark"><Icon name={tasks.length === 0 ? 'plus' : 'search'} size={25} /></span><h3>{tasks.length === 0 ? 'Start with one task' : 'No tasks match this view'}</h3><p>{tasks.length === 0 ? 'Add the outcome and context. Flow will place it in the open queue.' : 'Try a broader search or reset the current filters.'}</p>{tasks.length === 0 ? <button type="button" className="button primary" onClick={() => setCreate(true)} aria-keyshortcuts="Alt+N"><Icon name="plus" size={16} />New task</button> : hasNarrowing && <button type="button" className="button ghost" onClick={resetView}>Reset view</button>}</div>}
+        : <div className={`empty-queue ${tasks.length === 0 ? 'first-use' : ''}`}><span className="empty-queue-mark"><Icon name={tasks.length === 0 ? 'plus' : 'search'} size={25} /></span><h3>{tasks.length === 0 ? 'Start with one task' : 'No tasks match this view'}</h3><p>{tasks.length === 0 ? 'Add the outcome and context. Flow will place it in the open queue.' : 'Try a broader search or reset the current filters.'}</p>{tasks.length === 0 ? <Button variant="primary" icon="plus" iconSize={16} onClick={() => setCreate(true)} aria-keyshortcuts="Alt+N">New task</Button> : hasNarrowing && <Button variant="ghost" onClick={resetView}>Reset view</Button>}</div>}
     </div>
   </section>;
 }

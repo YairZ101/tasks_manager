@@ -375,6 +375,13 @@ describe('FlowEditor', () => {
     fireEvent.click(picker);
     const historyButton = screen.getByRole('button', { name: 'Version history' });
     const publishButton = screen.getByRole('button', { name: 'Publish version' });
+    const libraryButton = screen.getByRole('button', { name: 'Flow library' });
+    expect(libraryButton).toHaveClass('editor-library-action');
+    expect(libraryButton.querySelector('.toolbar-nav-label')).toHaveTextContent('Library');
+    expect(historyButton).toHaveClass('editor-toolbar-control');
+    expect(publishButton).toHaveClass('editor-toolbar-control');
+    expect(historyButton.querySelector('.editor-toolbar-label')).toHaveTextContent('History');
+    expect(publishButton.querySelector('.editor-toolbar-label')).toHaveTextContent('Publish version');
     expect(historyButton.querySelector('[data-icon="history"]')).toHaveAttribute('width', '18');
     expect(publishButton).toHaveAttribute('data-toolbar-action', 'publish');
     expect(publishButton.querySelector('[data-icon="publish"]')).toBeInTheDocument();
@@ -492,10 +499,13 @@ describe('FlowEditor', () => {
     expect(document.querySelector('.editor-main')).not.toHaveClass('has-inspector');
     expect(screen.getByText('Standard delivery')).toBeVisible();
     expect(screen.getByText('Saved')).toBeVisible();
-    expect(screen.getByText('Ready to publish')).toBeInTheDocument();
+    expect(screen.queryByText('Ready to publish')).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Save draft' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Publish version' })).toHaveTextContent('Publish version');
-    expect(screen.getByRole('button', { name: 'Publish version' }).querySelector('[data-icon="publish"]')).toBeInTheDocument();
+    const publishButton = screen.getByRole('button', { name: 'Publish version' });
+    expect(publishButton).toBeEnabled();
+    expect(publishButton).toHaveAttribute('data-publish-readiness', 'ready');
+    expect(publishButton).toHaveTextContent('Publish version');
+    expect(publishButton.querySelector('[data-icon="publish"]')).toBeInTheDocument();
     expect(document.querySelector('.editor-shell')).toHaveAttribute('data-zoom-mode');
     expect(screen.getByLabelText('Decision block: Plan review')).toHaveAttribute('title', 'Decision: Plan review');
     const miniMap = screen.getByTestId('rf__minimap');
@@ -514,6 +524,27 @@ describe('FlowEditor', () => {
     fireEvent.click(pane!);
     expect(screen.queryByRole('complementary', { name: 'Block inspector' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Inspector' })).not.toBeInTheDocument();
+  });
+
+  test('uses the Publish button to expose an invalid draft', async () => {
+    const definition = createRecommendedFlow();
+    const invalidDefinition = {
+      ...definition,
+      nodes: definition.nodes.filter((node) => node.type !== 'result'),
+    };
+    vi.mocked(api.getDraft).mockResolvedValue({
+      draft: { id: 3, flow_id: 1, version: 2, state: 'draft', draft_revision: 4, definition: invalidDefinition, compiled: null, published_at: null } as any,
+      validation: { valid: false, problems: [] },
+    });
+
+    render(<div style={{ width: 1200, height: 800 }}><FlowEditor flowId={1} /></div>);
+
+    const publishButton = await screen.findByRole('button', { name: 'Publish version' });
+    expect(screen.queryByText('Ready to publish')).not.toBeInTheDocument();
+    expect(publishButton).toBeDisabled();
+    expect(publishButton).toHaveAttribute('data-publish-readiness', 'blocked');
+    expect(publishButton).toHaveAttribute('title', expect.stringMatching(/^Resolve \d+ issues? before publishing$/));
+    expect(publishButton).toHaveAttribute('aria-description', expect.stringMatching(/^Unavailable: \d+ issues? to resolve$/));
   });
 
   test('an Agent block only references an agent; it exposes no inline prompt config', async () => {

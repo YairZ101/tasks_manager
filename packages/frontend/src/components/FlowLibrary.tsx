@@ -4,6 +4,7 @@ import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import type { Flow } from '../domain.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
+import Button from './Button.js';
 import ConfirmDialog from './ConfirmDialog.js';
 import FlowComposer from './FlowComposer.js';
 import { FlowPreviewSvg, Icon } from './Icon.js';
@@ -277,7 +278,7 @@ export default function FlowLibrary() {
         <button type="button" className="flow-card-open" onClick={() => editFlow(flow.id)} aria-label={`Edit ${flow.name}`}>
           <PreviewGraph definition={previewVersion?.definition} />
         </button>
-        <footer><div className="flow-card-actions"><button className="text-button" disabled={duplicatingFlowId !== null} onClick={() => void duplicate(flow)}><Icon name="copy" size={15} />{duplicatingFlowId === flow.id ? 'Duplicating…' : 'Duplicate Flow'}</button><button className="text-danger" disabled={Boolean(flow.is_default)} title={flow.is_default ? 'Set another published Flow as default before deleting this one.' : undefined} onClick={() => setDeleteTarget(flow)}><Icon name="trash" size={15} />Delete Flow</button></div>{flow.is_default ? <span className="default-flow-status"><Icon name="check" size={14} />Default</span> : flow.active_version_id && <button className="text-button" onClick={async () => { await api.makeDefault(flow.id); await refreshFlows(); toast.success('Default Flow updated.'); }}><Icon name="check" size={15} />Make default</button>}</footer>
+        <footer><div className="flow-card-actions"><Button variant="text" icon="copy" loading={duplicatingFlowId === flow.id} loadingLabel="Duplicating…" disabled={duplicatingFlowId !== null} onClick={() => void duplicate(flow)}>Duplicate Flow</Button><Button variant="text" tone="danger" icon="trash" disabled={Boolean(flow.is_default)} title={flow.is_default ? 'Set another published Flow as default before deleting this one.' : undefined} onClick={() => setDeleteTarget(flow)}>Delete Flow</Button></div>{flow.is_default ? <span className="default-flow-status"><Icon name="check" size={14} />Default</span> : flow.active_version_id && <Button variant="text" icon="check" onClick={async () => { await api.makeDefault(flow.id); await refreshFlows(); toast.success('Default Flow updated.'); }}>Make default</Button>}</footer>
       </article>;
       })}
       <button className="flow-card add-flow" onClick={() => setCreateOpen(true)}><span><Icon name="plus" size={25} /></span><strong>Create another Flow</strong><small>Start from the recommended delivery graph</small></button>

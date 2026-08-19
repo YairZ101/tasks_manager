@@ -97,7 +97,7 @@ describe('ConfirmDialog', () => {
     );
 
     const btn = screen.getByRole('button', { name: 'Delete' });
-    expect(btn.className).toContain('bg-danger');
+    expect(btn).toHaveClass('button', 'primary', 'danger');
   });
 
   test('applies accent styling when destructive is false', () => {
@@ -112,6 +112,7 @@ describe('ConfirmDialog', () => {
     );
 
     const btn = screen.getByRole('button', { name: 'OK' });
-    expect(btn.className).toContain('bg-accent');
+    expect(btn).toHaveClass('button', 'primary');
+    expect(btn).not.toHaveClass('danger');
   });
 });

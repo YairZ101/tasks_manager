@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import type { AgentPreset } from '../domain.js';
 import { api } from '../api/client.js';
+import Button from './Button.js';
 import { Icon } from './Icon.js';
 import PageHeader from './PageHeader.js';
 import PageHeaderAction from './PageHeaderAction.js';
@@ -165,8 +166,8 @@ export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focus
           </section>
         </div>
         <footer>
-          <div>{selected && <button type="button" className="text-danger" disabled={deleting} onClick={() => void remove()}><Icon name="trash" size={14} />{deleting ? 'Deleting…' : 'Delete preset'}</button>}</div>
-          <button type="submit" className="button primary" disabled={saving || !dirty}>{saving ? 'Saving…' : selected ? 'Save changes' : 'Create Agent'}</button>
+          <div>{selected && <Button variant="text" tone="danger" icon="trash" iconSize={14} loading={deleting} loadingLabel="Deleting…" onClick={() => void remove()}>Delete preset</Button>}</div>
+          <Button type="submit" variant="primary" loading={saving} loadingLabel="Saving…" disabled={!dirty}>{selected ? 'Save changes' : 'Create Agent'}</Button>
         </footer>
       </form>
     </div></div>

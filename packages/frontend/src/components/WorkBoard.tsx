@@ -1,4 +1,4 @@
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type RefObject } from 'react';
 import { toast } from 'sonner';
 import { api } from '../api/client.js';
 import { useAppStore, type WorkView } from '../hooks/useTaskStore.js';
@@ -187,7 +187,7 @@ function groupTasks(tasks: Task[], groupBy: GroupBy, flows: Flow[]): TaskGroup[]
     .sort((left, right) => left.label.localeCompare(right.label));
 }
 
-export default function WorkBoard() {
+export default function WorkBoard({ returnFocusRef }: { returnFocusRef?: RefObject<HTMLElement | null> }) {
   const tasks = useAppStore((state) => state.tasks);
   const flows = useAppStore((state) => state.flows);
   const workView = useAppStore((state) => state.workView);
@@ -293,7 +293,7 @@ export default function WorkBoard() {
     }
   };
 
-  return <section className="board queue-board" aria-labelledby="tasks-heading">
+  return <section ref={returnFocusRef} className="board queue-board" aria-labelledby="tasks-heading" tabIndex={-1}>
     <PageHeader title="Tasks" titleId="tasks-heading" description="Search, filter, and start work.">
       <PageHeaderAction label="New task" onClick={() => setCreate(true)} ariaKeyShortcuts="Alt+N" />
     </PageHeader>

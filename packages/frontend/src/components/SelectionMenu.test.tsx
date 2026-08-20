@@ -15,6 +15,15 @@ describe('SelectionMenu', () => {
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
   });
 
+  test('closes an open menu when its surrounding form becomes busy', () => {
+    const { rerender } = render(<SelectionMenu label="Example" value="first" options={options} onChange={vi.fn()} />);
+    fireEvent.click(screen.getByRole('combobox', { name: 'Example' }));
+    expect(screen.getByRole('listbox')).toBeInTheDocument();
+
+    rerender(<SelectionMenu label="Example" value="first" options={options} onChange={vi.fn()} disabled />);
+    expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
+  });
+
   test('skips disabled options during keyboard navigation', () => {
     const onChange = vi.fn();
     render(<SelectionMenu label="Example" value="second" options={options} onChange={onChange} />);
@@ -74,5 +83,34 @@ describe('SelectionMenu', () => {
     fireEvent.pointerDown(screen.getByRole('button', { name: 'Outside' }));
     expect(screen.queryByRole('listbox')).not.toBeInTheDocument();
     expect(onChange).not.toHaveBeenCalled();
+  });
+
+  test('portals a top-opening menu outside a clipping panel', () => {
+    const onChange = vi.fn();
+    render(<div className="dialog-layer"><div className="task-panel"><SelectionMenu label="Flow" value="first" options={options} onChange={onChange} placement="top" /></div></div>);
+    const trigger = screen.getByRole('combobox', { name: 'Flow' });
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({ top: 500, bottom: 546, left: 100, right: 400, width: 300, height: 46, x: 100, y: 500, toJSON: () => ({}) });
+
+    fireEvent.click(trigger);
+
+    const listbox = screen.getByRole('listbox', { name: 'Flow options' });
+    expect(listbox.closest('.dialog-layer')).not.toBeNull();
+    expect(listbox.closest('.task-panel')).toBeNull();
+    expect(listbox).toHaveAttribute('data-placement', 'top');
+    expect(listbox).toHaveStyle({ position: 'fixed', left: '100px', width: '300px', bottom: `${window.innerHeight - 500 + 6}px` });
+
+    fireEvent.click(screen.getByRole('option', { name: 'Second' }));
+    expect(onChange).toHaveBeenCalledWith('second');
+  });
+
+  test('flips a preferred top menu below the trigger when the viewport has no room above it', () => {
+    render(<SelectionMenu label="Flow" value="first" options={options} onChange={vi.fn()} placement="top" />);
+    const trigger = screen.getByRole('combobox', { name: 'Flow' });
+    vi.spyOn(trigger, 'getBoundingClientRect').mockReturnValue({ top: 20, bottom: 66, left: 24, right: 224, width: 200, height: 46, x: 24, y: 20, toJSON: () => ({}) });
+
+    fireEvent.click(trigger);
+
+    expect(screen.getByRole('listbox')).toHaveAttribute('data-placement', 'bottom');
+    expect(screen.getByRole('listbox')).toHaveStyle({ top: '72px', bottom: 'auto' });
   });
 });

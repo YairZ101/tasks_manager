@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type Ref } from 'react';
 import type { Task, TaskLinkRelationship } from '../domain.js';
 import { Icon } from './Icon.js';
 import SelectionMenu from './SelectionMenu.js';
@@ -13,7 +13,7 @@ const detailLabels: Record<DetailSection, string> = { context: 'Context', accept
 const relationshipLabels: Record<TaskLinkRelationship, string> = { is_blocked_by: 'Is blocked by', blocks: 'Blocks', relates_to: 'Relates to' };
 const relationshipOptions = (Object.keys(relationshipLabels) as TaskLinkRelationship[]).map((value) => ({ value, label: relationshipLabels[value] }));
 
-export default function TaskDetailsFields({ value, onChange, links, onLinksChange, tasks, candidateTasks = tasks, excludeTaskId, autoFocus = false }: {
+export default function TaskDetailsFields({ value, onChange, links, onLinksChange, tasks, candidateTasks = tasks, excludeTaskId, autoFocus = false, titleInputRef, disabled = false }: {
   value: TaskDetailValues;
   onChange: (value: TaskDetailValues) => void;
   links: TaskDetailLink[];
@@ -22,6 +22,8 @@ export default function TaskDetailsFields({ value, onChange, links, onLinksChang
   candidateTasks?: Task[];
   excludeTaskId?: number;
   autoFocus?: boolean;
+  titleInputRef?: Ref<HTMLInputElement>;
+  disabled?: boolean;
 }) {
   const [sections, setSections] = useState<DetailSection[]>(() => [
     ...(value.description ? ['context' as const] : []),
@@ -48,12 +50,12 @@ export default function TaskDetailsFields({ value, onChange, links, onLinksChang
   }, [links.length, value.acceptance, value.description]);
 
   return <div className="task-details-fields">
-    <label className="task-detail-title-field">Task title<input autoFocus={autoFocus} required maxLength={500} value={value.title} onChange={(event) => onChange({ ...value, title: event.target.value })} placeholder="What should be different when this is done?" /></label>
+    <label className="task-detail-title-field">Task title<input ref={titleInputRef} autoFocus={autoFocus} required maxLength={500} value={value.title} onChange={(event) => onChange({ ...value, title: event.target.value })} placeholder="What should be different when this is done?" /></label>
     {sections.includes('context') ? <section className="task-detail-field"><header><strong>Context</strong><button type="button" onClick={() => removeSection('context')}>Remove</button></header><textarea value={value.description} onChange={(event) => onChange({ ...value, description: event.target.value })} placeholder="Why this matters, constraints, useful links…" /></section> : null}
     {sections.includes('acceptance') ? <section className="task-detail-field"><header><strong>Done when</strong><button type="button" onClick={() => removeSection('acceptance')}>Remove</button></header><textarea value={value.acceptance} onChange={(event) => onChange({ ...value, acceptance: event.target.value })} placeholder="Observable conditions for success and how to verify them" /></section> : null}
     {sections.includes('links') ? <section className="task-detail-field"><header><strong>Linked tasks</strong><button type="button" onClick={() => removeSection('links')}>Remove</button></header>
-      <div className="link-picker"><SelectionMenu<TaskLinkRelationship> label="Relationship" value={relationship} options={relationshipOptions} onChange={setRelationship} className="form-selection relationship-selection" />
-        <TaskLinkPicker tasks={availableTasks} onSelect={(task) => onLinksChange([...links, { task_id: task.id, relationship }])} />
+      <div className="link-picker"><SelectionMenu<TaskLinkRelationship> label="Relationship" value={relationship} options={relationshipOptions} onChange={setRelationship} disabled={disabled} className="form-selection relationship-selection" />
+        <TaskLinkPicker tasks={availableTasks} onSelect={(task) => onLinksChange([...links, { task_id: task.id, relationship }])} disabled={disabled} />
       </div>
       {links.length > 0 ? <div className="dependency-list">{links.map((link) => {
         const linkedTask = tasks.find((task) => task.id === link.task_id);

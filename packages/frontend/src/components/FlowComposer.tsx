@@ -1,6 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import Button from './Button.js';
-import IconButton from './IconButton.js';
+import DialogFrame from './DialogFrame.js';
+import DialogLayer from './DialogLayer.js';
 
 type FlowComposerProps = {
   onClose(): void;
@@ -11,14 +12,6 @@ export default function FlowComposer({ onClose, onCreate }: FlowComposerProps) {
   const [name, setName] = useState('Delivery flow');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape' && !saving) onClose();
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [onClose, saving]);
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -34,17 +27,14 @@ export default function FlowComposer({ onClose, onCreate }: FlowComposerProps) {
     }
   };
 
-  return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && !saving && onClose()}>
-    <form className="composer flow-composer" role="dialog" aria-modal="true" aria-labelledby="new-flow-title" onSubmit={submit}>
-      <header>
-        <div><span className="eyebrow">NEW FLOW</span><h2 id="new-flow-title">Name the workflow</h2></div>
-        <IconButton label="Close new Flow" icon="close" disabled={saving} onClick={onClose} />
-      </header>
-      <p className="lead">A blank Flow with only a Begin and Completed block will open as a draft. Add the work steps you need, then publish it.</p>
-      <label>Flow name<input autoFocus required maxLength={200} value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Release delivery" aria-describedby={error ? 'flow-name-error' : undefined} /></label>
-      {error && <p className="field-error" id="flow-name-error" role="alert">{error}</p>}
-      <div className="composer-queue-note"><strong>DRAFT FIRST</strong><span>New Flows are private drafts until you publish a version.</span></div>
-      <footer><Button variant="ghost" disabled={saving} onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={saving} loadingLabel="Creating…" disabled={!name.trim()}>Create Flow</Button></footer>
-    </form>
-  </div>;
+  return <DialogLayer onDismiss={onClose} dismissDisabled={saving}>
+    <DialogFrame className="composer flow-composer" contextLabel="NEW FLOW" title="Name the workflow" closeLabel="Close new Flow" onClose={onClose} closeDisabled={saving} busy={saving} onSubmit={submit} footer={<><Button variant="ghost" disabled={saving} onClick={onClose}>Cancel</Button><Button type="submit" variant="primary" loading={saving} loadingLabel="Creating…" disabled={!name.trim()}>Create Flow</Button></>}>
+      <fieldset className="dialog-fields" disabled={saving}>
+        <p className="lead">A blank Flow with only a Begin and Completed block will open as a draft. Add the work steps you need, then publish it.</p>
+        <label>Flow name<input autoFocus required maxLength={200} value={name} onChange={(event) => setName(event.target.value)} placeholder="For example, Release delivery" aria-describedby={error ? 'flow-name-error' : undefined} /></label>
+        {error && <p className="field-error" id="flow-name-error" role="alert">{error}</p>}
+        <div className="composer-queue-note"><strong>DRAFT FIRST</strong><span>New Flows are private drafts until you publish a version.</span></div>
+      </fieldset>
+    </DialogFrame>
+  </DialogLayer>;
 }

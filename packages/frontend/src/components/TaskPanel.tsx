@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useState, type RefObject } from 'react';
 import { toast } from 'sonner';
 import type { DecisionNode, FlowNode } from '@flow/core';
 import { api } from '../api/client.js';
@@ -9,8 +9,11 @@ import { Icon } from './Icon.js';
 import IconButton from './IconButton.js';
 import { KeyboardShortcut } from './KeyboardShortcut.js';
 import SelectionMenu from './SelectionMenu.js';
-import TaskDetailsFields, { type TaskDetailLink } from './TaskDetailsFields.js';
+import { type TaskDetailLink } from './TaskDetailsFields.js';
 import { buildRunPreflight } from './runPreflight.js';
+import { useConfirm } from './ConfirmProvider.js';
+import DialogLayer from './DialogLayer.js';
+import TaskDialog from './TaskDialog.js';
 
 const statusLabel: Record<string, string> = { queued: 'Queued', running: 'Running', waiting: 'Waiting for you', attention: 'Needs attention', finished: 'Finished', stopped: 'Stopped' };
 const resultLabel: Record<string, string> = { completed: 'Completed', paused: 'Paused', cancelled: 'Cancelled' };
@@ -19,12 +22,22 @@ const relationshipLabels = { is_blocked_by: 'Is blocked by', blocks: 'Blocks', r
 const runLabel = (run: Run) => run.result_category ? resultLabel[run.result_category] : statusLabel[run.status];
 const readableOutcome = (value: string) => attemptOutcomeLabel[value] ?? value.replace(/[_-]+/g, ' ').replace(/^./, (letter) => letter.toUpperCase());
 
-export default function TaskPanel({ taskId }: { taskId: number }) {
+type TaskPanelData = {
+  taskId: number;
+  activeRunId: number | null;
+  links: TaskLink[];
+  runs: Run[];
+  selectedRunId: number | null;
+  detail: RunDetail | null;
+};
+
+export default function TaskPanel({ taskId, returnFocusRef }: { taskId: number; returnFocusRef?: RefObject<HTMLElement | null> }) {
+  const confirm = useConfirm();
   const { tasks, flows, runRevision, selectTask, refreshTasks, setWorkView, viewFlowVersion } = useAppStore();
   const task = tasks.find((candidate) => candidate.id === taskId);
-  const [detail, setDetail] = useState<RunDetail | null>(null);
-  const [runs, setRuns] = useState<Run[]>([]);
-  const [selectedRunId, setSelectedRunId] = useState<number | null>(null);
+  const [panelData, setPanelData] = useState<TaskPanelData | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const [loadRevision, setLoadRevision] = useState(0);
   const [loadingRun, setLoadingRun] = useState(false);
   const [logs, setLogs] = useState<TaskLog[]>([]);
   const [selectedAttempt, setSelectedAttempt] = useState<number | null>(null);
@@ -32,46 +45,55 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState({ title: '', description: '', acceptance: '' });
-  const [links, setLinks] = useState<TaskLink[]>([]);
-  const [linksLoaded, setLinksLoaded] = useState(false);
+
+  const loadedPanelData = panelData?.taskId === taskId && panelData.activeRunId === task?.active_run_id ? panelData : null;
+  const detail = loadedPanelData?.detail ?? null;
+  const runs = loadedPanelData?.runs ?? [];
+  const selectedRunId = loadedPanelData?.selectedRunId ?? null;
+  const links = loadedPanelData?.links ?? [];
+  const panelReady = loadedPanelData !== null;
 
   useEffect(() => {
     if (!task) return;
     let cancelled = false;
     setDraft({ title: task.title, description: task.description, acceptance: task.acceptance });
-    setLinksLoaded(false);
-    void api.getTask(task.id).then(({ links }) => {
-      if (!cancelled) setLinks(links);
-    }).catch(() => {
-      if (!cancelled) setLinks([]);
-    }).finally(() => {
-      if (!cancelled) setLinksLoaded(true);
-    });
+    setLoadError(null);
+
+    const linksRequest = api.getTask(task.id).then((result) => result.links);
+    const runsRequest = api.listRuns(task.id).then((result) => result.runs);
+    const detailRequest = task.active_run_id
+      ? api.getRun(task.active_run_id)
+      : runsRequest.then((nextRuns) => nextRuns[0] ? api.getRun(nextRuns[0].id) : null);
+
     const load = async () => {
-      const nextRuns = (await api.listRuns(task.id)).runs;
-      const runId = task.active_run_id ?? nextRuns[0]?.id;
-      const nextDetail = runId ? await api.getRun(runId) : null;
-      if (!cancelled) {
-        setRuns(nextRuns);
-        setSelectedRunId(runId ?? null);
-        setDetail(nextDetail);
+      try {
+        const [nextLinks, nextRuns, nextDetail] = await Promise.all([linksRequest, runsRequest, detailRequest]);
+        if (!cancelled) {
+          setPanelData({
+            taskId: task.id,
+            activeRunId: task.active_run_id,
+            links: nextLinks,
+            runs: nextRuns,
+            selectedRunId: nextDetail?.run.id ?? task.active_run_id ?? nextRuns[0]?.id ?? null,
+            detail: nextDetail,
+          });
+        }
+      } catch (error) {
+        if (!cancelled) {
+          setPanelData(null);
+          setLoadError(error instanceof Error ? error.message : 'The task details request failed.');
+        }
       }
     };
-    void load().catch(() => {
-      if (!cancelled) {
-        setRuns([]);
-        setSelectedRunId(null);
-        setDetail(null);
-      }
-    });
+    void load();
     return () => { cancelled = true; };
-  }, [task?.id, task?.active_run_id, task?.active_run_status, task?.resolution, task?.updated_at, runRevision]);
+  }, [task?.id, task?.active_run_id, task?.active_run_status, task?.resolution, task?.updated_at, runRevision, loadRevision]);
 
   useEffect(() => {
     if (task?.resolution !== 'open') setEditing(false);
   }, [task?.resolution]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setSelectedAttempt(null);
     setLogs([]);
   }, [detail?.run.id]);
@@ -138,20 +160,26 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
   const refresh = async (runId?: number) => {
     await refreshTasks();
     if (runId) {
-      setSelectedRunId(runId);
       setSelectedAttempt(null);
-      setDetail(await api.getRun(runId));
+      const nextDetail = await api.getRun(runId);
+      setPanelData((current) => current?.taskId === task.id ? { ...current, selectedRunId: runId, detail: nextDetail } : current);
     }
   };
   const start = useCallback(async () => {
     if (!defaultFlow) { toast.error('Publish and set a default Flow before starting a Run.'); return; }
     if (incompleteDependencies.length) {
-      const names = incompleteDependencies.map((dependency) => `${dependency.task_key} · ${dependency.title}`).join('\n');
-      if (!window.confirm(`This task depends on work that is not completed:\n\n${names}\n\nStart this run anyway?`)) return;
+      const accepted = await confirm({
+        tone: 'warning',
+        title: 'Start with incomplete dependencies?',
+        description: 'This task depends on work that is not completed.',
+        details: incompleteDependencies.map((dependency) => `${dependency.task_key} · ${dependency.title}`),
+        confirmLabel: 'Start run anyway',
+      });
+      if (!accepted) return;
     }
     setBusy(true); try { const { run } = await api.startRun(task.id); await refresh(run.id); toast.success('Run queued.'); }
     catch (error) { toast.error(error instanceof Error ? error.message : 'Could not start Run.'); } finally { setBusy(false); }
-  }, [defaultFlow, incompleteDependencies, task.id]);
+  }, [confirm, defaultFlow, incompleteDependencies, task.id]);
   const decide = async (outcome: string) => {
     if (!detail || !latest) return;
     setBusy(true); try { await api.decide(detail.run.id, latest.id, outcome, comment); setComment(''); await refresh(detail.run.id); }
@@ -175,10 +203,9 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
     setLoadingRun(true);
     try {
       const nextDetail = await api.getRun(runId);
-      setSelectedRunId(runId);
       setSelectedAttempt(null);
       setLogs([]);
-      setDetail(nextDetail);
+      setPanelData((current) => current?.taskId === task.id ? { ...current, selectedRunId: runId, detail: nextDetail } : current);
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not load the selected Run.'); }
     finally { setLoadingRun(false); }
   };
@@ -190,27 +217,36 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
     setBusy(true);
     try {
       const result = await api.updateTask(task.id, { ...draft, task_links: links.map((link) => ({ task_id: link.linked_task_id, relationship: link.relationship })) });
-      setLinks(result.links);
+      setPanelData((current) => current?.taskId === task.id ? { ...current, links: result.links } : current);
       await refreshTasks();
       setEditing(false);
     } catch (error) { toast.error(error instanceof Error ? error.message : 'Could not update task.'); }
     finally { setBusy(false); }
   };
-  const updateEditableLinks = (nextLinks: TaskDetailLink[]) => setLinks(nextLinks.flatMap((link) => {
-    const existing = links.find((candidate) => candidate.linked_task_id === link.task_id);
-    if (existing) return [{ ...existing, relationship: link.relationship, link_type: link.relationship === 'relates_to' ? 'relates_to' : 'blocks' }];
-    const linkedTask = tasks.find((candidate) => candidate.id === link.task_id);
-    return linkedTask ? [{ id: -link.task_id, link_type: link.relationship === 'relates_to' ? 'relates_to' : 'blocks', relationship: link.relationship, linked_task_id: link.task_id, created_at: '', task_key: linkedTask.task_key, title: linkedTask.title, resolution: linkedTask.resolution }] : [];
-  }));
+  const updateEditableLinks = (nextLinks: TaskDetailLink[]) => {
+    const nextTaskLinks: TaskLink[] = nextLinks.flatMap((link) => {
+      const existing = links.find((candidate) => candidate.linked_task_id === link.task_id);
+      if (existing) return [{ ...existing, relationship: link.relationship, link_type: link.relationship === 'relates_to' ? 'relates_to' : 'blocks' }];
+      const linkedTask = tasks.find((candidate) => candidate.id === link.task_id);
+      return linkedTask ? [{ id: -link.task_id, link_type: link.relationship === 'relates_to' ? 'relates_to' : 'blocks', relationship: link.relationship, linked_task_id: link.task_id, created_at: '', task_key: linkedTask.task_key, title: linkedTask.title, resolution: linkedTask.resolution }] : [];
+    });
+    setPanelData((current) => current?.taskId === task.id ? { ...current, links: nextTaskLinks } : current);
+  };
   const reopen = async () => {
     if (task.resolution === 'completed' && openDependents.length > 0) {
-      const names = openDependents.map((dependent) => `${dependent.task_key} · ${dependent.title}`).join('\n');
-      if (!window.confirm(`Reopen ${task.task_key}?\n\nThese open tasks depend on it and will be blocked again:\n\n${names}\n\nPrevious Run history will be preserved.`)) return;
+      const accepted = await confirm({
+        tone: 'warning',
+        title: `Reopen ${task.task_key}?`,
+        description: 'These open tasks depend on it and will be blocked again. Previous Run history will be preserved.',
+        details: openDependents.map((dependent) => `${dependent.task_key} · ${dependent.title}`),
+        confirmLabel: 'Reopen task',
+      });
+      if (!accepted) return;
     }
     setBusy(true);
     try {
       const result = await api.reopenTask(task.id);
-      setLinks(result.links);
+      setPanelData((current) => current?.taskId === task.id ? { ...current, links: result.links } : current);
       await refreshTasks();
       setWorkView('open');
       toast.success(`${task.task_key} reopened in Backlog.`);
@@ -218,11 +254,23 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
     finally { setBusy(false); }
   };
   const remove = async () => {
-    if (!window.confirm(`Delete ${task.task_key}? This keeps dirty workspaces unless you explicitly force cleanup.`)) return;
+    if (!await confirm({
+      tone: 'danger',
+      title: `Delete ${task.task_key}?`,
+      description: 'The task will be deleted. A dirty workspace is kept unless you explicitly force cleanup.',
+      confirmLabel: 'Delete task',
+    })) return;
     try { await api.deleteTask(task.id); selectTask(null); await refreshTasks(); }
     catch (error: any) {
-      if (error.data?.reason === 'workspace_dirty' && window.confirm(`${error.message}\n\nForce cleanup and delete the task?`)) { await api.deleteTask(task.id, true); selectTask(null); await refreshTasks(); }
-      else toast.error(error.message);
+      if (error.data?.reason === 'workspace_dirty') {
+        const force = await confirm({
+          tone: 'danger',
+          title: 'Delete the dirty workspace?',
+          description: error.message,
+          confirmLabel: 'Force cleanup and delete',
+        });
+        if (force) { await api.deleteTask(task.id, true); selectTask(null); await refreshTasks(); }
+      } else toast.error(error.message);
     }
   };
 
@@ -237,15 +285,49 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [canStartRun, detail, start]);
 
-  if (editing) return <div className="modal-layer" role="presentation" onMouseDown={(event) => event.target === event.currentTarget && setEditing(false)}>
-    <form className="composer" role="dialog" aria-modal="true" aria-labelledby="edit-task-title" onSubmit={(event) => { event.preventDefault(); void save(); }}>
-      <header><div><span className="eyebrow">EDIT TASK</span><h2 id="edit-task-title">Refine the outcome</h2></div><IconButton label="Close task editor" icon="close" onClick={() => setEditing(false)} /></header>
-      <TaskDetailsFields key={task.id} value={draft} onChange={setDraft} links={editableLinks} onLinksChange={updateEditableLinks} tasks={tasks} excludeTaskId={task.id} autoFocus />
-      <footer><Button variant="ghost" onClick={() => setEditing(false)}>Cancel</Button><Button type="submit" variant="primary" loading={busy} loadingLabel="Saving…" disabled={!draft.title.trim()}>Save changes</Button></footer>
-    </form>
-  </div>;
+  if (loadError) {
+    return <DialogLayer variant="panel" returnFocusRef={returnFocusRef} onDismiss={() => selectTask(null)}>
+      <aside className="task-panel task-panel-load-failed" role="dialog" aria-modal="true" aria-label={`Task ${task.task_key}`}>
+        <header className="panel-head"><div className="panel-head-identity"><h2 title={task.title}>{task.title}</h2><span className="panel-head-separator" aria-hidden="true">·</span><div className="panel-head-meta"><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div></div><div className="panel-head-actions">
+          <IconButton label="Close task" icon="close" onClick={() => selectTask(null)} />
+        </div></header>
+        <div className="task-panel-load-error" role="alert">
+          <span className="task-panel-load-error-icon" aria-hidden="true"><Icon name="alert" size={20} /></span>
+          <div><strong>Task details unavailable</strong><p>{loadError}</p><span>Retry before editing the task or changing its Run.</span></div>
+          <Button variant="ghost" onClick={() => setLoadRevision((revision) => revision + 1)}>Retry</Button>
+        </div>
+      </aside>
+    </DialogLayer>;
+  }
 
-  return <div className="panel-layer" onMouseDown={(e) => e.target === e.currentTarget && selectTask(null)}>
+  if (!panelReady) {
+    const likelySplitPanel = Boolean(task.active_run_id && (task.description || task.acceptance));
+    return <DialogLayer variant="panel" returnFocusRef={returnFocusRef} onDismiss={() => selectTask(null)}>
+      <aside className={`task-panel task-panel-loading${likelySplitPanel ? ' task-panel-split' : ''}`} role="dialog" aria-modal="true" aria-busy="true" aria-label={`Task ${task.task_key}`}>
+        <header className="panel-head"><div className="panel-head-identity"><h2 title={task.title}>{task.title}</h2><span className="panel-head-separator" aria-hidden="true">·</span><div className="panel-head-meta"><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div></div><div className="panel-head-actions">
+          <IconButton label="Close task" icon="close" onClick={() => selectTask(null)} />
+        </div></header>
+        <div className="task-panel-loading-body" role="status"><span className="sr-only">Loading task details</span><i /><i /><i /></div>
+      </aside>
+    </DialogLayer>;
+  }
+
+  if (editing) return <TaskDialog
+    key={task.id}
+    mode="edit"
+    value={draft}
+    onChange={setDraft}
+    links={editableLinks}
+    onLinksChange={updateEditableLinks}
+    tasks={tasks}
+    excludeTaskId={task.id}
+    busy={busy}
+    footer={<><Button variant="ghost" disabled={busy} onClick={() => setEditing(false)}>Cancel</Button><Button type="submit" variant="primary" loading={busy} loadingLabel="Saving…" disabled={!draft.title.trim()}>Save changes</Button></>}
+    onSubmit={(event) => { event.preventDefault(); void save(); }}
+    onClose={() => setEditing(false)}
+  />;
+
+  return <DialogLayer variant="panel" returnFocusRef={returnFocusRef} onDismiss={() => selectTask(null)}>
     <aside className={`task-panel${isTitleOnly ? ' task-panel-compact' : ''}${splitPanel ? ' task-panel-split' : ''}`} role="dialog" aria-modal="true" aria-label={`Task ${task.task_key}`}>
       <header className="panel-head"><div className="panel-head-identity"><h2 title={task.title}>{task.title}</h2><span className="panel-head-separator" aria-hidden="true">·</span><div className="panel-head-meta"><span className="task-key">{task.task_key}</span><span className={`state-pill ${task.operational_state}`}>{task.operational_state.replace('_', ' ')}</span></div></div><div className="panel-head-actions">
         {!isFinished && <IconButton label="Edit task" icon="edit" iconSize={16} onClick={() => setEditing(true)} />}<IconButton label="Delete task" icon="trash" iconSize={16} tone="danger" onClick={remove} />
@@ -297,12 +379,12 @@ export default function TaskPanel({ taskId }: { taskId: number }) {
         </section>}
       </div>
       {(canStartRun || isFinished || historicalActiveRun || activeRunDetail) && <footer className={`panel-footer${isFinished ? ' finished-task-controls' : historicalActiveRun ? ' latest-run-controls' : activeRunDetail ? ' active-run-controls' : ' run-controls'}`}>
-        {isFinished ? <><div className="finished-task-note"><Icon name="lock" size={17} /><small>History stays intact.</small></div><Button variant="primary" icon="back" onClick={reopen} disabled={busy || !linksLoaded}>Reopen task</Button></>
+        {isFinished ? <><div className="finished-task-note"><Icon name="lock" size={17} /><small>History stays intact.</small></div><Button variant="primary" icon="back" onClick={reopen} disabled={busy}>Reopen task</Button></>
           : historicalActiveRun ? <Button variant="primary" loading={loadingRun} loadingLabel="Loading…" onClick={() => void selectRun(historicalActiveRun.id)}>View latest run</Button>
           : activeRunDetail ? <><Button variant="ghost" tone="danger" icon="stop" onClick={stop} disabled={busy} title="Option + ." aria-keyshortcuts="Alt+.">Stop Run <KeyboardShortcut keys={['⌥', '.']} /></Button>{activeRunDetail.run.status === 'attention' && preparationFailed && <Button variant="primary" onClick={retrySetup} disabled={busy}>Retry setup</Button>}{activeRunDetail.run.status === 'attention' && !preparationFailed && <Button variant="primary" onClick={retry} disabled={busy}>Retry block</Button>}</>
-          : preflight ? <><SelectionMenu label="Flow to run" value={task.preferred_flow_id && task.preferred_flow_id !== defaultFlow?.id ? String(task.preferred_flow_id) : ''} options={runFlowOptions} onChange={(value) => void selectRunFlow(value)} hideLabel disabled={busy || (!defaultFlow && !customFlows.length)} className="run-footer-flow menu-top" /><Button variant="primary" className="start-run-action" onClick={start} disabled={busy} title="Option + Enter" aria-keyshortcuts="Alt+Enter">Start run <KeyboardShortcut keys={['⌥', '↩']} /></Button></>
+          : preflight ? <><SelectionMenu label="Flow to run" value={task.preferred_flow_id && task.preferred_flow_id !== defaultFlow?.id ? String(task.preferred_flow_id) : ''} options={runFlowOptions} onChange={(value) => void selectRunFlow(value)} hideLabel disabled={busy || (!defaultFlow && !customFlows.length)} className="run-footer-flow" placement="top" /><Button variant="primary" className="start-run-action" onClick={start} disabled={busy} title="Option + Enter" aria-keyshortcuts="Alt+Enter">Start run <KeyboardShortcut keys={['⌥', '↩']} /></Button></>
             : <Button variant="primary" onClick={() => useAppStore.getState().setSection('flows')}>Open Flows</Button>}
       </footer>}
     </aside>
-  </div>;
+  </DialogLayer>;
 }

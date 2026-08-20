@@ -1,118 +1,127 @@
+import { useState } from 'react';
 import { describe, test, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
-import ConfirmDialog from './ConfirmDialog';
+import { fireEvent, screen, waitFor } from '@testing-library/react';
+import { render } from '../test/render.js';
+import ConfirmDialog from './ConfirmDialog.js';
+
+const requiredProps = {
+  title: 'Delete task?',
+  message: 'This will permanently delete the task.',
+  confirmLabel: 'Delete task',
+  onConfirm: () => {},
+  onCancel: () => {},
+};
 
 describe('ConfirmDialog', () => {
-  test('renders title and message', () => {
-    render(
-      <ConfirmDialog
-        title="Delete task?"
-        message="This will permanently delete the task."
-        confirmLabel="Delete"
-        onConfirm={() => {}}
-        onCancel={() => {}}
-      />
-    );
+  test('renders an accessible dialog with details and actions', () => {
+    render(<ConfirmDialog {...requiredProps} tone="danger" details={['TST-4 · Publish the API contract']} />);
 
-    expect(screen.getByText('Delete task?')).toBeInTheDocument();
-    expect(screen.getByText('This will permanently delete the task.')).toBeInTheDocument();
-  });
-
-  test('renders confirm and cancel buttons', () => {
-    render(
-      <ConfirmDialog
-        title="Confirm"
-        message="Are you sure?"
-        confirmLabel="Yes, do it"
-        onConfirm={() => {}}
-        onCancel={() => {}}
-      />
-    );
-
-    expect(screen.getByRole('button', { name: 'Yes, do it' })).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog', { name: 'Delete task?' });
+    expect(dialog).toHaveTextContent('This will permanently delete the task.');
+    expect(dialog).toHaveTextContent('TST-4 · Publish the API contract');
+    expect(screen.getByRole('button', { name: 'Delete task' })).toHaveClass('button', 'primary', 'danger');
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
   });
 
-  test('calls onConfirm when confirm button clicked', () => {
+  test('calls the selected action', () => {
     const onConfirm = vi.fn();
-    render(
-      <ConfirmDialog
-        title="Confirm"
-        message="Sure?"
-        confirmLabel="OK"
-        onConfirm={onConfirm}
-        onCancel={() => {}}
-      />
-    );
+    const onCancel = vi.fn();
+    const { rerender } = render(<ConfirmDialog {...requiredProps} onConfirm={onConfirm} onCancel={onCancel} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete task' }));
+    expect(onConfirm).toHaveBeenCalledOnce();
 
-    fireEvent.click(screen.getByRole('button', { name: 'OK' }));
-    expect(onConfirm).toHaveBeenCalledTimes(1);
+    rerender(<ConfirmDialog {...requiredProps} onConfirm={onConfirm} onCancel={onCancel} />);
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(onCancel).toHaveBeenCalledOnce();
   });
 
-  test('calls onCancel when cancel button clicked', () => {
+  test('dismisses from Escape and the backdrop', () => {
     const onCancel = vi.fn();
-    render(
-      <ConfirmDialog
-        title="Confirm"
-        message="Sure?"
-        confirmLabel="OK"
-        onConfirm={() => {}}
-        onCancel={onCancel}
-      />
-    );
+    const { rerender } = render(<ConfirmDialog {...requiredProps} onCancel={onCancel} />);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    expect(onCancel).toHaveBeenCalledOnce();
+
+    rerender(<ConfirmDialog {...requiredProps} onCancel={onCancel} />);
+    fireEvent.mouseDown(document.querySelector('.confirm-layer')!);
+    expect(onCancel).toHaveBeenCalledTimes(2);
+  });
+
+  test('blocks dismissal and actions while disabled', () => {
+    const onConfirm = vi.fn();
+    const onCancel = vi.fn();
+    render(<ConfirmDialog {...requiredProps} disabled onConfirm={onConfirm} onCancel={onCancel} />);
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.mouseDown(document.querySelector('.confirm-layer')!);
+    fireEvent.click(screen.getByRole('button', { name: 'Delete task' }));
+    expect(screen.getByRole('dialog', { name: 'Delete task?' })).toHaveAttribute('aria-busy', 'true');
+    expect(onCancel).not.toHaveBeenCalled();
+    expect(onConfirm).not.toHaveBeenCalled();
+  });
+
+  test('starts on Cancel, traps Tab, and restores focus when closed', async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>Open confirmation</button>{open ? <ConfirmDialog {...requiredProps} onCancel={() => setOpen(false)} /> : null}</>;
+    }
+    render(<Harness />);
+    const trigger = screen.getByRole('button', { name: 'Open confirmation' });
+    trigger.focus();
+    fireEvent.click(trigger);
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus());
+
+    const confirm = screen.getByRole('button', { name: 'Delete task' });
+    confirm.focus();
+    fireEvent.keyDown(document, { key: 'Tab' });
+    expect(screen.getByRole('button', { name: 'Cancel' })).toHaveFocus();
 
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(trigger).toHaveFocus());
   });
 
-  test('calls onCancel when backdrop clicked', () => {
-    const onCancel = vi.fn();
-    render(
-      <ConfirmDialog
-        title="Confirm"
-        message="Sure?"
-        confirmLabel="OK"
-        onConfirm={() => {}}
-        onCancel={onCancel}
-      />
-    );
+  test('keeps pointer focus-ring behavior after a modifier-only key press', async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>Open confirmation</button>{open ? <ConfirmDialog {...requiredProps} onCancel={() => setOpen(false)} /> : null}</>;
+    }
+    render(<Harness />);
+    const trigger = screen.getByRole('button', { name: 'Open confirmation' });
+    trigger.focus();
+    fireEvent.pointerDown(trigger);
+    fireEvent.keyDown(trigger, { key: 'Meta', metaKey: true });
+    fireEvent.click(trigger);
 
-    // Backdrop is the first div inside the fixed overlay
-    const backdrop = document.querySelector('[class*="bg-black"]');
-    expect(backdrop).not.toBeNull();
-    fireEvent.click(backdrop!);
-    expect(onCancel).toHaveBeenCalledTimes(1);
+    const cancel = await screen.findByRole('button', { name: 'Cancel' });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    expect(cancel).toHaveAttribute('data-dialog-focus-ring', 'suppressed');
+
+    fireEvent.click(cancel);
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger).toHaveAttribute('data-dialog-focus-ring', 'suppressed');
   });
 
-  test('applies destructive styling when destructive prop is true', () => {
-    render(
-      <ConfirmDialog
-        title="Delete?"
-        message="Permanent action"
-        confirmLabel="Delete"
-        destructive
-        onConfirm={() => {}}
-        onCancel={() => {}}
-      />
-    );
+  test('keeps focus rings for keyboard-opened dialogs', async () => {
+    function Harness() {
+      const [open, setOpen] = useState(false);
+      return <><button onClick={() => setOpen(true)}>Open confirmation</button>{open ? <ConfirmDialog {...requiredProps} onCancel={() => setOpen(false)} /> : null}</>;
+    }
+    render(<Harness />);
+    const trigger = screen.getByRole('button', { name: 'Open confirmation' });
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'Enter' });
+    fireEvent.click(trigger);
 
-    const btn = screen.getByRole('button', { name: 'Delete' });
-    expect(btn).toHaveClass('button', 'primary', 'danger');
-  });
+    const cancel = await screen.findByRole('button', { name: 'Cancel' });
+    await waitFor(() => expect(cancel).toHaveFocus());
+    expect(cancel).not.toHaveAttribute('data-dialog-focus-ring');
 
-  test('applies accent styling when destructive is false', () => {
-    render(
-      <ConfirmDialog
-        title="Confirm"
-        message="Sure?"
-        confirmLabel="OK"
-        onConfirm={() => {}}
-        onCancel={() => {}}
-      />
-    );
+    fireEvent.click(cancel);
+    await waitFor(() => expect(trigger).toHaveFocus());
+    expect(trigger).toHaveAttribute('data-dialog-focus-ring', 'suppressed');
 
-    const btn = screen.getByRole('button', { name: 'OK' });
-    expect(btn).toHaveClass('button', 'primary');
-    expect(btn).not.toHaveClass('danger');
+    fireEvent.keyDown(trigger, { key: 'Meta', metaKey: true });
+    expect(trigger).toHaveAttribute('data-dialog-focus-ring', 'suppressed');
+
+    fireEvent.blur(trigger);
+    expect(trigger).not.toHaveAttribute('data-dialog-focus-ring');
   });
 });

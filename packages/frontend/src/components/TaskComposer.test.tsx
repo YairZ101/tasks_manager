@@ -1,10 +1,17 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { render } from '../test/render.js';
 import TaskComposer from './TaskComposer.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 import { api } from '../api/client.js';
 
 vi.mock('../api/client.js', () => ({ api: { createTask: vi.fn() } }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
 
 const defaultFlow = {
   id: 5, name: 'Standard delivery', is_default: 1, active_version_id: 8, created_at: '', updated_at: '',
@@ -30,6 +37,27 @@ describe('TaskComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
     await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ title: 'Ship graph editor', run: false })));
     expect(screen.queryByRole('button', { name: 'More create actions' })).not.toBeInTheDocument();
+  });
+
+  test('prevents every dismissal path while task creation is running', async () => {
+    const request = deferred<{ task: any; links: [] }>();
+    vi.mocked(api.createTask).mockReturnValue(request.promise);
+    render(<TaskComposer />);
+    fireEvent.change(screen.getByPlaceholderText('What should be different when this is done?'), { target: { value: 'Ship graph editor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Create task' }));
+
+    expect(await screen.findByRole('button', { name: 'Creating…' })).toBeDisabled();
+    expect(screen.getByRole('dialog', { name: 'Frame the outcome' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('textbox', { name: 'Task title' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close new task' })).toBeDisabled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.mouseDown(document.querySelector('.dialog-layer')!);
+    expect(useAppStore.getState().setCreateOpen).not.toHaveBeenCalled();
+    expect(screen.getByRole('dialog', { name: 'Frame the outcome' })).toBeInTheDocument();
+
+    request.resolve({ task: { id: 7 }, links: [] });
+    await waitFor(() => expect(useAppStore.getState().setCreateOpen).toHaveBeenCalledWith(false));
   });
 
   test('selects a Run action and Flow before queuing the new task', async () => {
@@ -79,9 +107,29 @@ describe('TaskComposer', () => {
     expect(footer.querySelector('.button.ghost')).toBe(cancel);
   });
 
+  test('closes nested task controls before dismissing the dialog', () => {
+    useAppStore.setState({ flows: [defaultFlow] });
+    render(<TaskComposer />);
+    fireEvent.change(screen.getByPlaceholderText('What should be different when this is done?'), { target: { value: 'Ship graph editor' } });
+    const moreActions = screen.getByRole('button', { name: 'More create actions' });
+    fireEvent.click(moreActions);
+    expect(screen.getByRole('menu', { name: 'Create task actions' })).toBeInTheDocument();
+
+    fireEvent.keyDown(moreActions, { key: 'Escape' });
+    expect(screen.queryByRole('menu', { name: 'Create task actions' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Frame the outcome' })).toBeInTheDocument();
+
+    fireEvent.click(moreActions);
+    fireEvent.click(screen.getByRole('menuitem', { name: /Create & start run/ }));
+    const flowMenu = screen.getByRole('combobox', { name: 'Flow to run' });
+    fireEvent.click(flowMenu);
+    expect(screen.getByRole('listbox', { name: 'Flow to run options' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('listbox', { name: 'Flow to run options' }), { key: 'Escape' });
+    expect(screen.queryByRole('listbox', { name: 'Flow to run options' })).not.toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Frame the outcome' })).toBeInTheDocument();
+  });
+
   test('warns before immediately starting work blocked by an open task', async () => {
-    const confirm = vi.fn(() => false);
-    vi.stubGlobal('confirm', confirm);
     useAppStore.setState({
       flows: [defaultFlow],
       tasks: [{ id: 4, task_key: 'TST-4', title: 'Publish the API contract', resolution: 'open' } as any],
@@ -94,9 +142,28 @@ describe('TaskComposer', () => {
     fireEvent.click(screen.getByRole('button', { name: 'More create actions' }));
     fireEvent.click(screen.getByRole('menuitem', { name: /Create & start run/ }));
     fireEvent.click(screen.getByRole('button', { name: 'Create & start run' }));
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('This task depends on work that is not completed:'));
+    const confirmation = await screen.findByRole('dialog', { name: 'Start with incomplete dependencies?' });
+    expect(confirmation).toHaveTextContent('TST-4 · Publish the API contract');
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
     expect(api.createTask).not.toHaveBeenCalled();
-    vi.unstubAllGlobals();
+  });
+
+  test('continues a blocked task after shared confirmation', async () => {
+    useAppStore.setState({
+      flows: [defaultFlow],
+      tasks: [{ id: 4, task_key: 'TST-4', title: 'Publish the API contract', resolution: 'open' } as any],
+    });
+    render(<TaskComposer />);
+    fireEvent.change(screen.getByPlaceholderText('What should be different when this is done?'), { target: { value: 'Ship graph editor' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Linked tasks' }));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Search tasks by title or key' }), { target: { value: 'API' } });
+    fireEvent.click(screen.getByRole('option', { name: /TST-4 Publish the API contract/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'More create actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: /Create & start run/ }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create & start run' }));
+    const confirmation = await screen.findByRole('dialog', { name: 'Start with incomplete dependencies?' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Start run anyway' }));
+    await waitFor(() => expect(api.createTask).toHaveBeenCalledWith(expect.objectContaining({ run: true })));
   });
 
   test('only sends detail sections selected for this task', async () => {

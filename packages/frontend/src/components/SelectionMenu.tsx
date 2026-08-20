@@ -1,4 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useRef, useState, type CSSProperties } from 'react';
+import { createPortal } from 'react-dom';
 import { Icon } from './Icon.js';
 
 export interface SelectionOption<Value extends string> {
@@ -17,9 +18,10 @@ interface SelectionMenuProps<Value extends string> {
   hideLabel?: boolean;
   disabled?: boolean;
   className?: string;
+  placement?: 'top' | 'bottom' | 'auto';
 }
 
-export default function SelectionMenu<Value extends string>({ label, ariaLabel = label, value, options, onChange, inlineLabel = false, hideLabel = false, disabled = false, className = '' }: SelectionMenuProps<Value>) {
+export default function SelectionMenu<Value extends string>({ label, ariaLabel = label, value, options, onChange, inlineLabel = false, hideLabel = false, disabled = false, className = '', placement }: SelectionMenuProps<Value>) {
   const listboxId = useId();
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -29,6 +31,8 @@ export default function SelectionMenu<Value extends string>({ label, ariaLabel =
   const selected = options[selectedIndex];
   const [open, setOpen] = useState(false);
   const [activeIndex, setActiveIndex] = useState(selectedIndex);
+  const [floatingStyle, setFloatingStyle] = useState<CSSProperties | null>(null);
+  const [resolvedPlacement, setResolvedPlacement] = useState<'top' | 'bottom'>('bottom');
 
   const nextEnabledIndex = (start: number, offset: number) => {
     if (options.every((option) => option.disabled)) return start;
@@ -50,6 +54,44 @@ export default function SelectionMenu<Value extends string>({ label, ariaLabel =
     else if (optionBottom > listbox.scrollTop + listbox.clientHeight) listbox.scrollTop = optionBottom - listbox.clientHeight;
   }, [activeIndex, open]);
 
+  useLayoutEffect(() => {
+    if (!open || !placement) return;
+    const positionMenu = () => {
+      const trigger = triggerRef.current;
+      if (!trigger) return;
+      const rect = trigger.getBoundingClientRect();
+      const viewportPadding = 16;
+      const gap = 6;
+      const availableAbove = Math.max(0, rect.top - viewportPadding - gap);
+      const availableBelow = Math.max(0, window.innerHeight - rect.bottom - viewportPadding - gap);
+      const minimumUsefulHeight = 68;
+      let nextPlacement = placement === 'auto' ? (availableBelow >= availableAbove ? 'bottom' : 'top') : placement;
+      if (nextPlacement === 'top' && availableAbove < minimumUsefulHeight && availableBelow > availableAbove) nextPlacement = 'bottom';
+      if (nextPlacement === 'bottom' && availableBelow < minimumUsefulHeight && availableAbove > availableBelow) nextPlacement = 'top';
+      const availableHeight = nextPlacement === 'top' ? availableAbove : availableBelow;
+      const width = Math.min(rect.width, window.innerWidth - viewportPadding * 2);
+      const left = Math.min(Math.max(viewportPadding, rect.left), window.innerWidth - viewportPadding - width);
+      setResolvedPlacement(nextPlacement);
+      setFloatingStyle({
+        position: 'fixed',
+        top: nextPlacement === 'bottom' ? rect.bottom + gap : 'auto',
+        bottom: nextPlacement === 'top' ? window.innerHeight - rect.top + gap : 'auto',
+        left,
+        width,
+        minWidth: width,
+        maxWidth: window.innerWidth - viewportPadding * 2,
+        maxHeight: Math.min(320, availableHeight),
+      });
+    };
+    positionMenu();
+    window.addEventListener('resize', positionMenu);
+    window.addEventListener('scroll', positionMenu, true);
+    return () => {
+      window.removeEventListener('resize', positionMenu);
+      window.removeEventListener('scroll', positionMenu, true);
+    };
+  }, [open, placement]);
+
   useEffect(() => {
     if (disabled) setOpen(false);
   }, [disabled]);
@@ -57,7 +99,7 @@ export default function SelectionMenu<Value extends string>({ label, ariaLabel =
   useEffect(() => {
     if (!open) return;
     const closeOutside = (event: PointerEvent) => {
-      if (event.target instanceof Node && !rootRef.current?.contains(event.target)) setOpen(false);
+      if (event.target instanceof Node && !rootRef.current?.contains(event.target) && !listboxRef.current?.contains(event.target)) setOpen(false);
     };
     document.addEventListener('pointerdown', closeOutside);
     return () => document.removeEventListener('pointerdown', closeOutside);
@@ -70,6 +112,7 @@ export default function SelectionMenu<Value extends string>({ label, ariaLabel =
   };
   const closeMenu = (restoreFocus = false) => {
     setOpen(false);
+    setFloatingStyle(null);
     if (restoreFocus) triggerRef.current?.focus({ preventScroll: true });
   };
   const choose = (index: number) => {
@@ -80,7 +123,7 @@ export default function SelectionMenu<Value extends string>({ label, ariaLabel =
   const move = (offset: number) => setActiveIndex((current) => nextEnabledIndex(current, offset));
   const focusAdjacentControl = (reverse: boolean) => {
     const controls = Array.from(document.querySelectorAll<HTMLElement>('a[href], button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])'))
-      .filter((element) => element === triggerRef.current || !rootRef.current?.contains(element));
+      .filter((element) => element === triggerRef.current || (!rootRef.current?.contains(element) && !listboxRef.current?.contains(element)));
     const triggerIndex = controls.indexOf(triggerRef.current as HTMLElement);
     const adjacent = controls[triggerIndex + (reverse ? -1 : 1)];
     adjacent?.focus({ preventScroll: true });
@@ -106,6 +149,13 @@ export default function SelectionMenu<Value extends string>({ label, ariaLabel =
     }
   };
 
+  const listbox = <div ref={listboxRef} id={listboxId} className={`selection-options${placement ? ' selection-options-floating' : ''}`} role="listbox" aria-label={`${ariaLabel} options`} data-placement={placement ? resolvedPlacement : undefined} style={placement ? floatingStyle ?? { position: 'fixed', visibility: 'hidden' } : undefined} onKeyDown={onListKeyDown}>
+    {options.map((option, index) => <div key={option.value} ref={(element) => { optionRefs.current[index] = element; }} className="selection-option" role="option" aria-selected={option.value === value} aria-disabled={option.disabled || undefined} tabIndex={index === activeIndex ? 0 : -1} onMouseEnter={() => { if (!option.disabled) setActiveIndex(index); }} onClick={() => choose(index)}>
+      <span>{option.label}</span><Icon name="check" size={15} />
+    </div>)}
+  </div>;
+  const portalTarget = rootRef.current?.closest('.dialog-layer') ?? (typeof document === 'undefined' ? null : document.body);
+
   return <div className={`selection-field${inlineLabel ? ' inline' : ''}${className ? ` ${className}` : ''}`}>
     {!inlineLabel && !hideLabel && <span className="selection-caption">{label}</span>}
     <div className="selection-menu" ref={rootRef}>
@@ -114,11 +164,8 @@ export default function SelectionMenu<Value extends string>({ label, ariaLabel =
         <span className="selection-current">{selected?.label}</span>
         <Icon name="arrow" size={14} />
       </button>
-      {open && <div ref={listboxRef} id={listboxId} className="selection-options" role="listbox" aria-label={`${ariaLabel} options`} onKeyDown={onListKeyDown}>
-        {options.map((option, index) => <div key={option.value} ref={(element) => { optionRefs.current[index] = element; }} className="selection-option" role="option" aria-selected={option.value === value} aria-disabled={option.disabled || undefined} tabIndex={index === activeIndex ? 0 : -1} onMouseEnter={() => { if (!option.disabled) setActiveIndex(index); }} onClick={() => choose(index)}>
-          <span>{option.label}</span><Icon name="check" size={15} />
-        </div>)}
-      </div>}
+      {open && (!placement || !portalTarget) ? listbox : null}
     </div>
+    {open && placement && portalTarget ? createPortal(listbox, portalTarget) : null}
   </div>;
 }

@@ -42,12 +42,12 @@ beforeEach(() => {
   });
 });
 
-test('guards unsaved Agent preset edits when leaving the tab', () => {
+test('guards unsaved Agent preset edits when leaving the tab', async () => {
   const confirmDiscard = vi.fn(() => false);
-  expect(canNavigateFromAgents('agents', 'flows', true, confirmDiscard)).toBe(false);
+  await expect(canNavigateFromAgents('agents', 'flows', true, confirmDiscard)).resolves.toBe(false);
   expect(confirmDiscard).toHaveBeenCalledOnce();
-  expect(canNavigateFromAgents('agents', 'agents', true, confirmDiscard)).toBe(true);
-  expect(canNavigateFromAgents('work', 'flows', true, confirmDiscard)).toBe(true);
+  await expect(canNavigateFromAgents('agents', 'agents', true, confirmDiscard)).resolves.toBe(true);
+  await expect(canNavigateFromAgents('work', 'flows', true, confirmDiscard)).resolves.toBe(true);
 });
 
 test('uses one task destination instead of separate state destinations', () => {
@@ -59,11 +59,11 @@ test('uses one task destination instead of separate state destinations', () => {
   expect(screen.queryByRole('button', { name: /Finished, Option/ })).not.toBeInTheDocument();
 });
 
-test('opens task creation from any section with Option N', () => {
+test('opens task creation from any section with Option N', async () => {
   useAppStore.setState({ section: 'flows', createOpen: false });
   render(createElement(App));
   fireEvent.keyDown(window, { altKey: true, code: 'KeyN' });
-  expect(useAppStore.getState().section).toBe('work');
+  await waitFor(() => expect(useAppStore.getState().section).toBe('work'));
   expect(useAppStore.getState().createOpen).toBe(true);
 });
 
@@ -80,13 +80,13 @@ test('does not run the task shortcut while a combobox has focus', () => {
   combobox.remove();
 });
 
-test('opens the Agents tab from the primary navigation', () => {
+test('opens the Agents tab from the primary navigation', async () => {
   render(createElement(App));
   const agents = screen.getByRole('button', { name: 'Agents' });
   expect(agents.querySelector('[data-icon="agent"]')).toBeInTheDocument();
   expect(agents.querySelector('[data-icon="agent"] rect[x="4"][y="7"]')).toBeInTheDocument();
   fireEvent.click(agents);
-  expect(screen.getByRole('heading', { name: 'Agents' })).toBeVisible();
+  expect(await screen.findByRole('heading', { name: 'Agents' })).toBeVisible();
 });
 
 test('waits for bootstrap before opening the event stream', () => {

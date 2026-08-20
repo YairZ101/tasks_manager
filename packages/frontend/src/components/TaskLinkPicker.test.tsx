@@ -21,4 +21,15 @@ describe('TaskLinkPicker', () => {
     await waitFor(() => expect(onSelect).toHaveBeenCalledWith(tasks[1]));
     expect(screen.queryByRole('listbox', { name: 'Matching tasks' })).not.toBeInTheDocument();
   });
+
+  test('closes its results when the task form becomes busy', async () => {
+    const { rerender } = render(<TaskLinkPicker tasks={tasks} onSelect={vi.fn()} />);
+    const input = screen.getByRole('combobox', { name: 'Search tasks by title or key' });
+    fireEvent.focus(input);
+    expect(screen.getByRole('listbox', { name: 'Available tasks' })).toBeInTheDocument();
+
+    rerender(<TaskLinkPicker tasks={tasks} onSelect={vi.fn()} disabled />);
+    await waitFor(() => expect(screen.queryByRole('listbox')).not.toBeInTheDocument());
+    expect(input).toBeDisabled();
+  });
 });

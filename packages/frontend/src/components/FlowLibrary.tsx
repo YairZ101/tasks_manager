@@ -284,6 +284,6 @@ export default function FlowLibrary() {
       <button className="flow-card add-flow" onClick={() => setCreateOpen(true)}><span><Icon name="plus" size={25} /></span><strong>Create another Flow</strong><small>Start from the recommended delivery graph</small></button>
     </div></div>
     {createOpen && <FlowComposer onClose={() => setCreateOpen(false)} onCreate={create} />}
-    {deleteTarget && <ConfirmDialog title={`Delete ${deleteTarget.name}?`} message="This permanently deletes the Flow and its versions. Flows with run history cannot be deleted." confirmLabel="Delete flow" destructive disabled={deleting} onConfirm={() => void remove()} onCancel={() => !deleting && setDeleteTarget(null)} />}
+    {deleteTarget && <ConfirmDialog title={`Delete ${deleteTarget.name}?`} message="This permanently deletes the Flow and its versions. Flows with run history cannot be deleted." confirmLabel="Delete flow" tone="danger" disabled={deleting} onConfirm={() => void remove()} onCancel={() => !deleting && setDeleteTarget(null)} />}
   </section>;
 }

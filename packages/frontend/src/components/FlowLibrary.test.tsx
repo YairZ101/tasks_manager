@@ -7,6 +7,12 @@ import { useAppStore } from '../hooks/useTaskStore.js';
 
 vi.mock('../api/client.js', () => ({ api: { createFlow: vi.fn(), duplicateFlow: vi.fn(), deleteFlow: vi.fn(), updateFlow: vi.fn() } }));
 
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
+
 describe('FlowLibrary', () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -46,6 +52,34 @@ describe('FlowLibrary', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('Flow name is required.');
     expect(screen.getByRole('dialog', { name: 'Name the workflow' })).toBeInTheDocument();
+  });
+
+  test('locks the Flow form while creation is running', async () => {
+    const request = deferred<{ flow: any; draft: any }>();
+    vi.mocked(api.createFlow).mockReturnValue(request.promise);
+    render(<FlowLibrary />);
+    fireEvent.click(screen.getByRole('button', { name: 'New flow' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Create Flow' }));
+
+    expect(await screen.findByRole('button', { name: 'Creating…' })).toBeDisabled();
+    expect(screen.getByRole('dialog', { name: 'Name the workflow' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('textbox', { name: 'Flow name' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close new Flow' })).toBeDisabled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.mouseDown(document.querySelector('.dialog-layer')!);
+    expect(screen.getByRole('dialog', { name: 'Name the workflow' })).toBeInTheDocument();
+
+    request.resolve({ flow: { id: 42 }, draft: {} });
+    await waitFor(() => expect(useAppStore.getState().editingFlowId).toBe(42));
+  });
+
+  test('uses the shared dialog dismissal for Flow creation', async () => {
+    render(<FlowLibrary />);
+    fireEvent.click(screen.getByRole('button', { name: 'New flow' }));
+    expect(screen.getByRole('dialog', { name: 'Name the workflow' })).toHaveClass('dialog-frame', 'flow-composer');
+    fireEvent.keyDown(document, { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Name the workflow' })).not.toBeInTheDocument());
   });
 
   test('opens a Flow editor when its card is selected', () => {

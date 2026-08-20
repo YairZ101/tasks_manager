@@ -6,6 +6,7 @@ import Button from './Button.js';
 import { Icon } from './Icon.js';
 import PageHeader from './PageHeader.js';
 import PageHeaderAction from './PageHeaderAction.js';
+import { useConfirm } from './ConfirmProvider.js';
 
 type PresetDraft = Pick<AgentPreset, 'name' | 'description' | 'system_prompt'>;
 
@@ -27,6 +28,7 @@ const ignoreDirtyChange = (_dirty: boolean) => {};
 const noop = () => {};
 
 export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focusPresetKey = null, onFocusConsumed = noop }: { onDirtyChange?: (dirty: boolean) => void; focusPresetKey?: string | null; onFocusConsumed?: () => void }) {
+  const confirm = useConfirm();
   const [presets, setPresets] = useState<AgentPreset[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [draft, setDraft] = useState<PresetDraft>(emptyDraft);
@@ -81,14 +83,21 @@ export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focus
     onFocusConsumed();
   }, [focusPresetKey, presets, onFocusConsumed]);
 
-  const choosePreset = (preset: AgentPreset) => {
-    if (dirty && !window.confirm('Discard unsaved changes to this Agent preset?')) return;
+  const confirmDiscard = () => confirm({
+    tone: 'warning',
+    title: 'Discard Agent changes?',
+    description: 'The unsaved changes to this Agent preset will be lost.',
+    confirmLabel: 'Discard changes',
+  });
+
+  const choosePreset = async (preset: AgentPreset) => {
+    if (dirty && !await confirmDiscard()) return;
     setSelectedId(preset.id);
     setDraft(toDraft(preset));
   };
 
-  const startNew = () => {
-    if (dirty && !window.confirm('Discard unsaved changes to this Agent preset?')) return;
+  const startNew = async () => {
+    if (dirty && !await confirmDiscard()) return;
     setSelectedId(null);
     setDraft(emptyDraft);
   };
@@ -111,7 +120,12 @@ export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focus
   };
 
   const remove = async () => {
-    if (!selected || !window.confirm(`Delete “${selected.name}”? Flows still using this agent must switch to another first.`)) return;
+    if (!selected || !await confirm({
+      tone: 'danger',
+      title: `Delete ${selected.name}?`,
+      description: 'Flows using this Agent must switch to another preset before it can be deleted.',
+      confirmLabel: 'Delete preset',
+    })) return;
     setDeleting(true);
     try {
       await api.deleteAgentPreset(selected.id);
@@ -127,7 +141,7 @@ export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focus
 
   return <section className="agents-library" aria-labelledby="agents-library-title">
     <PageHeader title="Agents" titleId="agents-library-title" description="Create reusable Agent presets.">
-      <PageHeaderAction label="New agent" onClick={startNew} />
+      <PageHeaderAction label="New agent" onClick={() => void startNew()} />
     </PageHeader>
 
     <div className="agents-library-content"><div className="agent-studio">
@@ -139,7 +153,7 @@ export default function AgentsLibrary({ onDirtyChange = ignoreDirtyChange, focus
             type="button"
             className={preset.id === selectedId ? 'selected' : ''}
             aria-pressed={preset.id === selectedId}
-            onClick={() => choosePreset(preset)}
+            onClick={() => void choosePreset(preset)}
           >
             <span className="agent-roster-index">{String(index + 1).padStart(2, '0')}</span>
             <span className="agent-roster-glyph"><Icon name="agent" size={18} /></span>

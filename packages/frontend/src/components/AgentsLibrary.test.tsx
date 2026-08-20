@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { useState } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { render } from '../test/render.js';
 import { toast } from 'sonner';
 import AgentsLibrary from './AgentsLibrary.js';
 import { api } from '../api/client.js';
@@ -67,12 +68,29 @@ describe('AgentsLibrary', () => {
     expect(event.defaultPrevented).toBe(true);
   });
 
+  test('uses the shared confirmation before discarding Agent changes', async () => {
+    render(<AgentsLibrary />);
+    await screen.findByRole('button', { name: /Development/ });
+    fireEvent.change(screen.getByLabelText('Agent name'), { target: { value: 'Development lead' } });
+    fireEvent.click(screen.getByRole('button', { name: 'New agent' }));
+
+    let confirmation = await screen.findByRole('dialog', { name: 'Discard Agent changes?' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Cancel' }));
+    expect(screen.getByLabelText('Agent name')).toHaveValue('Development lead');
+
+    fireEvent.click(screen.getByRole('button', { name: 'New agent' }));
+    confirmation = await screen.findByRole('dialog', { name: 'Discard Agent changes?' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Discard changes' }));
+    await waitFor(() => expect(screen.getByLabelText('Agent name')).toHaveValue(''));
+  });
+
   test('surfaces the “in use by Flows” error when an agent cannot be deleted', async () => {
-    window.confirm = vi.fn().mockReturnValue(true);
     vi.mocked(api.deleteAgentPreset).mockRejectedValue(new Error('This agent is used by 1 Flow (“Delivery”). Replace or remove the Agent block there first.'));
     render(<AgentsLibrary />);
     await screen.findByRole('button', { name: /Development/ });
     fireEvent.click(screen.getByRole('button', { name: /Delete preset/ }));
+    const confirmation = await screen.findByRole('dialog', { name: 'Delete Development?' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete preset' }));
     await waitFor(() => expect(toast.error).toHaveBeenCalledWith(expect.stringContaining('used by 1 Flow')));
   });
 

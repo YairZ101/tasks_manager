@@ -1,13 +1,20 @@
 import { beforeEach, describe, expect, test, vi } from 'vitest';
 import { createElement } from 'react';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
-import type { Attempt, Flow, Run, RunDetail, Task } from '../domain.js';
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react';
+import { render } from '../test/render.js';
+import type { Attempt, Flow, Run, RunDetail, Task, TaskLink } from '../domain.js';
 import TaskPanel from './TaskPanel.js';
 import { buildRunPreflight } from './runPreflight.js';
 import { api } from '../api/client.js';
 import { useAppStore } from '../hooks/useTaskStore.js';
 
-vi.mock('../api/client.js', () => ({ api: { getTask: vi.fn(), getRun: vi.fn(), listRuns: vi.fn(), getAttempt: vi.fn(), updateTask: vi.fn(), reopenTask: vi.fn(), retryWorkspaceSetup: vi.fn() } }));
+vi.mock('../api/client.js', () => ({ api: { getTask: vi.fn(), getRun: vi.fn(), listRuns: vi.fn(), getAttempt: vi.fn(), updateTask: vi.fn(), reopenTask: vi.fn(), retryWorkspaceSetup: vi.fn(), deleteTask: vi.fn(), startRun: vi.fn() } }));
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((next) => { resolve = next; });
+  return { promise, resolve };
+}
 
 const flow = (): Flow => ({
   id: 1, name: 'Delivery', is_default: 1, active_version_id: 3, created_at: '', updated_at: '',
@@ -70,6 +77,40 @@ describe('TaskPanel task links', () => {
     expect(screen.queryByRole('button', { name: 'Task actions' })).not.toBeInTheDocument();
   });
 
+  test('confirms task deletion and requires a second decision for dirty workspace cleanup', async () => {
+    const dirtyError = Object.assign(new Error('The workspace contains uncommitted changes.'), { data: { reason: 'workspace_dirty' } });
+    vi.mocked(api.deleteTask).mockRejectedValueOnce(dirtyError).mockResolvedValueOnce(undefined);
+    render(createElement(TaskPanel, { taskId: 7 }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Delete task' }));
+    let confirmation = await screen.findByRole('dialog', { name: 'Delete TST-7?' });
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Delete task' }));
+
+    confirmation = await screen.findByRole('dialog', { name: 'Delete the dirty workspace?' });
+    expect(confirmation).toHaveTextContent('The workspace contains uncommitted changes.');
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Force cleanup and delete' }));
+
+    await waitFor(() => expect(api.deleteTask).toHaveBeenNthCalledWith(1, 7));
+    expect(api.deleteTask).toHaveBeenNthCalledWith(2, 7, true);
+  });
+
+  test('closes only the confirmation when Escape is pressed over task details', async () => {
+    render(createElement(TaskPanel, { taskId: 7 }));
+    const deleteTask = await screen.findByRole('button', { name: 'Delete task' });
+    deleteTask.focus();
+    fireEvent.click(deleteTask);
+
+    const taskDialog = screen.getByRole('dialog', { name: 'Task TST-7', hidden: true });
+    expect(await screen.findByRole('dialog', { name: 'Delete TST-7?' })).toBeInTheDocument();
+    expect(taskDialog.closest('.dialog-layer')).toHaveAttribute('inert');
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Delete TST-7?' })).not.toBeInTheDocument());
+    expect(screen.getByRole('dialog', { name: 'Task TST-7' })).toBeInTheDocument();
+    expect(document.body.style.overflow).toBe('hidden');
+    expect(deleteTask).toHaveFocus();
+  });
+
   test('shows a linked task operational state instead of its resolution', async () => {
     render(createElement(TaskPanel, { taskId: 7 }));
 
@@ -92,8 +133,6 @@ describe('TaskPanel task links', () => {
     vi.mocked(api.reopenTask).mockResolvedValue({ task: reopenedTask, links });
     const refreshTasks = vi.fn(async () => { useAppStore.setState({ tasks: [reopenedTask, dependentTask] }); });
     useAppStore.setState({ tasks: [finishedTask, dependentTask], workView: 'finished', refreshTasks });
-    const confirm = vi.fn(() => true);
-    vi.stubGlobal('confirm', confirm);
     render(createElement(TaskPanel, { taskId: 7 }));
 
     expect(await screen.findByText('History stays intact.')).toBeInTheDocument();
@@ -102,14 +141,15 @@ describe('TaskPanel task links', () => {
     const reopen = screen.getByRole('button', { name: /Reopen task/ });
     await waitFor(() => expect(reopen).toBeEnabled());
     fireEvent.click(reopen);
+    const confirmation = await screen.findByRole('dialog', { name: 'Reopen TST-7?' });
+    expect(confirmation).toHaveTextContent('TST-3 · Publish the client');
+    fireEvent.click(within(confirmation).getByRole('button', { name: 'Reopen task' }));
 
     await waitFor(() => expect(api.reopenTask).toHaveBeenCalledWith(7));
-    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('TST-3 · Publish the client'));
     expect(useAppStore.getState().workView).toBe('open');
     expect(await screen.findByRole('button', { name: /Start run/ })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /Delivery · v4/ })).toBeInTheDocument();
     expect(screen.queryByRole('combobox', { name: 'Run history' })).not.toBeInTheDocument();
-    vi.unstubAllGlobals();
   });
 
   test('switches the complete detail view between preserved Runs', async () => {
@@ -325,6 +365,121 @@ describe('TaskPanel task links', () => {
     expect(screen.queryByText('TST-7')).not.toBeInTheDocument();
   });
 
+  test('waits for one complete snapshot before replacing the loading layout', async () => {
+    const runningTask: Task = { ...task, description: 'Implementation context', active_run_id: 9, active_run_status: 'running', operational_state: 'active' };
+    const run: Run = { id: 9, task_id: 7, flow_version_id: 3, workspace_id: null, status: 'running', result_category: null, reason: null, created_at: '', started_at: '', finished_at: null };
+    const runDetail: RunDetail = { run, task: runningTask, flowVersion: flow().activeVersion!, attempts: [], workspace: null };
+    const taskRequest = deferred<{ task: Task; links: TaskLink[] }>();
+    const runsRequest = deferred<{ runs: Run[] }>();
+    const detailRequest = deferred<RunDetail>();
+    vi.mocked(api.getTask).mockReturnValue(taskRequest.promise);
+    vi.mocked(api.listRuns).mockReturnValue(runsRequest.promise);
+    vi.mocked(api.getRun).mockReturnValue(detailRequest.promise);
+    useAppStore.setState({ tasks: [runningTask] });
+    render(createElement(TaskPanel, { taskId: 7 }));
+
+    const loadingPanel = screen.getByRole('dialog', { name: 'Task TST-7' });
+    expect(loadingPanel).toHaveAttribute('aria-busy', 'true');
+    expect(loadingPanel).toHaveClass('task-panel-split');
+    expect(screen.queryByText('Implementation context')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Run steps' })).not.toBeInTheDocument();
+
+    await act(async () => { taskRequest.resolve({ task: runningTask, links: [] }); });
+    expect(screen.getByRole('dialog', { name: 'Task TST-7' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('Implementation context')).not.toBeInTheDocument();
+
+    await act(async () => { runsRequest.resolve({ runs: [run] }); });
+    expect(screen.getByRole('dialog', { name: 'Task TST-7' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByRole('heading', { name: 'Run steps' })).not.toBeInTheDocument();
+
+    await act(async () => { detailRequest.resolve(runDetail); });
+    const readyPanel = await screen.findByRole('dialog', { name: 'Task TST-7' });
+    expect(readyPanel).not.toHaveAttribute('aria-busy');
+    expect(readyPanel).toHaveClass('task-panel-split');
+    expect(screen.getByText('Implementation context')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Run steps' })).toBeInTheDocument();
+  });
+
+  test('does not render the previous task snapshot while another task loads', async () => {
+    const runningTask: Task = { ...task, description: 'First task context', active_run_id: 9, active_run_status: 'running', operational_state: 'active' };
+    const nextTask: Task = { ...task, id: 8, task_key: 'TST-8', title: 'Build the server', description: 'Second task context', sort_order: 2 };
+    const run: Run = { id: 9, task_id: 7, flow_version_id: 3, workspace_id: null, status: 'running', result_category: null, reason: null, created_at: '', started_at: '', finished_at: null };
+    const runDetail: RunDetail = { run, task: runningTask, flowVersion: flow().activeVersion!, attempts: [], workspace: null };
+    const nextTaskRequest = deferred<{ task: Task; links: TaskLink[] }>();
+    const nextRunsRequest = deferred<{ runs: Run[] }>();
+    vi.mocked(api.getTask).mockImplementation((id) => id === runningTask.id ? Promise.resolve({ task: runningTask, links: [] }) : nextTaskRequest.promise);
+    vi.mocked(api.listRuns).mockImplementation((id) => id === runningTask.id ? Promise.resolve({ runs: [run] }) : nextRunsRequest.promise);
+    vi.mocked(api.getRun).mockResolvedValue(runDetail);
+    useAppStore.setState({ tasks: [runningTask, nextTask] });
+    const view = render(createElement(TaskPanel, { taskId: runningTask.id }));
+
+    expect(await screen.findByText('First task context')).toBeInTheDocument();
+    view.rerender(createElement(TaskPanel, { taskId: nextTask.id }));
+
+    const loadingPanel = screen.getByRole('dialog', { name: 'Task TST-8' });
+    expect(loadingPanel).toHaveAttribute('aria-busy', 'true');
+    expect(screen.queryByText('First task context')).not.toBeInTheDocument();
+    expect(screen.queryByRole('heading', { name: 'Run steps' })).not.toBeInTheDocument();
+
+    await act(async () => {
+      nextTaskRequest.resolve({ task: nextTask, links: [] });
+      nextRunsRequest.resolve({ runs: [] });
+    });
+    expect(await screen.findByText('Second task context')).toBeInTheDocument();
+    expect(screen.getByRole('dialog', { name: 'Task TST-8' })).not.toHaveAttribute('aria-busy');
+  });
+
+  test('blocks task actions when authoritative detail requests fail and recovers through retry', async () => {
+    vi.mocked(api.getTask).mockRejectedValue(new Error('Task links unavailable'));
+    vi.mocked(api.listRuns).mockRejectedValue(new Error('Run history unavailable'));
+    render(createElement(TaskPanel, { taskId: task.id }));
+
+    const error = await screen.findByRole('alert');
+    expect(error).toHaveTextContent('Task details unavailable');
+    expect(error).toHaveTextContent('Task links unavailable');
+    expect(screen.queryByRole('button', { name: /Start run/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Edit task' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete task' })).not.toBeInTheDocument();
+    expect(screen.queryByText('Loading task details')).not.toBeInTheDocument();
+
+    vi.mocked(api.getTask).mockResolvedValue({ task, links: [] });
+    vi.mocked(api.listRuns).mockResolvedValue({ runs: [] });
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+
+    expect(await screen.findByRole('button', { name: /Start run/ })).toBeEnabled();
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  test('shows the protected error state when an active Run cannot be loaded', async () => {
+    const runningTask: Task = { ...task, active_run_id: 9, active_run_status: 'running', operational_state: 'active' };
+    const run: Run = { id: 9, task_id: 7, flow_version_id: 3, workspace_id: null, status: 'running', result_category: null, reason: null, created_at: '', started_at: '', finished_at: null };
+    vi.mocked(api.getTask).mockResolvedValue({ task: runningTask, links: [] });
+    vi.mocked(api.listRuns).mockResolvedValue({ runs: [run] });
+    vi.mocked(api.getRun).mockRejectedValue(new Error('Run details unavailable'));
+    useAppStore.setState({ tasks: [runningTask] });
+
+    render(createElement(TaskPanel, { taskId: runningTask.id }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('Run details unavailable');
+    expect(screen.queryByRole('button', { name: 'Edit task' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Delete task' })).not.toBeInTheDocument();
+  });
+
+  test('returns focus to the neutral Tasks region when the panel closes', async () => {
+    const neutralTarget = document.createElement('section');
+    neutralTarget.tabIndex = -1;
+    neutralTarget.setAttribute('aria-label', 'Tasks region');
+    document.body.append(neutralTarget);
+    const panel = render(createElement(TaskPanel, { taskId: task.id, returnFocusRef: { current: neutralTarget } }));
+
+    fireEvent.keyDown(document, { key: 'Escape' });
+
+    await waitFor(() => expect(useAppStore.getState().selectTask).toHaveBeenCalledWith(null));
+    panel.unmount();
+    expect(neutralTarget).toHaveFocus();
+    neutralTarget.remove();
+  });
+
   test('uses the create-task window structure while editing', async () => {
     render(createElement(TaskPanel, { taskId: 7 }));
     fireEvent.click(await screen.findByRole('button', { name: 'Edit task' }));
@@ -340,6 +495,28 @@ describe('TaskPanel task links', () => {
     fireEvent.change(screen.getByRole('textbox', { name: 'Task title' }), { target: { value: 'Build the polished client' } });
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(api.updateTask).toHaveBeenCalledWith(7, expect.objectContaining({ title: 'Build the polished client' })));
+  });
+
+  test('prevents every editor dismissal path while task changes are saving', async () => {
+    const request = deferred<{ task: Task; links: TaskLink[] }>();
+    vi.mocked(api.updateTask).mockReturnValue(request.promise);
+    render(createElement(TaskPanel, { taskId: 7 }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit task' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Task title' }), { target: { value: 'Build the polished client' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+
+    expect(await screen.findByRole('button', { name: 'Saving…' })).toBeDisabled();
+    expect(screen.getByRole('dialog', { name: 'Refine the outcome' })).toHaveAttribute('aria-busy', 'true');
+    expect(screen.getByRole('textbox', { name: 'Task title' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Cancel' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Close task editor' })).toBeDisabled();
+    fireEvent.keyDown(document, { key: 'Escape' });
+    fireEvent.mouseDown(document.querySelector('.dialog-layer')!);
+    expect(screen.getByRole('dialog', { name: 'Refine the outcome' })).toBeInTheDocument();
+    expect(useAppStore.getState().selectTask).not.toHaveBeenCalledWith(null);
+
+    request.resolve({ task: { ...task, title: 'Build the polished client' }, links: [] });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Refine the outcome' })).not.toBeInTheDocument());
   });
 
   test('renders an unbroken task title in the detail heading', async () => {

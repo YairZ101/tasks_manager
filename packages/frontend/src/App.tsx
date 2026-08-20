@@ -11,6 +11,8 @@ import FlowLibrary from './components/FlowLibrary.js';
 import AgentsLibrary from './components/AgentsLibrary.js';
 import SettingsPanel from './components/SettingsPanel.js';
 import InitScreen from './components/InitScreen.js';
+import { ConfirmProvider, useConfirm } from './components/ConfirmProvider.js';
+import { DialogInteractionProvider } from './components/DialogLayer.js';
 
 const FlowEditor = lazy(() => import('./components/FlowEditor.js'));
 
@@ -32,8 +34,8 @@ export function sidebarCollapsedForContext(editingFlow: boolean, width: number) 
   return editingFlow || shouldAutoCollapseSidebar(width);
 }
 
-export function canNavigateFromAgents(current: 'work' | 'flows' | 'agents', target: 'work' | 'flows' | 'agents', dirty: boolean, confirmDiscard: () => boolean) {
-  return current !== 'agents' || target === 'agents' || !dirty || confirmDiscard();
+export async function canNavigateFromAgents(current: 'work' | 'flows' | 'agents', target: 'work' | 'flows' | 'agents', dirty: boolean, confirmDiscard: () => Promise<boolean> | boolean) {
+  return current !== 'agents' || target === 'agents' || !dirty || await confirmDiscard();
 }
 
 function AppContent() {
@@ -42,9 +44,17 @@ function AppContent() {
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => sidebarCollapsedForContext(editingFlow, window.innerWidth));
   const [agentsDirty, setAgentsDirty] = useState(false);
   const previousViewportWidth = useRef(window.innerWidth);
+  const taskReturnFocusRef = useRef<HTMLElement>(null);
+  const confirm = useConfirm();
   useEventSource(!store.loading && !store.bootError);
-  const navigateToSection = (section: 'work' | 'flows' | 'agents') => {
-    if (!canNavigateFromAgents(store.section, section, agentsDirty, () => window.confirm('Discard unsaved changes to this Agent preset?'))) return;
+  const confirmAgentDiscard = () => confirm({
+    tone: 'warning',
+    title: 'Discard Agent changes?',
+    description: 'The unsaved changes to this Agent preset will be lost.',
+    confirmLabel: 'Discard changes',
+  });
+  const navigateToSection = async (section: 'work' | 'flows' | 'agents') => {
+    if (!await canNavigateFromAgents(store.section, section, agentsDirty, confirmAgentDiscard)) return;
     store.setSection(section);
   };
   useEffect(() => { void store.bootstrap(); }, [store.bootstrap]);
@@ -65,7 +75,14 @@ function AppContent() {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target;
       if (!event.altKey || (target instanceof Element && target.matches('input, textarea, select, [role="combobox"], [contenteditable="true"]'))) return;
-      if (event.code === 'KeyN') { event.preventDefault(); if (!canNavigateFromAgents(useAppStore.getState().section, 'work', agentsDirty, () => window.confirm('Discard unsaved changes to this Agent preset?'))) return; useAppStore.getState().setSection('work'); useAppStore.getState().setCreateOpen(true); }
+      if (event.code === 'KeyN') {
+        event.preventDefault();
+        void canNavigateFromAgents(useAppStore.getState().section, 'work', agentsDirty, confirmAgentDiscard).then((canNavigate) => {
+          if (!canNavigate) return;
+          useAppStore.getState().setSection('work');
+          useAppStore.getState().setCreateOpen(true);
+        });
+      }
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
@@ -90,9 +107,9 @@ function AppContent() {
         </button>
         <div className="brand"><AppMark /><span><strong>Flow</strong><small>local agent control</small></span></div>
         <nav aria-label="Primary navigation">
-          <button aria-label="Tasks" className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => navigateToSection('work')}><Icon name="tasks" /><span>Tasks</span></button>
-          <button aria-label="Flows" className={`rail-primary ${store.section === 'flows' ? 'active' : ''}`} onClick={() => navigateToSection('flows')}><Icon name="nodes" /><span>Flows</span></button>
-          <button aria-label="Agents" className={`rail-primary ${store.section === 'agents' ? 'active' : ''}`} onClick={() => navigateToSection('agents')}><Icon name="agent" /><span>Agents</span></button>
+          <button aria-label="Tasks" className={`rail-primary ${store.section === 'work' ? 'active' : ''}`} onClick={() => void navigateToSection('work')}><Icon name="tasks" /><span>Tasks</span></button>
+          <button aria-label="Flows" className={`rail-primary ${store.section === 'flows' ? 'active' : ''}`} onClick={() => void navigateToSection('flows')}><Icon name="nodes" /><span>Flows</span></button>
+          <button aria-label="Agents" className={`rail-primary ${store.section === 'agents' ? 'active' : ''}`} onClick={() => void navigateToSection('agents')}><Icon name="agent" /><span>Agents</span></button>
         </nav>
         <div className="rail-bottom">
           <button onClick={() => store.setSettingsOpen(true)}><Icon name="settings" /><span>Settings</span></button>
@@ -101,12 +118,12 @@ function AppContent() {
       </aside>
       <main className="workspace">
         <div className="workspace-body">
-          {store.section === 'work' ? <WorkBoard /> : store.section === 'agents' ? <AgentsLibrary onDirtyChange={setAgentsDirty} focusPresetKey={store.agentsFocusPresetKey} onFocusConsumed={store.clearAgentsFocus} /> : store.editingFlowId ? (
+          {store.section === 'work' ? <WorkBoard returnFocusRef={taskReturnFocusRef} /> : store.section === 'agents' ? <AgentsLibrary onDirtyChange={setAgentsDirty} focusPresetKey={store.agentsFocusPresetKey} onFocusConsumed={store.clearAgentsFocus} /> : store.editingFlowId ? (
             <Suspense fallback={<div className="boot inline">Loading canvas…</div>}><FlowEditor flowId={store.editingFlowId} versionId={store.viewingFlowVersionId} /></Suspense>
           ) : <FlowLibrary />}
         </div>
       </main>
-      {store.selectedTaskId && <TaskPanel taskId={store.selectedTaskId} />}
+      {store.selectedTaskId && <TaskPanel key={store.selectedTaskId} taskId={store.selectedTaskId} returnFocusRef={taskReturnFocusRef} />}
       {store.createOpen && <TaskComposer />}
       {store.settingsOpen && <SettingsPanel />}
     </div>
@@ -114,5 +131,5 @@ function AppContent() {
 }
 
 export default function App() {
-  return <><Toaster theme="dark" position="bottom-right" richColors /><AppContent /></>;
+  return <DialogInteractionProvider><ConfirmProvider><Toaster theme="dark" position="bottom-right" richColors /><AppContent /></ConfirmProvider></DialogInteractionProvider>;
 }

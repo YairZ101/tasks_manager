@@ -1,51 +1,49 @@
+import { useRef, type ReactNode } from 'react';
 import Button from './Button.js';
+import DialogFrame from './DialogFrame.js';
+import DialogLayer from './DialogLayer.js';
+
+export type ConfirmTone = 'default' | 'warning' | 'danger';
 
 interface ConfirmDialogProps {
   title: string;
   message: string;
   confirmLabel: string;
-  destructive?: boolean;
+  cancelLabel?: string;
+  tone?: ConfirmTone;
+  details?: readonly string[];
   disabled?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
-  children?: React.ReactNode;
+  children?: ReactNode;
 }
 
 export default function ConfirmDialog({
   title,
   message,
   confirmLabel,
-  destructive,
+  cancelLabel = 'Cancel',
+  tone = 'default',
+  details,
   disabled,
   onConfirm,
   onCancel,
   children,
 }: ConfirmDialogProps) {
-  return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center animate-fade-in">
-      <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onCancel} />
-      <div className="relative w-full max-w-sm bg-bg-raised border border-border rounded-xl shadow-2xl p-5 animate-slide-up">
-        <h3 className="text-sm font-semibold text-text mb-2">{title}</h3>
-        <p className="text-sm text-text-muted mb-5">{message}</p>
-        {children}
-        <div className="flex justify-end gap-2">
-          <Button
-            variant="ghost"
-            onClick={onCancel}
-            disabled={disabled}
-          >
-            Cancel
-          </Button>
-          <Button
-            variant="primary"
-            tone={destructive ? 'danger' : 'default'}
-            onClick={onConfirm}
-            disabled={disabled}
-          >
-            {confirmLabel}
-          </Button>
-        </div>
-      </div>
-    </div>
-  );
+  const cancelRef = useRef<HTMLButtonElement>(null);
+  return <DialogLayer variant="confirm" onDismiss={onCancel} dismissDisabled={disabled} initialFocusRef={cancelRef}>
+    <DialogFrame
+      className={`confirm-dialog ${tone}`}
+      title={title}
+      busy={disabled}
+      footer={<>
+        <Button ref={cancelRef} variant="ghost" onClick={onCancel} disabled={disabled}>{cancelLabel}</Button>
+        <Button variant="primary" tone={tone === 'danger' ? 'danger' : 'default'} onClick={onConfirm} disabled={disabled}>{confirmLabel}</Button>
+      </>}
+    >
+      <p className="confirm-message">{message}</p>
+      {details?.length ? <ul className="confirm-details">{details.map((detail) => <li key={detail}>{detail}</li>)}</ul> : null}
+      {children}
+    </DialogFrame>
+  </DialogLayer>;
 }
